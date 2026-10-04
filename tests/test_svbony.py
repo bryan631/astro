@@ -171,3 +171,16 @@ def test_failed_reopen_retries_with_backoff(monkeypatch):
         cam.capture()  # second failure: backoff doubles
     now[0] += 2 * svb.RECONNECT_S
     assert cam.capture() is not None  # back
+
+
+def test_close_cancels_reconnecting():
+    import astro.devices.svbony as svb
+
+    sdk = FakeSdk(timeouts=1)
+    cam = connected(sdk)
+    sdk.SVBOpenCamera = lambda cid: 2
+    with pytest.raises(svb.SvbError):
+        cam.capture()
+    cam.close()
+    with pytest.raises(RuntimeError, match="not connected"):
+        cam.capture()
