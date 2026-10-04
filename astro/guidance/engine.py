@@ -15,6 +15,12 @@ REPEAT_INTERVAL_S = 4.0
 SLOW_DOWN_TIME_S = 1.0  # say "slower" if we'd reach the target within this time
 
 
+def _directional(text: str) -> bool:
+    """Movement instructions, which may repeat as "keep going" (never "stop", "slower", ...)."""
+    return text.startswith("push ") or text.endswith((", getting closer", " a little")) \
+        and not text.startswith("passed it")
+
+
 def cue_phrases() -> list[str]:
     """Every phrase the guide can say, for pre-rendering speech."""
     dirs = ("left", "right", "up", "down")
@@ -44,6 +50,26 @@ class Cue:
     state: GuideState
 
 
+class CueLimiter:
+    """Keeps cues from talking over each other: a minimum gap between cues, no quick repeats,
+    and a repeated movement instruction becomes "keep going". Urgent cues always go through."""
+
+    def __init__(self) -> None:
+        self.last_text = ""
+        self._last_t = -math.inf
+
+    def speak(self, text: str, t: float, urgent: bool = False) -> str | None:
+        """What to say now for `text`, or None to stay quiet."""
+        if not urgent:
+            if t - self._last_t < MIN_SPEAK_INTERVAL_S:
+                return None
+            if text == self.last_text and t - self._last_t < REPEAT_INTERVAL_S:
+                return None
+        spoken = "keep going" if text == self.last_text and _directional(text) else text
+        self.last_text, self._last_t = text, t
+        return spoken
+
+
 class Guide:
     def __init__(self, target_alt: float, target_az: float, tolerance_arcmin: float = 4.0,
                  right_is_plus_az: bool = True):
@@ -51,8 +77,7 @@ class Guide:
         self.tol_deg = tolerance_arcmin / 60.0
         self.right_is_plus_az = right_is_plus_az
         self.on_target = False
-        self._last_text = ""
-        self._last_spoken_t = -math.inf
+        self._limiter = CueLimiter()
         self._prev: tuple[float, float, float] | None = None  # (t, d_alt, d_az)
         self._axis: str | None = None
 
@@ -68,16 +93,8 @@ class Guide:
 
         text, urgent = self._choose_text(t, d_alt, d_az, was_on)
         self._prev = (t, d_alt, d_az)
-        if text is None:
-            return state, None
-        if not urgent:
-            if t - self._last_spoken_t < MIN_SPEAK_INTERVAL_S:
-                return state, None
-            if text == self._last_text and t - self._last_spoken_t < REPEAT_INTERVAL_S:
-                return state, None
-        spoken = "keep going" if text == self._last_text else text
-        self._last_text, self._last_spoken_t = text, t
-        return state, Cue(spoken, state)
+        spoken = self._limiter.speak(text, t, urgent) if text else None
+        return state, Cue(spoken, state) if spoken else None
 
     def _choose_text(self, t: float, d_alt: float, d_az: float, was_on: bool
                      ) -> tuple[str | None, bool]:
@@ -91,8 +108,10 @@ class Guide:
             err = d_alt if self._axis == "alt" else d_az
             if abs(err) <= axis_tol:
                 # This axis is lined up: stop the user before switching to the other one.
+                # Always urgent: it's only reached on the transition, and it must never be
+                # rate-limited away while the user is still pushing.
                 self._axis = None
-                return ("stop", self._last_text != "stop")
+                return ("stop", True)
         if self._axis is None:
             self._axis = "alt" if abs(d_alt) >= abs(d_az) else "az"
         err = d_alt if self._axis == "alt" else d_az
@@ -106,7 +125,7 @@ class Guide:
                 return f"passed it, back {direction} a little", True
             closing = (abs(prev_err) - abs(err)) / dt if dt > 0 else 0.0
             if closing > 0 and abs(err) / closing < SLOW_DOWN_TIME_S:
-                return "slower", self._last_text != "slower"
+                return "slower", self._limiter.last_text != "slower"
 
         if abs(err) > COARSE_DEG:
             return f"push {direction}", False
