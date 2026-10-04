@@ -14,6 +14,7 @@ Scripts: `scripts/hwcheck/` (`enumerate.py`, `checklist.py`). SDK lives in `~/sd
 | Debayer (GR pattern) | plausible, bare sensor sees blue light (SV705C is now capped, no lens) | plausible: smooth, no mosaic artifacts; blue/purple cast because no white balance is applied. Out of focus, so color accuracy not judged |
 
 ## Quirks
+- **Colour preview had red/blue swapped** in the first checkout scripts (OpenCV names Bayer codes by the second row, so this GRBG sensor needs `BayerGB`, not `BayerGR`). Fixed; the "bare sensor sees blue light" debayer note above was probably red. SER files and the solver were never affected.
 - **USB2 link.** Both cameras enumerate at 480M inside the container, even the USB3 SV705C. Full-frame rate (5.4 fps) and the 47 fps at 1280x720 look bus-limited. Retest on the MeLE miniPC for real USB3 numbers.
 - **Stop/start on one open handle is flaky.** Re-starting video capture on the same open camera intermittently returned `SVB_ERROR_TIMEOUT` (11), once leading to a libusb assert crash at exit. Closing and reopening the camera between runs was reliable. Exposure must be set before `SVBStartVideoCapture`.
 - **The SDK's bundled `libusb-1.0.so*` files are empty.** Load the system `libusb-1.0.so.0` with `RTLD_GLOBAL` first.

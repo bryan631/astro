@@ -4,7 +4,9 @@ import os
 
 LIB = os.environ.get("SVB_LIB", os.path.expanduser("~/sdk/SVBCameraSDK/lib/x64/libSVBCameraSDK.so"))
 RAW8, GAIN, EXPOSURE = 0, 0, 1  # SVB_IMG_RAW8, SVB_GAIN, SVB_EXPOSURE (exposure in us)
-BAYER = ["RG", "BG", "GR", "GB"]
+BAYER = ["RG", "BG", "GR", "GB"]  # SDK pattern index -> first row pair
+# OpenCV names Bayer codes by row 2 reversed: sensor RG(GB) -> BayerBG, GR(BG) -> BayerGB, ...
+CV_BAYER = ["BG", "RG", "GB", "GR"]
 
 
 class Info(C.Structure):
