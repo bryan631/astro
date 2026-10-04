@@ -14,12 +14,23 @@ from astro.pointing.main_offset import MIN_MOTION_DEG, CameraAxes, MainOffset, l
 
 CENTERED_FRACTION = 0.05  # within 5% of the image width of center counts as centered
 REASK_AFTER = 4  # updates without enough motion before asking again
+LOST = "I can't see it in the main camera. Let's find it again with the finder."
+CENTERED = "stop, it's centered"
+CALIBRATED = "thanks, now I can center it"
+
+
+def centering_phrases() -> list[str]:
+    """Everything centering can say beyond the guide's cues, for pre-rendering speech."""
+    asks = [f"{p}push {d} a tiny bit, then stop" for d in ("left", "up") for p in ("", "now ")]
+    more = [f"push a little more {d}, then stop" for d in ("left", "up")]
+    return [LOST, CENTERED, CALIBRATED, *asks, *more]
 
 
 @dataclass
 class Step:
     say: str | None
     done: bool = False
+    lost: bool = False  # the target isn't in the main camera's view
 
 
 @dataclass
@@ -46,7 +57,7 @@ class Centerer:
     def update(self, position: tuple[float, float], target_px: tuple[float, float] | None) -> Step:
         """Feed the scope's (alt, az) and the target's pixel position (None if not visible)."""
         if target_px is None:
-            return Step("I can't see it in the camera. Let's go back to the last spot.")
+            return Step(LOST, lost=True)
         px = np.asarray(target_px, float)
         center = np.asarray(self.image_size, float) / 2
         if self._start is None:
@@ -59,13 +70,13 @@ class Centerer:
                                 target_from_model=tuple(local_delta(*p0, *self._target)))
             self._observed = True
         if np.hypot(*(px - center)) < CENTERED_FRACTION * self.image_size[0]:
-            return Step("stop, it's centered", done=True)
+            return Step(CENTERED, done=True)
         if not self.calibrated:
             return self._calibrate(position, px)
         d_az, d_alt = self.axes.sky_offset(*(px - center))  # target's offset from the aim
-        if abs(d_az) >= abs(d_alt):
-            return Step("push right a little" if d_az > 0 else "push left a little")
-        return Step("push up a little" if d_alt > 0 else "push down a little")
+        if abs(d_az) >= abs(d_alt):  # same words as the guide ("right a little")
+            return Step("right a little" if d_az > 0 else "left a little")
+        return Step("up a little" if d_alt > 0 else "down a little")
 
     def _calibrate(self, position: tuple[float, float], px: np.ndarray) -> Step:
         """Ask for one small push per axis and pair encoder motion with image motion."""
@@ -77,7 +88,7 @@ class Centerer:
                 self.axes.add_move(*d_sky, *(px - self._last[1]))
                 self._last, self._waiting = (position, px), 0
                 if self.calibrated:
-                    return Step("thanks, now I can center it")
+                    return Step(CALIBRATED)
         else:
             self._last = (position, px)
         direction = "left" if not self.axes._sky else "up"
