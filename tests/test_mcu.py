@@ -116,3 +116,102 @@ def test_close_waits_for_reader_before_heaters_off():
     mcu.close()
     assert fake.written[-2:] == [heat(0, 0), heat(1, 0)]
     assert not mcu._reader.is_alive()
+
+
+class FlakySerial(FakeSerial):
+    """First readline after the lines run out raises, like an unplugged cable."""
+
+    def __init__(self, lines, fail_once=True):
+        super().__init__(lines)
+        self.fail_once = fail_once
+
+    def readline(self):
+        if not self.lines and self.fail_once:
+            self.fail_once = False
+            import serial
+
+            raise serial.SerialException("device disconnected")
+        return super().readline()
+
+
+def test_unplug_reopens_the_port():
+    import time
+
+    from astro.devices.mcu import Mcu
+
+    opened = []
+
+    def factory(*a, **k):
+        port = FlakySerial([frame("POS 1 2")] if not opened else [frame("POS 3 4")],
+                           fail_once=not opened)
+        opened.append(port)
+        return port
+
+    mcu = Mcu("/dev/null", serial_factory=factory).start()
+    time.sleep(0.3)
+    mcu.close()
+    assert len(opened) == 2 and mcu.counts() == (3, 4)  # reopened and reading again
+
+
+def test_heaters_off_when_readings_stop(monkeypatch):
+    import time
+
+    from astro.devices import mcu as mcu_module
+
+    monkeypatch.setattr(mcu_module, "PING_EVERY_S", 0.05)
+    monkeypatch.setattr(mcu_module, "ENV_STALE_S", 0.1)
+    m, fake = make_mcu([frame("ENV 24 90 nan")])
+    m.start()
+    time.sleep(0.4)  # one reading (85%), then silence
+    assert m.heat == 0 and heat(0, 0) in fake.written
+    m.close()
+
+
+def test_boot_after_positions_means_reboot():
+    from astro.devices.mcu_protocol import Boot
+
+    m, _ = make_mcu([])
+    reboots = []
+    m.on_reboot = lambda: reboots.append(1)
+    m.handle(Boot("astro-mcu", "0.1"))  # start-up: fine
+    m.handle(Position(5, 5))
+    m.handle(Boot("astro-mcu", "0.1"))  # mid-session: counts were reset
+    assert reboots == [1]
+    assert parse(frame("BOOT astro-mcu 0.1")) == Boot("astro-mcu", "0.1")
+
+
+class WriteFailsSerial(FakeSerial):
+    def write(self, data):
+        import serial
+
+        raise serial.SerialException("unplugged")
+
+
+def test_close_still_closes_the_port_when_heater_writes_fail():
+    from astro.devices.mcu import Mcu
+
+    port = WriteFailsSerial([])
+    closed = []
+    port.close = lambda: closed.append(1)
+    m = Mcu("/dev/null", serial_factory=lambda *a, **k: port)
+    m.close()
+    assert closed == [1]
+
+
+def test_write_error_while_handling_env_reopens_instead_of_dying():
+    import time
+
+    from astro.devices.mcu import Mcu
+
+    opened = []
+
+    def factory(*a, **k):
+        port = WriteFailsSerial([frame("ENV 24 90 nan")]) if not opened else FakeSerial([frame("POS 7 8")])
+        opened.append(port)
+        return port
+
+    m = Mcu("/dev/null", serial_factory=factory)
+    m._reader.start()  # skip start()'s VER? write on the failing port
+    time.sleep(0.3)
+    m._stop.set()
+    assert len(opened) == 2 and m.counts() == (7, 8)
