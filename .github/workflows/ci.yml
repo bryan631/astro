@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ASTRO_SIM: "1"
+      ASTRO_REQUIRE_SOLVER: "1"  # fail, not skip, if the solver is missing
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -20,5 +21,6 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -e ".[dev]"
+      - run: PIP=pip scripts/install-solver.sh
       - run: ruff check .
       - run: pytest -q
