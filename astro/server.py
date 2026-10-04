@@ -287,7 +287,8 @@ async def require_token(request: Request, call_next):
         return PlainTextResponse("Open the link with the access token.", status_code=401)
     response = await call_next(request)
     if token := request.query_params.get("token"):
-        response.set_cookie("astro_token", token, httponly=True, secure=True,
+        response.set_cookie("astro_token", token, httponly=True,
+                            secure=request.url.scheme == "https",
                             samesite="strict", max_age=365 * 86400)
     return response
 

@@ -250,11 +250,11 @@ def test_token_gates_pages_and_socket(monkeypatch):
     from starlette.websockets import WebSocketDisconnect
 
     monkeypatch.setenv("ASTRO_TOKEN", "s3cret")
-    client = TestClient(server.app, base_url="https://testserver")
+    client = TestClient(server.app)
     assert client.get("/").status_code == 401
     with pytest.raises(WebSocketDisconnect), client.websocket_connect("/ws"):
         pass
     assert client.get("/?token=s3cret").status_code == 200  # sets the cookie
     assert client.get("/gallery").status_code == 200
-    with client.websocket_connect("/ws?token=s3cret") as ws:  # the browser sends the cookie
+    with client.websocket_connect("/ws") as ws:  # the cookie alone is enough
         assert ws.receive_json()["type"] in ("hello", "say")
