@@ -66,6 +66,7 @@ function handle(m) {
     img.src = `${m.url}?n=${m.frames}`; img.hidden = false;
   }
   if (m.type === "picture") document.getElementById("live").hidden = true;
+  if (m.type === "hold") { arrow.hidden = true; dist.textContent = "Hold still"; }
   if (m.type === "say") { said.textContent = m.text; speak(m.text); }
   if (m.type === "state") {
     arrow.hidden = false;

@@ -41,6 +41,7 @@ FOCUS_STEP_S = 1.0  # one finder focus measurement per second while coaching
 MIN_FOCUS_SAMPLES = 3  # focus readings before "done" counts (else the gate was never checked)
 CENTER_STEP_S = 0.5  # main-camera centering cue rate
 DIRECTION_PROBE_S = 1.5  # after a left/right cue, look this long for the azimuth to move
+FIX_STALE_S = 2.0  # a plate-solve fix older than this is too old to steer by
 ENCODER_STALE_S = 1.0  # encoder positions older than this mean the board or cable is gone
 MIN_HFR_PX = 0.5  # floor so a perfectly sharp (tiny) star can't blow up the focus score
 TOLERANCE_ARCMIN = {False: 4.0, True: 2.0}  # guidance tolerance without / with the 2x Barlow
@@ -115,6 +116,7 @@ class Session:
         self._stack_done_announced = True
         self._preview_seen = 0
         self._processor = ThreadPoolExecutor(max_workers=1)  # one stacking job at a time
+        self._holding = False  # asked the user to hold still for a fresh fix
         self._jobs: list[tuple[str, Future[StackResult]]] = []  # pictures being made, in order
         self._focus_at = -1e9
         self.centerer = Centerer((main_sensor[0], main_sensor[1]))  # learns finder->main offset
@@ -423,10 +425,14 @@ class Session:
         if (self._centering or self.guide is not None) and (lost := self._pointing_lost()):
             self.guide, self._centering = None, False  # keep the target: "go to" it again later
             return [say(lost)]
+        if self._centering or self.guide is not None:
+            hold = self._hold_for_fix()
+            if hold is not None:
+                return hold
         if self._centering:
             return self._center_step(t)
         if self.guide is None or self.target is None:
-            self._direction_probe = None  # don't classify unrelated motion later
+            self._direction_probe, self._holding = None, False  # forget unrelated motion
             return []
         if t - self._resolved_at >= TARGET_REFRESH_S:
             self._resolved_at = t
@@ -450,6 +456,19 @@ class Session:
                 self.centerer.restart(self.altaz_of(self.target))  # true, uncorrected target
                 self._center_limiter = CueLimiter()
         return out
+
+    def _hold_for_fix(self) -> list[dict] | None:
+        """Plate solving only: while the fix is stale (the scope is moving), don't steer by it.
+        Returns the messages for this tick, or None when the fix is fresh."""
+        fix_age = getattr(self.finder, "fix_age", None)
+        if fix_age is None or fix_age() <= FIX_STALE_S:
+            self._holding = False
+            return None
+        self._direction_probe = None  # motion during the pause says nothing about left/right
+        if self._holding:
+            return []
+        self._holding = True
+        return [{"type": "hold"}, say("Hold still for a second so I can see where we are.")]
 
     def _pointing_lost(self) -> str | None:
         """Why guidance can't trust the pointing any more, or None."""
