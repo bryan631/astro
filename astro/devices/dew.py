@@ -19,6 +19,8 @@ def heater_percent(env: Environment) -> int:
     (the secondary/lens cool below air by radiating to the sky), else the air temperature."""
     optic = env.optic_c if not math.isnan(env.optic_c) else env.temp_c
     margin = optic - dew_point_c(env.temp_c, env.rh_pct)
+    if not math.isfinite(margin):  # failed sensor read: fail safe, heaters off
+        return 0
     power = next(p for m, p in STEPS if margin >= m)
     if env.rh_pct >= HUMID_RH_PCT:
         power = max(power, MIN_POWER_HUMID)

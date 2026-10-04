@@ -32,6 +32,10 @@ bool bmeOk = false;
 OneWire oneWire(ONE_WIRE_PIN);
 DallasTemperature optic(&oneWire);
 bool opticOk = false;
+bool opticPending = false;  // a DS18B20 conversion is running (non-blocking, ~750 ms)
+unsigned long opticStarted = 0;
+float opticC = NAN;
+const unsigned long OPTIC_CONVERSION_MS = 800;
 
 unsigned long lastPos = 0, lastEnv = 0, lastPing = 0;
 char line[48];
@@ -70,13 +74,20 @@ void heatersOff() {
   setHeater(1, 0);
 }
 
+// Exactly two hex digits after '*', matching the XOR of the body; anything else is corrupt.
 bool checksumOk(char* text) {
   char* star = strrchr(text, '*');
-  if (!star) return false;
+  if (!star || strlen(star + 1) != 2 || !isxdigit(star[1]) || !isxdigit(star[2])) return false;
   *star = '\0';
   uint8_t cs = 0;
   for (char* p = text; *p; p++) cs ^= (uint8_t)*p;
   return cs == (uint8_t)strtol(star + 1, nullptr, 16);
+}
+
+// Parse a whole decimal integer; false on empty input or trailing junk.
+bool parseInt(const char* s, char** end, long* out) {
+  *out = strtol(s, end, 10);
+  return *end != s;
 }
 
 void handleCommand(char* text) {
@@ -85,9 +96,15 @@ void handleCommand(char* text) {
   if (strcmp(text, "PING") == 0) {
     lastPing = millis();
   } else if (strncmp(text, "HEAT ", 5) == 0) {
-    int ch = -1, pct = -1;
-    if (sscanf(text + 5, "%d %d", &ch, &pct) == 2) setHeater(ch, pct);
-    lastPing = millis();
+    char *end1, *end2;
+    long ch, pct;
+    if (parseInt(text + 5, &end1, &ch) && *end1 == ' ' && parseInt(end1 + 1, &end2, &pct) &&
+        *end2 == '\0') {
+      setHeater(ch, pct);
+      lastPing = millis();
+    } else {
+      sendLine("ERR bad HEAT");
+    }
   } else if (strcmp(text, "ZERO") == 0) {
     noInterrupts();
     azCount = altCount = 0;
@@ -132,18 +149,28 @@ void sendEnvironment() {
     return;
   }
   float t = bme.readTemperature(), rh = bme.readHumidity();
-  float o = NAN;
-  if (opticOk) {
-    optic.requestTemperatures();
-    o = optic.getTempCByIndex(0);
-    if (o == DEVICE_DISCONNECTED_C) o = NAN;
-  }
+  float o = opticOk ? opticC : NAN;  // latest finished conversion (see pollOptic)
   char buf[40], ts[8], rhs[8], os[8];
   dtostrf(t, 1, 1, ts);  // AVR printf has no %f
   dtostrf(rh, 1, 1, rhs);
   if (isnan(o)) strcpy(os, "nan"); else dtostrf(o, 1, 1, os);
   snprintf(buf, sizeof buf, "ENV %s %s %s", ts, rhs, os);
   sendLine(buf);
+}
+
+// Start a DS18B20 conversion, and collect it on a later loop once it's done, so position
+// reports, commands and the watchdog never wait ~750 ms for the sensor.
+void pollOptic(unsigned long now) {
+  if (!opticOk) return;
+  if (!opticPending) {
+    optic.requestTemperatures();
+    opticPending = true;
+    opticStarted = now;
+  } else if (now - opticStarted >= OPTIC_CONVERSION_MS) {
+    float t = optic.getTempCByIndex(0);
+    opticC = (t == DEVICE_DISCONNECTED_C) ? NAN : t;
+    opticPending = false;
+  }
 }
 
 void watchdogStart() {  // ATmega4809: reset if loop() stalls for ~2 s
@@ -169,6 +196,7 @@ void setup() {
   bmeOk = bme.begin(0x76) || bme.begin(0x77);
   optic.begin();
   opticOk = optic.getDeviceCount() > 0;
+  optic.setWaitForConversion(false);
   watchdogStart();
 }
 
@@ -180,6 +208,7 @@ void loop() {
     lastPos = now;
     sendPosition();
   }
+  pollOptic(now);
   if (now - lastEnv >= ENV_EVERY_MS) {
     lastEnv = now;
     sendEnvironment();

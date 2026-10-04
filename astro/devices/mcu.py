@@ -46,6 +46,9 @@ class Mcu:
 
     def close(self) -> None:
         self._stop.set()
+        for worker in (self._reader, self._pinger):  # no late ENV may turn heat back on
+            if worker.is_alive():
+                worker.join(timeout=2)
         for ch in HEATER_CHANNELS:
             self._send(proto.heat(ch, 0))
         self._ser.close()

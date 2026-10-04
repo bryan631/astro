@@ -97,3 +97,22 @@ def test_mcu_tracks_position_and_drives_heaters_from_env():
     assert fake.written[0] == frame("VER?")
     mcu.close()
     assert fake.written[-2:] == [heat(0, 0), heat(1, 0)]  # heaters off on shutdown
+
+
+def test_failed_sensor_read_turns_heaters_off():
+    assert heater_percent(Environment(math.nan, math.nan, math.nan)) == 0
+
+
+def test_empty_valid_line_dropped():
+    assert parse(b"*00\n") is None
+
+
+def test_close_waits_for_reader_before_heaters_off():
+    import time
+
+    mcu, fake = make_mcu([frame("ENV 24 90 nan")] * 50)
+    mcu.start()
+    time.sleep(0.05)
+    mcu.close()
+    assert fake.written[-2:] == [heat(0, 0), heat(1, 0)]
+    assert not mcu._reader.is_alive()

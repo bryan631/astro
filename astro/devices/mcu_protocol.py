@@ -61,7 +61,10 @@ def parse(line: bytes | str) -> Message | None:
     body, sep, cs = text.strip().rpartition("*")
     if not sep or cs.upper() != checksum(body):
         return None
-    kind, *args = body.split()
+    tokens = body.split()
+    if not tokens:  # e.g. "*00": valid checksum, nothing in it
+        return None
+    kind, *args = tokens
     try:
         if kind == "POS" and len(args) == 2:
             return Position(int(args[0]), int(args[1]))
