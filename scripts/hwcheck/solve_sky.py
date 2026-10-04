@@ -20,6 +20,8 @@ ap.add_argument("--every", type=float, default=3, help="seconds between solves")
 ap.add_argument("--save", type=Path, default=None, help="directory for sample raw frames")
 ap.add_argument("--save-every", type=int, default=10, help="save every Nth frame")
 args = ap.parse_args()
+if args.exp > 10:
+    ap.error(f"--exp is in seconds; {args.exp:g} s is very long. Did you mean {args.exp / 1000:g}?")
 
 cam = SvbonyCamera("SV905C")
 cam.connect()

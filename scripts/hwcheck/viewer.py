@@ -1,114 +1,72 @@
 #!/usr/bin/env python3
-"""Live MJPEG viewer for an SVBony camera. Open http://localhost:8080 in the ChromeOS browser.
+"""Live camera window for focusing and hardware checks (matplotlib).
 
-  ./viewer.py finder --exp 0.05 --gain 100
-  ./viewer.py main --roi 1280x720
+    .venv/bin/python scripts/hwcheck/viewer.py finder --exp 0.5 --gain 100
+Keys: up/down exposure x2 / /2, right/left gain +/-20, s save raw frame (.npy), q quit.
+Title shows fps, max pixel, sharpness (higher = sharper) and star count / HFR (lower = sharper).
 """
-import argparse
-import threading
-import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-import cv2
-import svb
+import argparse
+import time
+
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.animation import FuncAnimation
+
+from astro.capture.preview import focus_numbers, superpixel_rgb
+from astro.devices.svbony import SvbonyCamera
+
+MODELS = {"finder": "SV905C", "main": "SV705C"}
 
 ap = argparse.ArgumentParser()
-ap.add_argument("cam", help="finder (SV905C), main (SV705C) or a camera index")
-ap.add_argument("--exp", type=float, default=0.02, help="exposure, seconds")
-ap.add_argument("--gain", type=int, default=None)
-ap.add_argument("--roi", default=None, help="WxH, centered, e.g. 1280x720")
-ap.add_argument("--width", type=int, default=960, help="max stream width")
-ap.add_argument("--port", type=int, default=8080)
+ap.add_argument("cam", choices=MODELS, help="finder (SV905C) or main (SV705C)")
+ap.add_argument("--exp", type=float, default=0.05, help="exposure, seconds")
+ap.add_argument("--gain", type=int, default=100)
 args = ap.parse_args()
+if args.exp > 10:
+    ap.error(f"--exp is in seconds; {args.exp:g} s is very long. Did you mean {args.exp / 1000:g}?")
 
-cams = svb.enumerate_cameras()
-key = {"finder": "SV905C", "main": "SV705C"}.get(args.cam)
-info = next((c for c in cams if key and key in c.name.decode()), None) if key else cams[int(args.cam)]
-if info is None:
-    raise SystemExit(f"no {args.cam} camera; found {[c.name.decode() for c in cams]}")
-
-with svb.Camera(info) as probe:
-    p = probe.prop
-w, h = map(int, args.roi.split("x")) if args.roi else (p.max_w, p.max_h)
-w, h = min(w, p.max_w) // 8 * 8, min(h, p.max_h) // 2 * 2
-
-
-def open_cam():
-    cam = svb.Camera(info)
-    try:
-        cam.set_control(svb.EXPOSURE, int(args.exp * 1e6))
-        if args.gain is not None:
-            cam.set_control(svb.GAIN, args.gain)
-        cam.start((p.max_w - w) // 2 // 2 * 2, (p.max_h - h) // 2 // 2 * 2, w, h)
-    except RuntimeError:
-        cam.__exit__()
-        raise
-    return cam
+cam = SvbonyCamera(MODELS[args.cam])
+cam.connect()
+cam.set_exposure(args.exp)
+cam.set_gain(args.gain)
+fig, ax = plt.subplots(figsize=(10, 7))
+ax.set_axis_off()
+img = ax.imshow(superpixel_rgb(cam.capture(), cam.bayer))
+state = {"t": time.time(), "fps": 0.0, "raw": None}
 
 
-def reopen(old):
-    """Release the camera and keep retrying until it reopens, so capture never silently stops."""
-    old.__exit__()
-    while True:
-        try:
-            return open_cam()
-        except RuntimeError as e:
-            print(f"reopen failed: {e}; retrying in 2 s", flush=True)
-            time.sleep(2)
+def update(_):
+    raw = cam.capture()
+    state["raw"] = raw
+    now = time.time()
+    state["fps"] = 0.8 * state["fps"] + 0.2 / max(now - state["t"], 1e-6)
+    state["t"] = now
+    img.set_data(superpixel_rgb(raw, cam.bayer))
+    f = focus_numbers(raw)
+    ax.set_title(f"{args.cam}  exp {cam.exposure_s:g}s  gain {cam.gain}  {state['fps']:.1f} fps  "
+                 f"max {raw.max()}  sharpness {f.sharpness:.0f}  stars {f.stars}  hfr {f.hfr_px:.2f}")
+    return (img,)
 
 
-cam = open_cam()
-print(f"{info.name.decode()} {w}x{h} exp={args.exp}s; http://localhost:{args.port}", flush=True)
-
-jpeg, fps = b"", 0.0
-code = getattr(cv2, f"COLOR_Bayer{svb.BAYER[p.bayer]}2BGR")
-
-
-def grab():
-    global jpeg, fps, cam
-    t = time.time()
-    while True:
-        try:
-            raw = cam.frame(wait_ms=int(args.exp * 3000) + 2000)
-        except RuntimeError as e:  # SDK intermittently times out; reopen the camera (see docs/hardware-results.md)
-            print(f"{e}; reopening camera", flush=True)
-            cam = reopen(cam)
-            continue
-        img = cv2.cvtColor(raw, code)
-        if w > args.width:
-            img = cv2.resize(img, (args.width, h * args.width // w), interpolation=cv2.INTER_AREA)
-        now = time.time()
-        fps = 0.9 * fps + 0.1 / max(now - t, 1e-6)
-        t = now
-        focus = cv2.Laplacian(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var()  # higher = sharper
-        text = f"{fps:.1f} fps  max={raw.max()}  focus={focus:.0f}"
-        cv2.putText(img, text, (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])[1].tobytes()
+def on_key(event):
+    if event.key == "up":
+        cam.set_exposure(cam.exposure_s * 2)
+    elif event.key == "down":
+        cam.set_exposure(cam.exposure_s / 2)
+    elif event.key == "right":
+        cam.set_gain(cam.gain + 20)
+    elif event.key == "left":
+        cam.set_gain(max(cam.gain - 20, 0))
+    elif event.key == "s" and state["raw"] is not None:
+        name = f"{args.cam}_{int(time.time())}.npy"
+        np.save(name, state["raw"])
+        print("saved", name)
 
 
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path != "/":
-            return self.send_error(404)
-        self.send_response(200)
-        self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=f")
-        self.end_headers()
-        try:
-            while True:
-                self.wfile.write(b"--f\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n%s\r\n" % (len(jpeg), jpeg))
-                time.sleep(max(0.03, args.exp))
-        except (BrokenPipeError, ConnectionResetError):
-            pass
-
-    def log_message(self, *a):
-        pass
-
-
-threading.Thread(target=grab, daemon=True).start()
+fig.canvas.mpl_connect("key_press_event", on_key)
+anim = FuncAnimation(fig, update, interval=30, blit=False, cache_frame_data=False)
 try:
-    ThreadingHTTPServer(("", args.port), Handler).serve_forever()
-except KeyboardInterrupt:
-    pass
+    plt.show()
 finally:
-    cam.stop()
     cam.close()
