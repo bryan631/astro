@@ -1,0 +1,20 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # No language chosen yet. Replace this step with setup, lint, and test
+      # steps once the first code lands (e.g. actions/setup-python + pytest).
+      - name: Placeholder
+        run: echo "No build or tests configured yet"
