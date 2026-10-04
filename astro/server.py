@@ -39,8 +39,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SIM = os.environ.get("ASTRO_SIM") == "1"
 OFFLINE = os.environ.get("ASTRO_OFFLINE") == "1"  # no forecast fetches (tests, field hotspot)
 TICK_S = 0.1
-THINKING_AFTER_S = 1.0
-SORRY = "Sorry, something went wrong. Please try that again."  # say "Let me think." if an answer takes longer than this
+THINKING_AFTER_S = 1.0  # say "Let me think." if an answer takes longer than this
+SORRY = "Sorry, something went wrong. Please try that again."
 
 
 def load_env(path: Path = ROOT / ".env") -> None:
@@ -172,7 +172,8 @@ class Hub:
         self.clients: set[WebSocket] = set()
         self._loop: asyncio.Task | None = None
         self._sender: asyncio.Task | None = None
-        self._outbox: asyncio.Queue[dict] = asyncio.Queue()
+        self._outbox: asyncio.Queue[dict | None] = asyncio.Queue()
+        self._state: dict | None = None  # newest unsent state; None in the queue stands for it
         self._t0 = time.monotonic()
 
     def join(self, socket: WebSocket) -> None:
@@ -190,12 +191,20 @@ class Hub:
                     task.cancel()
 
     async def broadcast(self, msg: dict) -> None:
-        """Queue a message for every tablet (returns at once)."""
+        """Queue a message for every tablet (returns at once). States coalesce: a slow
+        tablet gets the newest one, not a growing backlog; events keep their order."""
+        if msg["type"] == "state":
+            queued, self._state = self._state is not None, msg
+            if queued:
+                return
+            msg = None
         await self._outbox.put(msg)
 
     async def _send_loop(self) -> None:
         while True:
             msg = await self._outbox.get()
+            if msg is None:
+                msg, self._state = self._state, None
             if msg["type"] in LOGGED:
                 log.info(msg["type"], extra={"data": {k: v for k, v in msg.items() if k != "type"}})
             audio = None

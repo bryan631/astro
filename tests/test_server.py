@@ -227,3 +227,20 @@ def test_hardware_startup_failure_is_spoken(monkeypatch):
     monkeypatch.setattr(server, "get_hub", broken)
     with TestClient(server.app).websocket_connect("/ws") as ws:
         assert "isn't ready: SV905C not found" in receive_until(ws, "say")
+
+
+def test_state_updates_coalesce_while_events_keep_order():
+    import asyncio
+
+    from astro.server import Hub
+
+    async def run():
+        hub = Hub.__new__(Hub)
+        hub._outbox, hub._state = asyncio.Queue(), None
+        for i in range(50):
+            await hub.broadcast({"type": "state", "n": i})
+        await hub.broadcast({"type": "say", "text": "hi"})
+        await hub.broadcast({"type": "state", "n": 99})
+        return hub._outbox.qsize(), hub._state
+    size, state = asyncio.run(run())
+    assert size == 2 and state == {"type": "state", "n": 99}
