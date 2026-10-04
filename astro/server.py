@@ -36,6 +36,7 @@ from astro.voice.speech import Stt, Tts
 ROOT = Path(__file__).resolve().parents[1]
 SIM = os.environ.get("ASTRO_SIM") == "1"
 TICK_S = 0.1
+THINKING_AFTER_S = 1.0  # say "Let me think." if an answer takes longer than this
 
 
 def load_env(path: Path = ROOT / ".env") -> None:
@@ -166,7 +167,11 @@ class Hub:
     async def handle_text(self, socket: WebSocket, text: str) -> None:
         log.info("heard", extra={"data": {"text": text}})
         await socket.send_json({"type": "heard", "text": text})
-        for out in await asyncio.to_thread(self.agent.handle, text):
+        reply = asyncio.create_task(asyncio.to_thread(self.agent.handle, text))
+        done, _ = await asyncio.wait({reply}, timeout=THINKING_AFTER_S)
+        if not done:  # a slow LLM round trip: let the user know we heard them
+            await self.broadcast({"type": "say", "text": "Let me think."})
+        for out in await reply:
             await self.broadcast(out)
 
     async def _guidance_loop(self) -> None:

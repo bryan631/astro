@@ -9,7 +9,7 @@ import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -24,7 +24,7 @@ from astro.guidance.engine import CueLimiter, Guide
 from astro.intents import Intent, match_name, parse
 from astro.planner.catalog import load_targets
 from astro.planner.horizon import HorizonMask
-from astro.planner.tonight import PLANETS, plan
+from astro.planner.tonight import PLANETS, next_dark, plan
 from astro.pointing.coords import Site, body_altaz, radec_to_altaz
 from astro.pointing.finder_sync import FinderSync, check_focus
 from astro.pointing.geometry import separation_deg
@@ -45,6 +45,7 @@ FOCUS_CROP_PX = 256  # sharpness measured on a crop around the planet
 MIN_HORIZON_MARKS = 3
 SITE_MOVE_KM = 1.0  # moving farther than this from the model's site invalidates the mount model
 CLOUD_CACHE_S = 15 * 60  # Open-Meteo is hourly; don't ask on every request
+LATER_MIN = 30  # "tonight" more than this far ahead: say when it gets dark
 CLOUDY_PCT = 50  # at or above this cloud cover, tonight's suggestions mention the clouds
 EARTH_RADIUS_KM = 6371.0
 
@@ -75,6 +76,7 @@ class Session:
         self.weather = weather  # (lat, lon, when) -> cloud % or None offline; None = no forecast
         self._clouds: float | None = None
         self._clouds_at = -1e9
+        self._clouds_lock = threading.Lock()
         self._clouds_site: tuple[float, float] | None = None
         self.position = finder.position if finder else position
         if finder is not None:
@@ -127,6 +129,9 @@ class Session:
 
     # --- commands ------------------------------------------------------------------------
     def handle(self, text: str) -> list[dict]:
+        intent = parse(text)
+        if intent is not None and intent.name == "tonight":
+            return self.tonight()  # planning is slow and read-only: keep it off the lock
         with self._lock:
             return self._handle(text)
 
@@ -278,37 +283,52 @@ class Session:
         self.target, self.guide, self._focus_coach = name, guide, None
         return [*pre, say(f"Let's find {name}.")]
 
-    def clouds(self) -> float | None:
-        """Cloud cover now (%), from Open-Meteo; None offline (cached for a while)."""
-        now, here = time.monotonic(), (self.site.lat_deg, self.site.lon_deg)
-        stale = now - self._clouds_at > CLOUD_CACHE_S or here != self._clouds_site
-        if self.weather is not None and stale:  # cache per place: a GPS move refetches
-            self._clouds_at, self._clouds_site = now, here
-            self._clouds = self.weather(*here, self.clock())
-        return self._clouds
+    def clouds(self, site: Site | None = None) -> float | None:
+        """Cloud cover now (%) at `site`, from Open-Meteo; None offline. Cached per place; its
+        own lock (not the session's) so a slow fetch never stalls guidance."""
+        site = site or self.site
+        here = (site.lat_deg, site.lon_deg)
+        with self._clouds_lock:
+            stale = time.monotonic() - self._clouds_at > CLOUD_CACHE_S or here != self._clouds_site
+            if self.weather is not None and stale:  # a GPS move refetches
+                self._clouds = self.weather(*here, self.clock())
+                self._clouds_at, self._clouds_site = time.monotonic(), here
+            return self._clouds
+
+    def _plan(self) -> tuple[dict, datetime | None, float | None]:
+        """Tonight's choices from the next dark time, in local time (asked at 4 PM, this plans
+        the coming night). Runs outside the session lock: planning takes ~0.5 s of astropy."""
+        with self._lock:  # one consistent snapshot; the slow work below runs unlocked
+            site, horizon = self.site, self.horizon
+        now = self.clock().astimezone(site.timezone)
+        start = next_dark(site, now)
+        clouds = self.clouds(site)
+        if start is None:
+            return {}, None, clouds
+        return plan(site, start, mask=horizon, cloud_cover=clouds), start, clouds
 
     def tonight(self) -> list[dict]:
-        clouds = self.clouds()
-        choices = plan(self.site, self.clock(), mask=self.horizon,
-                       cloud_cover=clouds)
+        choices, start, clouds = self._plan()
         flat = sorted((c for cs in choices.values() for c in cs), key=lambda c: -c.score)
         if not flat:
             return [say("Nothing good is up right now.")]
-        self._suggestions = [c.name for c in flat[1:6]]
+        with self._lock:
+            self._suggestions = [c.name for c in flat[1:6]]
         best = flat[0]
         others = ", ".join(c.name for c in flat[1:3])
+        when = ""
+        if start is not None and start - self.clock() > timedelta(minutes=LATER_MIN):
+            when = f"It's still light out. Once it's dark, around {_clock(start)}: "
         sky = ""
         if clouds is not None and clouds >= CLOUDY_PCT:
             sky = f"It looks about {clouds:.0f} percent cloudy, so it may come and go. "
-        return [say(f"{sky}{best.name} is the best right now. {best.note} "
+        return [say(f"{when}{sky}{best.name} is the best. {best.note} "
                     f"Other good ones: {others}. Say 'go to' a name, or 'next'.")]
 
     def tonight_by_category(self) -> str:
-        """Compact text for the agent: best target per category."""
-        clouds = self.clouds()
-        choices = plan(self.site, self.clock(), mask=self.horizon,
-                       cloud_cover=clouds)
-        lines = [f"{cat}: {cs[0].name} (best around {cs[0].best_time:%H:%M}). {cs[0].note}"
+        """Compact text for the agent: best target per category, local times."""
+        choices, _, clouds = self._plan()
+        lines = [f"{cat}: {cs[0].name} (best around {_clock(cs[0].best_time)}). {cs[0].note}"
                  for cat, cs in choices.items()]
         if clouds is not None:
             lines.append(f"cloud cover: about {clouds:.0f}%")
@@ -541,7 +561,7 @@ class Session:
         facts.append(f"{len(pictures)} pictures in the gallery")
         facts.append("treeline recorded" if self.horizon.points != HorizonMask().points
                      else "treeline not recorded (default 20 degrees)")
-        clouds = self.clouds()
+        clouds = self._clouds  # cached only: never fetch the forecast under the lock
         facts.append(f"cloud cover about {clouds:.0f}%" if clouds is not None
                      else "no weather forecast (offline)")
         return "; ".join(facts)
@@ -625,6 +645,11 @@ class Session:
 
     def _extended_targets(self) -> set[str]:
         return {p.capitalize() for p in PLANETS} | {"Moon"}
+
+
+def _clock(t: datetime) -> str:
+    """Local wall-clock time as spoken: '9:15 PM'."""
+    return t.strftime("%I:%M %p").lstrip("0")
 
 
 def say(text: str) -> dict:
