@@ -20,6 +20,16 @@ Scripts: `scripts/hwcheck/` (`enumerate.py`, `checklist.py`). SDK lives in `~/sd
 - **The SDK's bundled `libusb-1.0.so*` files are empty.** Load the system `libusb-1.0.so.0` with `RTLD_GLOBAL` first.
 - Needs udev rule `90-ckusb.rules` (mode 0666) for non-root access.
 
+## Finder on real sky (2026-10-03, first look)
+- 0.2 s at gain 1000: one bright star visible, saturated, with a red halo; could not be focused sharply.
+- "Capped" frames at several gains still showed drifting stars: the plastic cap passes infrared, and
+  the IMX225 is IR-sensitive. The red halo and soft focus point the same way: **IR focuses at a
+  different point than visible light. Try an IR-cut filter**, stop down to f/2-2.8, and focus on an
+  unsaturated star (gain 100-300) using `hfr` in the viewer overlay.
+- Hot pixels (~15 at gain 1000) and an 8-bit noise floor where the MAD is 0 fooled the star counter
+  (33,000 "stars" on a dark frame). Fixed: hot-pixel removal, noise floor, 2-px minimum star size.
+  Real frames are in `tests/data/` as regression tests.
+
 ## Still open
 - ~~**Finder focus**~~ done 2026-10-03 (distant object, `viewer.py`).
 - **USB3 speed:** retest frame rates on the MeLE (container links at USB2).

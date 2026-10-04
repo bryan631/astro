@@ -16,6 +16,17 @@ def solver():
     return FinderSolver()
 
 
+def test_remove_hot_pixels_keeps_stars():
+    from astro.pointing.platesolve import remove_hot_pixels
+
+    img = np.full((9, 9), 10, np.uint8)
+    img[2, 2] = 200  # hot pixel: neighbours dark
+    img[5:8, 5:8] = 60
+    img[6, 6] = 200  # star: light spills into neighbours
+    out = remove_hot_pixels(img)
+    assert out[2, 2] == 10 and out[6, 6] == 200
+
+
 def test_bin2x2():
     raw = np.arange(16, dtype=np.uint8).reshape(4, 4)
     assert bin2x2(raw).tolist() == [[10, 18], [42, 50]]

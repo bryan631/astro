@@ -6,7 +6,7 @@ import numpy as np
 
 from astro.capture.focus import laplacian_variance
 from astro.pointing.finder_sync import check_focus
-from astro.pointing.platesolve import bin2x2
+from astro.pointing.platesolve import finder_gray
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,6 @@ class FocusNumbers:
 
 
 def focus_numbers(raw: np.ndarray) -> FocusNumbers:
-    gray = bin2x2(raw)
+    gray = finder_gray(raw)
     report = check_focus(gray)
     return FocusNumbers(laplacian_variance(gray), report.stars, report.hfr_px)

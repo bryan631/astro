@@ -61,7 +61,8 @@ def test_blank_sky_explains():
 def test_bright_scene_is_not_called_out_of_focus():
     rng = np.random.default_rng(0)
     scene = rng.normal(20, 3, (480, 640))  # lit room / twilight: thousands of bright details
-    scene[rng.integers(0, 480, 3000), rng.integers(0, 640, 3000)] = 200
+    ys, xs = rng.integers(0, 480, 3000), rng.integers(0, 639, 3000)
+    scene[ys, xs] = scene[ys, xs + 1] = 200  # 2-pixel details, like a textured lit scene
     assert "doesn't look like a starry sky" in check_focus(scene).reason
 
 
@@ -130,3 +131,21 @@ def test_goto_ends_finder_focus_mode(solver):
     s.handle("focus the finder")
     s.handle("go to albireo")
     assert any(m["type"] == "state" for m in s.tick(0.0))
+
+
+# Real SV905C frames, 0.2 s at gain 1000 (2026-10-03): one bright star, and the lens cap on.
+DATA = __import__("pathlib").Path(__file__).parent / "data"
+
+
+def test_real_capped_frame_has_no_stars():
+    from astro.pointing.platesolve import finder_gray
+
+    report = check_focus(finder_gray(np.load(DATA / "finder_cap_on.npy")))
+    assert report.stars == 0 and "can't see any stars" in report.reason
+
+
+def test_real_one_star_frame_is_not_called_out_of_focus():
+    from astro.pointing.platesolve import finder_gray
+
+    report = check_focus(finder_gray(np.load(DATA / "finder_one_star.npy")))
+    assert report.stars == 1 and "a star or two" in report.reason
