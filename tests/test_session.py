@@ -1,6 +1,8 @@
 import re
 from datetime import UTC, datetime, timedelta, timezone
 
+import pytest
+
 from astro.devices.sim.scope import SimScope, SimUser
 from astro.pointing.coords import Site
 from astro.session import Session
@@ -164,3 +166,30 @@ def test_probe_is_dropped_when_guidance_stops():
     s.handle("stop")
     s.tick(0.5)
     assert s._direction_probe is None
+
+
+def test_stale_solve_fix_holds_cues_until_a_fresh_one():
+    from types import SimpleNamespace
+
+    s, pos = _guiding_session(100.0)
+    age = [5.0]
+    s.finder = SimpleNamespace(synced=True, fix_age=lambda: age[0],
+                               position=lambda: (pos["alt"], pos["az"]))
+    s._direction_probe = ("right", 100.0, 0.0)
+    held = s.tick(0.1)
+    assert held[0] == {"type": "hold"} and s._direction_probe is None
+    assert texts(held) == ["Hold still for a second so I can see where we are."]
+    assert s.tick(0.2) == []  # said once per stale stretch, no cues from the old fix
+    age[0] = 0.5
+    assert any(m["type"] == "state" for m in s.tick(0.3))
+
+
+def test_stale_fix_holds_centering_too():
+    from types import SimpleNamespace
+
+    s, pos = _guiding_session(100.0)
+    s.guide, s._centering = None, True
+    s.finder = SimpleNamespace(synced=True, fix_age=lambda: 5.0,
+                               position=lambda: (pos["alt"], pos["az"]))
+    s._center_step = lambda t: pytest.fail("centered from a stale fix")
+    assert texts(s.tick(0.1)) == ["Hold still for a second so I can see where we are."]
