@@ -470,6 +470,30 @@ class Session:
         return [say(f"Saved the treeline from {len(points)} marks. "
                     "I'll only suggest things above it.")]
 
+    def status_text(self) -> str:
+        """Short facts for the agent to summarize (not spoken verbatim); a locked snapshot."""
+        with self._lock:
+            return self._status_facts()
+
+    def _status_facts(self) -> str:
+        facts = []
+        if self.finder is not None:
+            facts.append("aligned with the stars" if self.finder.synced else "not aligned yet")
+        facts.append(f"target: {self.target}" if self.target else "no target")
+        facts.append("Barlow in" if self.barlow else "no Barlow")
+        if self.main_camera is not None:
+            facts.append("focus checked" if self.main_focus_ok else "focus not checked yet")
+        if self._camera_busy():
+            facts.append("a picture is being taken")
+        pictures = list(self.gallery_dir.glob("*.png")) if self.gallery_dir.exists() else []
+        facts.append(f"{len(pictures)} pictures in the gallery")
+        facts.append("treeline recorded" if self.horizon.points != HorizonMask().points
+                     else "treeline not recorded (default 20 degrees)")
+        clouds = self.clouds()
+        facts.append(f"cloud cover about {clouds:.0f}%" if clouds is not None
+                     else "no weather forecast (offline)")
+        return "; ".join(facts)
+
     def request_location(self) -> list[dict]:
         """Ask the tablet for a GPS fix; it answers with a `location` message (see set_location)."""
         return [say("Let me ask the tablet where we are. Please allow location access."),
