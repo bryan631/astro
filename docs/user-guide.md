@@ -22,7 +22,7 @@
 
 **Good to know**
 
-- Say **"Stop"** any time.
-- Put in or took out the Barlow? Say **"Barlow in"** or **"Barlow out."**
+- Say **"Stop"** any time. It stops the guiding, or a picture being taken.
+- Did you put in or take out the Barlow? Say **"Barlow in"** or **"Barlow out."**
 - Moved the telescope to a new place? Say **"Use my location."**
 - The screen is red to protect your night vision. Tap **Day mode** to change it.
