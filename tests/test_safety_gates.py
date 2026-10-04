@@ -128,3 +128,14 @@ def test_guidance_stops_on_frozen_encoders_and_lost_alignment():
         said = texts(s.tick(0.0))[0]
         assert s.guide is None and s.target == "Saturn"
         assert ("position sensors" if broken == "stale" else "lost track") in said
+
+
+def test_centering_stops_too_when_pointing_is_lost():
+    cam = CountingCamera()
+    finder = FinderSync(cam, solver=None, model=MountModel(), encoders=lambda: (45.0, 0.0),
+                        site=WPB, clock=lambda: NIGHT)
+    finder.synced = True
+    s = Session(WPB, clock=lambda: NIGHT, finder=finder)
+    s.target, s._centering = "Saturn", True
+    finder.encoder_age = lambda: 5.0
+    assert "position sensors" in texts(s.tick(0.0))[0] and not s._centering

@@ -346,13 +346,13 @@ class Session:
             if self._focus_mode == "main":
                 return self._main_focus_step(t)
             return self._finder_focus_step(t)
+        if (self._centering or self.guide is not None) and (lost := self._pointing_lost()):
+            self.guide, self._centering = None, False  # keep the target: "go to" it again later
+            return [say(lost)]
         if self._centering:
             return self._center_step(t)
         if self.guide is None or self.target is None:
             return []
-        if lost := self._pointing_lost():
-            self.guide = None  # keep the target: "go to" it again once things are back
-            return [say(lost)]
         if t - self._resolved_at >= TARGET_REFRESH_S:
             self._resolved_at = t
             alt, az = self.altaz_of(self.target)

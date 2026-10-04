@@ -178,3 +178,40 @@ def test_boot_after_positions_means_reboot():
     m.handle(Boot("astro-mcu", "0.1"))  # mid-session: counts were reset
     assert reboots == [1]
     assert parse(frame("BOOT astro-mcu 0.1")) == Boot("astro-mcu", "0.1")
+
+
+class WriteFailsSerial(FakeSerial):
+    def write(self, data):
+        import serial
+
+        raise serial.SerialException("unplugged")
+
+
+def test_close_still_closes_the_port_when_heater_writes_fail():
+    from astro.devices.mcu import Mcu
+
+    port = WriteFailsSerial([])
+    closed = []
+    port.close = lambda: closed.append(1)
+    m = Mcu("/dev/null", serial_factory=lambda *a, **k: port)
+    m.close()
+    assert closed == [1]
+
+
+def test_write_error_while_handling_env_reopens_instead_of_dying():
+    import time
+
+    from astro.devices.mcu import Mcu
+
+    opened = []
+
+    def factory(*a, **k):
+        port = WriteFailsSerial([frame("ENV 24 90 nan")]) if not opened else FakeSerial([frame("POS 7 8")])
+        opened.append(port)
+        return port
+
+    m = Mcu("/dev/null", serial_factory=factory)
+    m._reader.start()  # skip start()'s VER? write on the failing port
+    time.sleep(0.3)
+    m._stop.set()
+    assert len(opened) == 2 and m.counts() == (7, 8)

@@ -59,9 +59,12 @@ class Mcu:
         try:
             for ch in HEATER_CHANNELS:
                 self._send(proto.heat(ch, 0))
-            self._ser.close()
         except (serial.SerialException, OSError):
             pass  # already unplugged: the firmware's heartbeat timeout turns them off
+        try:
+            self._ser.close()  # always attempted, even if the heater writes failed
+        except (serial.SerialException, OSError):
+            pass
 
     def position_age(self) -> float:
         """Seconds since the last POS line (guidance must not trust frozen counts)."""
@@ -108,13 +111,13 @@ class Mcu:
         while not self._stop.is_set():
             try:
                 line = self._ser.readline()
+                if line and (msg := proto.parse(line)) is not None:
+                    self.handle(msg)  # may write (heaters): same recovery as a failed read
             except (serial.SerialException, OSError):
                 if self._stop.is_set():
                     return
                 self._reopen()  # unplugged: the old handle is dead, and the device may come
                 continue  # back under another name (ttyACM1)
-            if line and (msg := proto.parse(line)) is not None:
-                self.handle(msg)
 
     def _reopen(self) -> None:
         with self._lock:
