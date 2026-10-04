@@ -22,6 +22,12 @@ MIN_MOTION_DEG = 0.08
 MIN_SPREAD = 0.3  # moves must not all be in one direction (needs both axes to solve)
 
 
+def local_delta(alt0: float, az0: float, alt1: float, az1: float) -> np.ndarray:
+    """Small-angle sky offset from (alt0, az0) to (alt1, az1): (wrapped d_az * cos(alt0), d_alt)."""
+    d_az = (az1 - az0 + 180) % 360 - 180
+    return np.array([d_az * np.cos(np.radians(alt0)), alt1 - alt0])
+
+
 @dataclass
 class CameraAxes:
     """A maps a target's sky offset from the camera aim (d_az_sky, d_alt) to pixels from center."""
@@ -62,15 +68,19 @@ class MainOffset:
     d_alt_deg: float = 0.0
     observations: int = 0
 
-    def observe(self, axes: CameraAxes, target_dx_px: float, target_dy_px: float) -> None:
-        """The target sits (dx, dy) px from the main image center while guidance says on target.
+    def observe(self, axes: CameraAxes, target_dx_px: float, target_dy_px: float,
+                target_from_model: tuple[float, float] = (0.0, 0.0)) -> None:
+        """The target sits (dx, dy) px from the main image center.
 
-        The camera then points the opposite way from the target, by that sky offset.
+        `target_from_model` is the target's local sky offset (d_az_sky, d_alt) from where the
+        finder model says the scope points: the finder's leftover error, plus any correction
+        already applied. Camera offset = target_from_model - (target's offset from the camera).
         """
         t_az, t_alt = axes.sky_offset(target_dx_px, target_dy_px)
+        c_az, c_alt = target_from_model[0] - t_az, target_from_model[1] - t_alt
         n = self.observations
-        self.d_az_sky_deg = (self.d_az_sky_deg * n - t_az) / (n + 1)
-        self.d_alt_deg = (self.d_alt_deg * n - t_alt) / (n + 1)
+        self.d_az_sky_deg = (self.d_az_sky_deg * n + c_az) / (n + 1)
+        self.d_alt_deg = (self.d_alt_deg * n + c_alt) / (n + 1)
         self.observations = n + 1
 
     def correct(self, target_alt: float, target_az: float) -> tuple[float, float]:

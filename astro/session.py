@@ -122,7 +122,7 @@ class Session:
                 return [say("OK, focus is set.")]
             if self._camera_busy():  # "stop" while taking a picture ends the picture
                 return self._handle("stop recording")
-            self.target, self.guide = None, None
+            self.target, self.guide, self._centering = None, None, False
             return [say("Stopped.")]
         if intent.name in ("barlow_on", "barlow_off"):
             self.barlow = intent.name == "barlow_on"
@@ -193,6 +193,7 @@ class Session:
             return [say("Let's make sure it's sharp first."), *self.start_main_focus()]
         if self._camera_busy():
             return [say("I'm already recording." if self.recorder.busy else "I'm already stacking.")]
+        self._centering = False  # the picture takes over the camera
         name = self.target or "capture"
         try:
             if self.target is None or self.target in self._extended_targets():
@@ -299,9 +300,9 @@ class Session:
         out = [{"type": "state", "target": self.target, **asdict(state)}]
         if cue:
             out.append(say(cue.text))
-            if cue.text == "stop" and self._should_center():
+            if cue.text == "stop" and state.on_target and self._should_center():
                 self._centering, self.guide = True, None  # finish with the main camera
-                self.centerer.restart()
+                self.centerer.restart(self.altaz_of(self.target))  # true, uncorrected target
         return out
 
     def _aim(self, alt: float, az: float) -> tuple[float, float]:
@@ -318,6 +319,9 @@ class Session:
         if t - self._center_at < CENTER_STEP_S:
             return []
         self._center_at = t
+        if self._camera_busy():  # a recording or stack took the camera
+            self._centering = False
+            return []
         if reason := self.exposure_safety():
             self._centering = False
             return [say(f"I stopped centering: {reason}.")]
