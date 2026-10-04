@@ -309,3 +309,11 @@ def test_deep_sky_capture_live_stacks_drifting_stars(tmp_path):
     frames = s.stacker.current.frames
     assert frames >= 5 and s.stacker.current.skipped <= 1
     assert (tmp_path / "gallery" / s.stacker.current.preview.name).exists()
+
+
+def test_plain_stop_ends_a_picture(tmp_path):
+    s, _ = make_session(tmp_path)
+    s.main_focus_ok, s.record_seconds = True, 5
+    s.handle("take a picture")
+    assert texts(s.handle("stop")) == ["Stopping the recording."]
+    assert s.recorder.current.done.wait(5)

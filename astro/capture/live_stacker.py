@@ -4,6 +4,7 @@ The scope doesn't track, so subs stay short (stars drift ~30 px/s at prime focus
 target slides out of the 32' field within about two minutes; stacking stops then.
 """
 
+import os
 import threading
 import time
 from dataclasses import dataclass, field
@@ -49,6 +50,8 @@ class LiveStacker:
             raise CaptureRefused("I'm already stacking.")
         if reason := self.safety():
             raise CaptureRefused(f"I can't take pictures now: {reason}.")
+        # Remember the camera's mode so planetary work afterwards isn't stuck at 0.2 s / gain 300.
+        self._restore = (getattr(self.camera, "exposure_s", None), getattr(self.camera, "gain", None))
         try:
             self.camera.set_roi(None)
             self.camera.set_exposure(SUB_EXPOSURE_S)
@@ -87,18 +90,31 @@ class LiveStacker:
                         live.error = ("I lost the stars, maybe clouds, or the target drifted out "
                                       "of view, so I stopped stacking.")
                         break
-                if time.monotonic() - saved >= PREVIEW_EVERY_S:
+                if stack.has_frames and time.monotonic() - saved >= PREVIEW_EVERY_S:
                     saved = time.monotonic()
                     self._save(stack, live)
         except (RuntimeError, OSError, ValueError) as e:
             live.error = f"Stacking failed: {e}"
         finally:
             try:
-                if live.frames:
+                if stack.has_frames:
                     self._save(stack, live)
+                self._restore_mode()
+            except (RuntimeError, OSError) as e:
+                live.error = live.error or f"Stacking stopped, and the camera did not reset: {e}"
             finally:
                 live.done.set()
 
+    def _restore_mode(self) -> None:
+        exposure, gain = self._restore
+        if exposure is not None:
+            self.camera.set_exposure(exposure)
+        if gain is not None:
+            self.camera.set_gain(gain)
+
     def _save(self, stack: LiveStack, live: LiveSession) -> None:
-        Image.fromarray(stretch(stack.image())).save(live.preview)
+        """Write next to the preview, then swap it in: the tablet never reads a half file."""
+        tmp = live.preview.with_suffix(".tmp.png")
+        Image.fromarray(stretch(stack.image())).save(tmp)
+        os.replace(tmp, live.preview)
         live.preview_version += 1

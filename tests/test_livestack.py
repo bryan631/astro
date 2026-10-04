@@ -56,3 +56,53 @@ def test_cloudy_frame_is_skipped():
 def test_stretch_maps_to_8bit():
     out = stretch(np.random.default_rng(0).normal(100, 5, (32, 32, 3)))
     assert out.dtype == np.uint8 and out.max() == 255 and out.min() == 0
+
+
+def test_first_frame_needs_stars():
+    rng = np.random.default_rng(5)
+    stack = LiveStack("GRBG")
+    cloud = (20 + rng.normal(0, 8, (SIZE, SIZE))).clip(0, 255).astype(np.uint8)
+    assert not stack.add(cloud) and not stack.has_frames
+    assert stack.add(observe(sky_scene(rng), 0, (0, 0), rng))  # first clear frame anchors
+
+
+class SkyCamera:
+    """Main-camera stub for LiveStacker: a slowly rotating star field."""
+
+    bayer = "GRBG"
+
+    def __init__(self):
+        self.rng, self.n = np.random.default_rng(6), 0
+        self.scene = sky_scene(self.rng)
+        self.exposure_s, self.gain = 0.01, 0
+
+    def set_roi(self, roi):
+        pass
+
+    def set_exposure(self, s):
+        self.exposure_s = s
+
+    def set_gain(self, g):
+        self.gain = g
+
+    def capture(self):
+        self.n += 1
+        return observe(self.scene, 0.2 * self.n, (0.5 * self.n, 0), self.rng)
+
+
+def test_safety_stop_mid_stack_keeps_frames_and_restores_camera(tmp_path):
+    import time
+
+    from astro.capture.live_stacker import LiveStacker
+
+    unsafe = {"reason": None}
+    cam = SkyCamera()
+    stacker = LiveStacker(cam, tmp_path, lambda: unsafe["reason"])
+    live = stacker.start("M27", 30)
+    assert cam.exposure_s == 0.2 and cam.gain == 300
+    while live.frames < 3:
+        time.sleep(0.02)
+    unsafe["reason"] = "daytime lockout"
+    assert live.done.wait(5)
+    assert "daytime lockout" in live.error and live.frames >= 3 and live.preview.exists()
+    assert (cam.exposure_s, cam.gain) == (0.01, 0)  # planetary mode restored

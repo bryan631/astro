@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import astroalign
 import numpy as np
 
+from astro.pointing.finder_sync import check_focus
 from astro.process.planet import superpixel_rgb
 
 MIN_STARS = 6  # astroalign needs a handful of stars to match triangles
@@ -35,7 +36,12 @@ class LiveStack:
         """Register one raw Bayer frame to the reference and add it. False if it was skipped."""
         rgb = superpixel_rgb(raw, self.bayer)
         lum = rgb.mean(axis=-1)
-        if self._ref_lum is None:  # first frame defines the reference
+        if self._ref_lum is None:  # first good frame defines the reference
+            stars = check_focus(lum).stars
+            if stars < MIN_STARS:  # clouds or a capped lens: don't anchor the stack to it
+                self.status.frames_skipped += 1
+                self.status.last_error = f"only {stars} stars in the first frame"
+                return False
             self._ref_lum, self._sum = lum, rgb.copy()
             self._weight = np.ones(lum.shape, np.float32)
             self.status.frames_added = 1
@@ -47,14 +53,17 @@ class LiveStack:
             self.status.frames_skipped += 1
             self.status.last_error = str(e)
             return False
-        channels = [astroalign.apply_transform(tf, rgb[..., c], self._ref_lum)[0]
-                    for c in range(3)]
-        _, footprint = astroalign.apply_transform(tf, lum, self._ref_lum)
-        covered = ~footprint  # astroalign's footprint is True where no data landed
+        warped = [astroalign.apply_transform(tf, rgb[..., c], self._ref_lum) for c in range(3)]
+        channels = [image for image, _ in warped]
+        covered = ~warped[0][1]  # footprint (same for every channel): True where no data landed
         self._sum += np.stack(channels, axis=-1) * covered[..., None]
         self._weight += covered
         self.status.frames_added += 1
         return True
+
+    @property
+    def has_frames(self) -> bool:
+        return self._sum is not None
 
     def image(self) -> np.ndarray:
         """Current mean (float RGB); edges only some frames covered are averaged correctly."""

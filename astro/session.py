@@ -115,6 +115,8 @@ class Session:
                     self.main_focus_ok = True
                 self._focus_coach = None
                 return [say("OK, focus is set.")]
+            if self._camera_busy():  # "stop" while taking a picture ends the picture
+                return self._handle("stop recording")
             self.target, self.guide = None, None
             return [say("Stopped.")]
         if intent.name in ("barlow_on", "barlow_off"):

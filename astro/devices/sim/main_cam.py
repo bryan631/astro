@@ -21,9 +21,9 @@ POSITION_REFRESH_S = 1.0  # bodies move slowly; look up positions once a second,
 SENSOR = (1928, 1090)  # SV705C 3856x2180 binned 2x2
 NOISE = 4.0
 # Synthetic deep-sky stars (the real camera sees mag ~12+, far deeper than any catalog here):
-# a random field fixed to the sky, regenerated per 2-degree patch, so frames drift and
-# rotate exactly as the sky does.
-STAR_PATCH_DEG = 2.0
+# a random field fixed to the sky (stable 1-degree tiles, the 3x3 around the view combined),
+# so frames drift and rotate exactly as the sky does.
+STAR_TILE_DEG = 1.0  # stars are generated per sky tile, seeded by the tile, so they never jump
 STARS_PER_SQ_ARCMIN = 0.5
 STAR_FLUX = (100.0, 1500.0)  # summed ADU before blur; far fainter than any planet
 STAR_SEEING_PX = 1.5
@@ -95,17 +95,22 @@ class SimMainCamera:
         return ndimage.gaussian_filter(img, STAR_SEEING_PX)
 
     def _field(self, ra0: float, dec0: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        key = (round(ra0 / STAR_PATCH_DEG), round(dec0 / STAR_PATCH_DEG))
-        if getattr(self, "_field_key", None) != key:
-            rng = np.random.default_rng(abs(hash(key)) % 2**32)
-            side = 2 * STAR_PATCH_DEG  # cover the patch plus a margin
-            n = rng.poisson(STARS_PER_SQ_ARCMIN * (side * 60) ** 2)
-            cra, cdec = key[0] * STAR_PATCH_DEG, key[1] * STAR_PATCH_DEG
-            dec = cdec + rng.uniform(-side / 2, side / 2, n)
-            ra = cra + rng.uniform(-side / 2, side / 2, n) / np.cos(np.radians(dec))
+        """Stars from the 3x3 tiles around the view; each tile is generated once from its key."""
+        ti, tj = int(np.floor(ra0 / STAR_TILE_DEG)), int(np.floor(dec0 / STAR_TILE_DEG))
+        tiles = [self._tile(ti + di, tj + dj) for di in (-1, 0, 1) for dj in (-1, 0, 1)]
+        return tuple(np.concatenate(parts) for parts in zip(*tiles))
+
+    def _tile(self, i: int, j: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        cache = self.__dict__.setdefault("_tiles", {})
+        if (i, j) not in cache:
+            rng = np.random.default_rng([i % 3600, j + 900])  # deterministic per tile
+            n = rng.poisson(STARS_PER_SQ_ARCMIN * (STAR_TILE_DEG * 60) ** 2
+                            * np.cos(np.radians((j + 0.5) * STAR_TILE_DEG)))
+            dec = (j + rng.uniform(0, 1, n)) * STAR_TILE_DEG
+            ra = (i + rng.uniform(0, 1, n)) * STAR_TILE_DEG
             flux = np.exp(rng.uniform(*np.log(STAR_FLUX), n))  # many faint, few bright
-            self._field_key, self._field_stars = key, (ra, dec, flux)
-        return self._field_stars
+            cache[(i, j)] = (ra, dec, flux)
+        return cache[(i, j)]
 
 
     def _body_positions(self) -> tuple[np.ndarray, np.ndarray]:
