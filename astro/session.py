@@ -565,7 +565,8 @@ class Session:
             result = job.result()
         except (ValueError, OSError) as e:
             return [say(f"I couldn't make the picture of {name}: {e}")]
-        prune(self.recorder.out_dir)  # the picture is made: keep only the newest raw videos
+        if not self._jobs:  # nothing queued still needs its raw video
+            prune(self.recorder.out_dir)  # keep only the newest raw videos
         return [say(f"Your picture of {name} is ready. Tap Pictures to see it."),
                 {"type": "picture", "file": result.path.name}]
 

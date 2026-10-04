@@ -15,9 +15,9 @@ from astro.devices.base import Camera, Roi
 ROI_PX = 512  # square planet ROI, sensor pixels
 RECENTER_EVERY = 50  # frames between drift checks
 RECENTER_FRACTION = 0.25  # re-center when the planet drifts this far from the ROI center
-SAFETY_CHECK_S = 1.0
+SAFETY_CHECK_S = 1.0  # pointing safety (Sun, daytime) is re-checked this often while recording
 KEEP_RECORDINGS = 3  # raw SER videos kept after processing (names sort by time)
-MIN_FREE_BYTES = 2 * 1024**3  # a 60 s recording is ~1.5 GB  # pointing safety (Sun, daytime) is re-checked this often while recording
+MIN_FREE_BYTES = 2 * 1024**3  # a 60 s recording is ~1.5 GB
 
 # Returns a spoken reason when exposing now is unsafe, else None (see astro/safety.py).
 SafetyCheck = Callable[[], str | None]

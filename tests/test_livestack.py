@@ -106,5 +106,5 @@ def test_safety_stop_mid_stack_keeps_frames_and_restores_camera(tmp_path):
     assert live.done.wait(5)
     assert "daytime lockout" in live.error and live.frames >= 3
     assert live.picture.exists() and not live.preview.exists()  # moved into the gallery
-    assert not list(tmp_path.glob("*.tmp"))  # no half-written previews left behind
+    assert not list(live.preview.parent.glob("*.tmp"))  # no half-written previews left behind
     assert (cam.exposure_s, cam.gain) == (0.01, 0)  # planetary mode restored

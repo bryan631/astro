@@ -106,6 +106,10 @@ class LiveStacker:
                 if stack.has_frames:
                     self._save(stack, live)
                     os.replace(live.preview, live.picture)  # finished: into the gallery
+            except (RuntimeError, OSError, ValueError) as e:
+                live.frames = 0  # no picture to announce
+                live.error = f"I couldn't save the stacked picture: {e}"
+            try:
                 self._restore_mode()
             except (RuntimeError, OSError) as e:
                 live.error = live.error or f"Stacking stopped, and the camera did not reset: {e}"
