@@ -329,3 +329,19 @@ def test_on_target_hands_over_to_main_camera_centering(tmp_path):
     assert "stop" in said and s._centering
     assert texts(s.tick(1.0)) == ["stop, it's centered"]  # sim main camera aims true
     assert not s._centering
+
+
+def test_centering_cues_are_paced_and_lost_target_returns_to_finder(tmp_path):
+    from astro.guidance.centering import Step
+    from astro.guidance.engine import Guide
+
+    s, _ = make_session(tmp_path)
+    alt, az = body_altaz("saturn", WPB, EVENING)
+    s.guide = Guide(alt + 0.2, az)
+    s.tick(0.0)  # finder says stop -> centering
+    s.centerer.update = lambda pos, px: Step("left a little")
+    said = [texts(s.tick(1.0 + 0.5 * i)) for i in range(6)]  # 3 s of 0.5 s centering steps
+    assert sum(1 for x in said if x) <= 2  # not every 0.5 s
+    s.centerer.update = lambda pos, px: Step("lost", lost=True)
+    s.tick(10.0)
+    assert not s._centering and s.guide is not None  # back to finder guidance

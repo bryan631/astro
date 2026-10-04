@@ -85,3 +85,31 @@ def test_beep_rate_increases_when_closer():
     far, _ = g.update(43, 100, 0)
     near, _ = g.update(44.9, 100, 1)
     assert near.beep_hz > far.beep_hz > 0
+
+
+def test_never_says_keep_going_when_it_means_stop():
+    """Review H1: an axis 'stop', a rate-limited cue, then arriving on target."""
+    g = Guide(45.0, 100.0, tolerance_arcmin=4)
+    cues = [g.update(alt, az, t) for alt, az, t in
+            [(44.0, 100.14, 0), (44.99, 100.14, 2.0), (44.99, 100.14, 2.1), (44.99, 100.07, 2.5)]]
+    state, cue = cues[-1]
+    assert state.on_target and cue.text == "stop"
+
+
+def test_stop_nudge_back_on_target_says_stop_again():
+    """On target, nudged off (cue rate-limited), back on target 0.6 s later: say "stop"."""
+    g = Guide(45.0, 100.0, tolerance_arcmin=4)
+    said = [g.update(alt, az, t)[1] for t, (alt, az) in
+            [(0, (44.0, 100.0)), (1.0, (44.99, 100.0)), (1.2, (44.99, 100.3)),
+             (1.6, (44.99, 100.02))]]
+    assert said[1].text == "stop" and said[3].text == "stop"
+
+
+def test_calibration_prompt_repeats_in_full():
+    from astro.guidance.engine import CueLimiter
+
+    limiter = CueLimiter()
+    assert limiter.speak("push left a tiny bit, then stop", 0.0) == "push left a tiny bit, then stop"
+    assert limiter.speak("push left a tiny bit, then stop", 5.0) == "push left a tiny bit, then stop"
+    assert limiter.speak("push left", 10.0) == "push left"
+    assert limiter.speak("push left", 15.0) == "keep going"

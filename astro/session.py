@@ -19,8 +19,8 @@ from astro.capture.live_stacker import LiveStacker
 from astro.capture.recorder import CaptureRefused, Recorder
 from astro.capture.roi import brightest_blob, roi_around
 from astro.devices.base import Camera
-from astro.guidance.centering import Centerer
-from astro.guidance.engine import Guide
+from astro.guidance.centering import CALIBRATED, Centerer
+from astro.guidance.engine import CueLimiter, Guide
 from astro.intents import match_name, parse
 from astro.planner.catalog import load_targets
 from astro.planner.horizon import HorizonMask
@@ -109,6 +109,7 @@ class Session:
         self.centerer = Centerer((main_sensor[0], main_sensor[1]))  # learns finder->main offset
         self._centering = False
         self._center_at = -1e9
+        self._center_limiter = CueLimiter()  # centering cues obey the guide's pacing
         # Commands and the guidance tick run on worker threads (camera calls block), so
         # serialize them: one camera capture or state change at a time.
         self._lock = threading.Lock()
@@ -355,6 +356,7 @@ class Session:
             if cue.text == "stop" and state.on_target and self._should_center():
                 self._centering, self.guide = True, None  # finish with the main camera
                 self.centerer.restart(self.altaz_of(self.target))  # true, uncorrected target
+                self._center_limiter = CueLimiter()
         return out
 
     def _aim(self, alt: float, az: float) -> tuple[float, float]:
@@ -383,9 +385,15 @@ class Session:
             self._centering = False
             return [say(f"The main camera stopped responding. ({e})")]
         step = self.centerer.update(self.position(), brightest_blob(frame))
-        if step.done or step.say and step.say.startswith("I can't see it"):
+        if step.lost:  # back to finder guidance, as the words promise
             self._centering = False
-        return [say(step.say)] if step.say else []
+            alt, az = self.altaz_of(self.target)
+            self.guide = Guide(*self._aim(alt, az), tolerance_arcmin=TOLERANCE_ARCMIN[self.barlow])
+        elif step.done:
+            self._centering = False
+        urgent = step.done or step.lost or step.say == CALIBRATED
+        spoken = self._center_limiter.speak(step.say, t, urgent) if step.say else None
+        return [say(spoken)] if spoken else []
 
 
     def _finder_focus_step(self, t: float) -> list[dict]:
