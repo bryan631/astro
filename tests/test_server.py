@@ -244,3 +244,11 @@ def test_state_updates_coalesce_while_events_keep_order():
         return hub._outbox.qsize(), hub._state
     size, state = asyncio.run(run())
     assert size == 2 and state == {"type": "state", "n": 99}
+
+
+def test_sim_tablets_share_one_session(monkeypatch):
+    monkeypatch.setattr(server, "_sim_hub", None)
+    client = TestClient(server.app)
+    with client.websocket_connect("/ws") as a, client.websocket_connect("/ws") as b:
+        a.receive_json(), b.receive_json()
+        assert len(server._sim_hub.clients) == 2

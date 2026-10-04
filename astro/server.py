@@ -257,16 +257,20 @@ class Hub:
 
 
 def get_hub() -> Hub:
-    """Sim: a fresh simulated world per connection. Real: one shared hub for the hardware."""
+    """One shared hub, so every tablet sees the same session (V8). Sim: the simulated world
+    lasts while any tablet is connected, then starts fresh."""
+    global _sim_hub, _real_hub
     if SIM:
-        return Hub(*build_session())
-    global _real_hub
+        if _sim_hub is None or not _sim_hub.clients:
+            _sim_hub = Hub(*build_session())
+        return _sim_hub
     if _real_hub is None:
         _real_hub = Hub(build_real_session(), None)
     return _real_hub
 
 
 _real_hub: Hub | None = None
+_sim_hub: Hub | None = None
 
 
 @app.websocket("/ws")
