@@ -67,7 +67,7 @@ class Session:
         self._announced_done = True
         self.gallery_dir = data_dir / "gallery"
         self._processor = ThreadPoolExecutor(max_workers=1)  # one stacking job at a time
-        self._processing: tuple[str, Future[StackResult]] | None = None
+        self._jobs: list[tuple[str, Future[StackResult]]] = []  # pictures being made, in order
         self._focus_at = -1e9
         # Commands and the guidance tick run on worker threads (camera calls block), so
         # serialize them: one camera capture or state change at a time.
@@ -228,10 +228,10 @@ class Session:
             self._announced_done = True
             if rec.error:
                 return [say(f"{rec.error} I saved {rec.frames} frames.")]
-            name = self.target or "your target"
-            self._processing = (name, self._processor.submit(process_ser, rec.path, self.gallery_dir))
+            job = self._processor.submit(process_ser, rec.path, self.gallery_dir)
+            self._jobs.append((rec.name, job))
             return [say(f"Done. I saved {rec.frames} frames. I'm making your picture now.")]
-        if self._processing is not None and self._processing[1].done():
+        if self._jobs and self._jobs[0][1].done():
             return self._announce_picture()
         if self._focus_coach is not None:
             if self._focus_mode == "main":
@@ -296,8 +296,7 @@ class Session:
         return [say(cue)] if cue else []
 
     def _announce_picture(self) -> list[dict]:
-        name, job = self._processing
-        self._processing = None
+        name, job = self._jobs.pop(0)
         try:
             result = job.result()
         except (ValueError, OSError) as e:

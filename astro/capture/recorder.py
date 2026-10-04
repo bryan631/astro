@@ -27,6 +27,7 @@ class CaptureRefused(Exception):
 @dataclass
 class Recording:
     path: Path
+    name: str  # target at capture time (the session's target may change while recording)
     frames: int = 0
     lost: bool = False  # planet left the frame
     error: str = ""  # why recording failed or stopped early (empty on success)
@@ -68,7 +69,7 @@ class Recorder:
             raise CaptureRefused(f"The main camera isn't responding: {e}") from e
         stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")  # microseconds: never reuse a name
         self.out_dir.mkdir(parents=True, exist_ok=True)
-        rec = Recording(self.out_dir / f"{stamp}_{name.replace(' ', '_')}.ser")
+        rec = Recording(self.out_dir / f"{stamp}_{name.replace(' ', '_')}.ser", name)
         self._stop.clear()
         self.current = rec
         threading.Thread(target=self._run, args=(rec, roi, seconds), daemon=True).start()
