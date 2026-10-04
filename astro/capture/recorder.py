@@ -1,5 +1,6 @@
 """Background planetary recording: SER video with an ROI that follows the planet."""
 
+import shutil
 import threading
 import time
 from collections.abc import Callable
@@ -15,9 +16,17 @@ ROI_PX = 512  # square planet ROI, sensor pixels
 RECENTER_EVERY = 50  # frames between drift checks
 RECENTER_FRACTION = 0.25  # re-center when the planet drifts this far from the ROI center
 SAFETY_CHECK_S = 1.0  # pointing safety (Sun, daytime) is re-checked this often while recording
+KEEP_RECORDINGS = 3  # raw SER videos kept after processing (names sort by time)
+MIN_FREE_BYTES = 2 * 1024**3  # a 60 s recording is ~1.5 GB
 
 # Returns a spoken reason when exposing now is unsafe, else None (see astro/safety.py).
 SafetyCheck = Callable[[], str | None]
+
+
+def prune(out_dir: Path, keep: int = KEEP_RECORDINGS) -> None:
+    """Delete all but the newest `keep` recordings (each is ~1.5 GB; pictures are kept)."""
+    for old in sorted(out_dir.glob("*.ser"))[:-keep or None]:
+        old.unlink(missing_ok=True)
 
 
 class CaptureRefused(Exception):
@@ -54,6 +63,10 @@ class Recorder:
             raise CaptureRefused("I'm already recording.")
         if reason := self.safety():
             raise CaptureRefused(f"I can't take pictures now: {reason}.")
+        self.out_dir.mkdir(parents=True, exist_ok=True)
+        if shutil.disk_usage(self.out_dir).free < MIN_FREE_BYTES:
+            raise CaptureRefused("The disk is nearly full, so I can't record. "
+                                 "Old recordings need to be cleared.")
         try:
             self.camera.set_roi(None)
             center = brightest_blob(self.camera.capture())

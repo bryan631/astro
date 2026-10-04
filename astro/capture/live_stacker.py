@@ -27,7 +27,8 @@ SAFETY_CHECK_S = 1.0
 @dataclass
 class LiveSession:
     name: str
-    preview: Path
+    preview: Path  # rewritten while stacking (data/live/), not in the gallery
+    picture: Path  # where the finished stack goes (the gallery)
     frames: int = 0
     skipped: int = 0
     error: str = ""
@@ -36,8 +37,11 @@ class LiveSession:
 
 
 class LiveStacker:
-    def __init__(self, camera: Camera, out_dir: Path, safety: SafetyCheck):
+    def __init__(self, camera: Camera, out_dir: Path, safety: SafetyCheck,
+                 preview_dir: Path | None = None):
+        """`out_dir` gets finished pictures (the gallery); previews go to `preview_dir`."""
         self.camera, self.out_dir, self.safety = camera, out_dir, safety
+        self.preview_dir = preview_dir or out_dir.parent / "live"
         self._stop = threading.Event()
         self.current: LiveSession | None = None
 
@@ -60,7 +64,9 @@ class LiveStacker:
             raise CaptureRefused(f"The main camera isn't responding: {e}") from e
         stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
         self.out_dir.mkdir(parents=True, exist_ok=True)
-        live = LiveSession(name, self.out_dir / f"{stamp}_{name.replace(' ', '_')}.png")
+        self.preview_dir.mkdir(parents=True, exist_ok=True)
+        file = f"{stamp}_{name.replace(' ', '_')}.png"
+        live = LiveSession(name, self.preview_dir / file, self.out_dir / file)
         self._stop.clear()
         self.current = live
         threading.Thread(target=self._run, args=(live, seconds), daemon=True).start()
@@ -99,6 +105,11 @@ class LiveStacker:
             try:
                 if stack.has_frames:
                     self._save(stack, live)
+                    os.replace(live.preview, live.picture)  # finished: into the gallery
+            except (RuntimeError, OSError, ValueError) as e:
+                live.frames = 0  # no picture to announce
+                live.error = f"I couldn't save the stacked picture: {e}"
+            try:
                 self._restore_mode()
             except (RuntimeError, OSError) as e:
                 live.error = live.error or f"Stacking stopped, and the camera did not reset: {e}"
@@ -114,7 +125,7 @@ class LiveStacker:
 
     def _save(self, stack: LiveStack, live: LiveSession) -> None:
         """Write next to the preview, then swap it in: the tablet never reads a half file."""
-        tmp = live.preview.with_suffix(".tmp.png")
-        Image.fromarray(stretch(stack.image())).save(tmp)
+        tmp = live.preview.with_name(live.preview.name + ".tmp")  # never matches *.png
+        Image.fromarray(stretch(stack.image())).save(tmp, format="PNG")
         os.replace(tmp, live.preview)
         live.preview_version += 1

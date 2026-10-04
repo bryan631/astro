@@ -371,3 +371,39 @@ def test_refused_capture_keeps_guidance(tmp_path):
     cam._stars = lambda alt, az, roi: 0.0
     assert "don't see anything bright" in texts(s.handle("take a picture"))[0]
     assert s.guide is not None
+
+
+def test_drifted_recording_still_becomes_a_picture(tmp_path, monkeypatch):
+    """Review M11: an early stop with enough frames is processed, not dropped."""
+    s, _ = make_session(tmp_path)
+    s.main_focus_ok, s.record_seconds = True, 0.5
+    s.handle("take a picture")
+    s.recorder.current.done.wait(5)
+    s.recorder.current.error = "The planet drifted out of view, so I stopped early."
+    said = texts(s.tick(100.0))[0]
+    assert said.startswith("The planet drifted out of view") and "making your picture" in said
+
+
+def test_old_recordings_pruned_and_full_disk_refused(tmp_path, monkeypatch):
+    from astro.capture import recorder as rec_module
+
+    caps = tmp_path / "caps"
+    caps.mkdir()
+    for i in range(5):
+        (caps / f"2026100{i}_Saturn.ser").write_bytes(b"x")
+    rec_module.prune(caps, keep=3)
+    assert sorted(p.name for p in caps.glob("*.ser")) == [f"2026100{i}_Saturn.ser" for i in (2, 3, 4)]
+    monkeypatch.setattr(rec_module.shutil, "disk_usage", lambda p: type("U", (), {"free": 10})())
+    with pytest.raises(CaptureRefused, match="disk is nearly full"):
+        Recorder(DriftingPlanet(), (800, 600), caps, lambda: None).start("Mars", 1)
+
+
+def test_done_right_after_focus_is_not_accepted(tmp_path):
+    """Review M12: the focus gate needs real readings."""
+    s, _ = make_session(tmp_path)
+    s.handle("focus")
+    assert texts(s.handle("done"))[0].startswith("Keep turning slowly")
+    assert not s.main_focus_ok
+    for i in range(3):
+        s.tick(float(i * 2))
+    assert texts(s.handle("done")) == ["OK, focus is set."] and s.main_focus_ok
