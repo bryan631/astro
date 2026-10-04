@@ -51,3 +51,30 @@ def test_noisy_syncs_stay_within_guidance_tolerance():
         noise = rng.normal(0, 2 / 60, 2)  # 2 arcmin solve/encoder noise
         m.add_sync(Sync(a, z, s.true_alt_deg + noise[0], s.true_az_deg + noise[1]))
     assert max_error_arcmin(m) < 4  # default guidance tolerance at prime focus
+
+
+def test_false_solve_is_dropped():
+    m = MountModel()
+    for p in POINTS[:4]:
+        m.add_sync(make_sync(*p))
+    m.add_sync(Sync(50, 150, *TRUE.to_sky(50, 170)))  # solved the wrong field, 20 deg off
+    assert len(m.syncs) == 4 and max_error_arcmin(m) < 1
+
+
+def test_history_is_capped():
+    from astro.pointing.mount_model import MAX_SYNCS
+
+    m = MountModel()
+    for i in range(MAX_SYNCS + 5):
+        m.add_sync(make_sync(20 + i * 3, i * 25))
+    assert len(m.syncs) == MAX_SYNCS
+
+
+def test_base_moved_starts_over_from_new_syncs():
+    m = MountModel()
+    for p in POINTS[:4]:
+        m.add_sync(make_sync(*p))
+    bumped = MountModel(az_offset_deg=TRUE.az_offset_deg + 20)  # base turned 20 degrees
+    for a, z in [(50, 150), (35, 250)]:
+        m.add_sync(Sync(a, z, *bumped.to_sky(a, z)))
+    assert len(m.syncs) == 2 and separation_deg(*m.to_sky(40, 60), *bumped.to_sky(40, 60)) < 0.1

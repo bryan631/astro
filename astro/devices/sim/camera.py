@@ -31,6 +31,9 @@ class SimCamera:
     def set_roi(self, roi: Roi | None) -> None:
         self._roi = roi
 
+    def temperature_c(self) -> float | None:
+        return None
+
     def capture(self) -> np.ndarray:
         if not self.connected:
             raise RuntimeError("camera not connected")

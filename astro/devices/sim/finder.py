@@ -27,6 +27,9 @@ class SimFinderCamera:
     def set_gain(self, gain: int) -> None: ...
     def set_roi(self, roi: Roi | None) -> None: ...
 
+    def temperature_c(self) -> float | None:
+        return None
+
     def capture(self) -> np.ndarray:
         ra, dec = altaz_to_radec(*self.true_altaz(), self.site, self.clock())
         self._n += 1

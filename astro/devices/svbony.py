@@ -10,6 +10,7 @@ The SDK path comes from SVB_LIB. Everything above this file only sees the `Camer
 
 import ctypes as C
 import os
+import time
 
 import numpy as np
 
@@ -19,6 +20,7 @@ DEFAULT_LIB = "~/sdk/SVBCameraSDK/lib/x64/libSVBCameraSDK.so"
 RAW8, GAIN, EXPOSURE = 0, 0, 1  # SVB_IMG_RAW8, SVB_GAIN, SVB_EXPOSURE (microseconds)
 CURRENT_TEMPERATURE = 16  # SVB_CURRENT_TEMPERATURE, 0.1 C
 TIMEOUT = 11  # SVB_ERROR_TIMEOUT
+RECONNECT_S, RECONNECT_MAX_S = 1.0, 30.0  # backoff between reopen attempts
 # After video capture starts, the SDK returns 2 blank (bias-only) frames before real exposures
 # (seen on the SV905C at 0.4-1.6 s: 0.5 s, then ~0 s, then frames at the exposure time).
 STARTUP_FRAMES = 2
@@ -71,6 +73,8 @@ class SvbonyCamera:
         self.model = model
         self._lib = lib
         self._id: int | None = None
+        self._lost = False  # a reopen failed: keep trying to reconnect from capture()
+        self._retry_at, self._backoff_s = 0.0, RECONNECT_S
         self._streaming = False
         self.prop = Prop()
         self.exposure_s, self.gain, self.roi = 0.01, 0, None
@@ -95,6 +99,7 @@ class SvbonyCamera:
             raise
 
     def close(self) -> None:
+        self._lost = False  # an explicit close cancels reconnecting; _reopen re-arms it
         if self._id is None:
             return
         if self._streaming:
@@ -127,7 +132,9 @@ class SvbonyCamera:
     def capture(self) -> np.ndarray:
         """Next RAW8 frame. Reopens once on an SDK timeout."""
         if self._id is None:
-            raise RuntimeError("camera not connected")
+            if not self._lost:
+                raise RuntimeError("camera not connected")
+            self._reconnect()
         try:
             return self._grab()
         except SvbError as e:
@@ -146,7 +153,20 @@ class SvbonyCamera:
 
     def _reopen(self) -> None:
         self.close()
-        self.connect()
+        self._lost, self._retry_at = True, 0.0
+        self._reconnect()
+
+    def _reconnect(self) -> None:
+        """After USB re-enumeration the camera may need a few seconds: back off between tries."""
+        if time.monotonic() < self._retry_at:
+            raise RuntimeError("camera reconnecting")
+        try:
+            self.connect()
+        except (SvbError, RuntimeError, OSError):
+            self._retry_at = time.monotonic() + self._backoff_s
+            self._backoff_s = min(2 * self._backoff_s, RECONNECT_MAX_S)
+            raise
+        self._lost, self._backoff_s = False, RECONNECT_S
 
     def _start(self) -> None:
         lib, cid = self._lib, self._id

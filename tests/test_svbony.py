@@ -155,3 +155,40 @@ def test_temperature_in_tenths_of_a_degree():
         return 0
     sdk.SVBGetControlValue = get
     assert connected(sdk).temperature_c() == 23.5
+def test_failed_reopen_retries_with_backoff(monkeypatch):
+    import astro.devices.svbony as svb
+
+    sdk = FakeSdk(timeouts=1)
+    cam = connected(sdk)
+    real_open, fails = sdk.SVBOpenCamera, [2]
+
+    def flaky_open(cid):  # USB re-enumerating: the first two opens fail
+        if fails[0]:
+            fails[0] -= 1
+            return 2
+        return real_open(cid)
+    sdk.SVBOpenCamera = flaky_open
+    now = [100.0]
+    monkeypatch.setattr(svb.time, "monotonic", lambda: now[0])
+    with pytest.raises(svb.SvbError):
+        cam.capture()  # timeout, reopen fails
+    with pytest.raises(RuntimeError, match="reconnecting"):
+        cam.capture()  # too soon: no hammering the USB bus
+    now[0] += svb.RECONNECT_S
+    with pytest.raises(svb.SvbError):
+        cam.capture()  # second failure: backoff doubles
+    now[0] += 2 * svb.RECONNECT_S
+    assert cam.capture() is not None  # back
+
+
+def test_close_cancels_reconnecting():
+    import astro.devices.svbony as svb
+
+    sdk = FakeSdk(timeouts=1)
+    cam = connected(sdk)
+    sdk.SVBOpenCamera = lambda cid: 2
+    with pytest.raises(svb.SvbError):
+        cam.capture()
+    cam.close()
+    with pytest.raises(RuntimeError, match="not connected"):
+        cam.capture()

@@ -244,3 +244,31 @@ def test_state_updates_coalesce_while_events_keep_order():
         return hub._outbox.qsize(), hub._state
     size, state = asyncio.run(run())
     assert size == 2 and state == {"type": "state", "n": 99}
+
+
+def test_sim_tablets_share_one_session(monkeypatch):
+    monkeypatch.setattr(server, "_sim_hub", None)
+    client = TestClient(server.app)
+    with client.websocket_connect("/ws") as a, client.websocket_connect("/ws") as b:
+        a.receive_json(), b.receive_json()
+        assert len(server._sim_hub.clients) == 2
+
+
+def test_sim_world_resets_after_the_last_tablet_leaves(monkeypatch):
+    monkeypatch.setattr(server, "_sim_hub", None)
+    with TestClient(server.app).websocket_connect("/ws") as ws:
+        ws.receive_json()
+        first = server._sim_hub
+    assert server._sim_hub is None and first is not None
+def test_token_gates_pages_and_socket(monkeypatch):
+    from starlette.websockets import WebSocketDisconnect
+
+    monkeypatch.setenv("ASTRO_TOKEN", "s3cret")
+    client = TestClient(server.app)
+    assert client.get("/").status_code == 401
+    with pytest.raises(WebSocketDisconnect), client.websocket_connect("/ws"):
+        pass
+    assert client.get("/?token=s3cret").status_code == 200  # sets the cookie
+    assert client.get("/gallery").status_code == 200
+    with client.websocket_connect("/ws") as ws:  # the cookie alone is enough
+        assert ws.receive_json()["type"] in ("hello", "say")

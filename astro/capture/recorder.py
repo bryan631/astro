@@ -75,9 +75,6 @@ class Recorder:
             center = brightest_blob(self.camera.capture())
         except (RuntimeError, OSError) as e:  # SDK gave up after its retry
             raise CaptureRefused(f"The main camera isn't responding: {e}") from e
-        temp = getattr(self.camera, "temperature_c", lambda: None)()
-        log.info("recording", extra={"data": {"name": name, "seconds": seconds,
-                                              "sensor_temp_c": temp}})
         if center is None:
             raise CaptureRefused("I don't see anything bright in the main camera. "
                                  "Let's center it first.")
@@ -91,6 +88,8 @@ class Recorder:
         rec = Recording(self.out_dir / f"{stamp}_{name.replace(' ', '_')}.ser", name)
         self._stop.clear()
         self.current = rec
+        log.info("recording", extra={"data": {"name": name, "seconds": seconds,
+                                              "sensor_temp_c": self.camera.temperature_c()}})
         threading.Thread(target=self._run, args=(rec, roi, seconds), daemon=True).start()
         return rec
 

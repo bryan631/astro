@@ -55,6 +55,9 @@ class SimMainCamera:
     def set_roi(self, roi: Roi | None) -> None:
         self._roi = roi
 
+    def temperature_c(self) -> float | None:
+        return None
+
     def capture(self) -> np.ndarray:
         w, h = SENSOR
         roi = self._roi or Roi(0, 0, w, h)

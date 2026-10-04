@@ -54,6 +54,10 @@ class SolveTracker:
         """Last solved (alt, az). The scope sits still between pushes, so this stays valid."""
         return self._altaz
 
+    def fix_age(self) -> float:
+        """Seconds since the last good solve (they fail while the scope is moving)."""
+        return time.monotonic() - self._solved_at
+
     def sync(self) -> tuple[bool, str]:
         if self.safety and (reason := self.safety()):  # checked first: a recent solve doesn't
             return False, f"I can't look at the sky right now: {reason}."  # make it safe now
