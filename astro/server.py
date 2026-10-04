@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from astro import site_store
 from astro.agent import Agent
+from astro.devices import config as devices
 from astro.devices.sim.finder import SimFinderCamera
 from astro.devices.sim.main_cam import SimMainCamera
 from astro.devices.sim.scope import SimEncoders, SimScope, SimUser
@@ -48,9 +49,10 @@ def load_site() -> Site:
 
 
 def build_session() -> tuple[Session, SimScope | None]:
-    """Sim mode: an uncalibrated simulated mount with a finder that sees the real sky."""
+    """Sim mode: an uncalibrated simulated mount with a finder that sees the real sky.
+    Otherwise the real devices from config/devices.toml."""
     if not SIM:
-        raise RuntimeError("Only sim mode exists so far; set ASTRO_SIM=1")
+        return build_real_session(), None
     site, clock = load_site(), utcnow
     scope = SimScope(45, 180)
     camera = SimFinderCamera(lambda: (scope.alt, scope.az), site, clock, solver()._t3.star_table)
@@ -61,6 +63,19 @@ def build_session() -> tuple[Session, SimScope | None]:
                       main_camera=main, main_sensor=main.sensor_size, data_dir=ROOT / "data",
                       on_site_change=lambda s: on_site_change(s, camera, main))
     return session, scope
+
+
+@functools.cache
+def build_real_session() -> Session:
+    """Real hardware is opened once per process and shared by every tablet connection."""
+    site, clock = load_site(), utcnow
+    cfg = devices.load(Path(os.environ.get("ASTRO_DEVICES", ROOT / "config" / "devices.toml")))
+    finder, _ = devices.build_pointing(cfg, solver(), site, clock)
+    main = devices.open_camera(cfg["main"]) if cfg["main"]["driver"] != "none" else None
+    override = os.environ.get("ASTRO_DEV_OVERRIDE") == "1"
+    return Session(site, clock=clock, developer_override=override, finder=finder,
+                   main_camera=main, main_sensor=main.sensor_size if main else (3856, 2180),
+                   data_dir=ROOT / "data", on_site_change=lambda s: site_store.save(ROOT, s))
 
 
 def on_site_change(site: Site, finder_cam: SimFinderCamera, main_cam: SimMainCamera) -> None:
