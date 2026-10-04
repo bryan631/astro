@@ -75,3 +75,15 @@ The server then announces `server_stt/server_tts` and the tablet records audio f
     sudo cp deploy/*.service deploy/*.timer /etc/systemd/system/
     sudo systemctl enable --now astro astro-cert.timer
 `scripts/run.sh` serves HTTPS on port 8443 when `certs/` has a cert, plain HTTP otherwise.
+
+## Field use: HTTPS with no internet, and access token
+
+The tablet's microphone needs HTTPS, and the cert is for a Tailscale `*.ts.net` name.
+Tailscale caches its peer map and MagicDNS answers locally, so an already-connected tablet
+and MeLE should still reach each other on a hotspot with no internet. This is **not yet
+verified**. To check it: connect both devices to the phone hotspot with mobile data off, then
+open the tablet URL. If the page doesn't load, voice input won't work offline, and a
+self-signed LAN cert is the fallback (V2; not implemented).
+
+On public WiFi, set `ASTRO_TOKEN=<random>` in `.env` and open the app once as
+`https://<name>:8443/?token=<random>`. A cookie remembers the token after that.

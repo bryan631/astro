@@ -7,6 +7,7 @@ In sim mode a simulated user follows the spoken cues so the whole loop can be wa
 import asyncio
 import contextlib
 import functools
+import hmac
 import json
 import logging
 import os
@@ -15,7 +16,8 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from astro import calibration_store, logs, site_store
@@ -269,8 +271,33 @@ def get_hub() -> Hub:
 _real_hub: Hub | None = None
 
 
+def _allowed(conn: Request | WebSocket) -> bool:
+    """Optional shared token (ASTRO_TOKEN) for public WiFi: open the app once as
+    https://.../?token=..., and a cookie remembers it. Unset: anyone on the network."""
+    token = os.environ.get("ASTRO_TOKEN")
+    if not token:
+        return True
+    given = conn.query_params.get("token") or conn.cookies.get("astro_token") or ""
+    return hmac.compare_digest(given.encode(), token.encode())
+
+
+@app.middleware("http")
+async def require_token(request: Request, call_next):
+    if not _allowed(request):
+        return PlainTextResponse("Open the link with the access token.", status_code=401)
+    response = await call_next(request)
+    if token := request.query_params.get("token"):
+        response.set_cookie("astro_token", token, httponly=True,
+                            secure=request.url.scheme == "https",
+                            samesite="strict", max_age=365 * 86400)
+    return response
+
+
 @app.websocket("/ws")
 async def ws(socket: WebSocket) -> None:
+    if not _allowed(socket):
+        await socket.close(code=1008)  # policy violation
+        return
     await socket.accept()
     try:
         hub = get_hub()
