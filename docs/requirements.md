@@ -84,7 +84,7 @@ The current requirements for the project. Each has an ID for reference.
 - **V2** HTTPS on the LAN (self-signed + install instructions, or Tailscale certs), required for the mic.
 - **V3** STT whisper.cpp, TTS Piper, audio over WebSocket.
 - **V4** Speech is fast enough for guidance: cues like "stop" are spoken without noticeable delay, and commands are understood within about a second.
-- **V5** Claude agent tools: list_tonight, describe(target), goto, stop, where_am_i, what_am_i_looking_at, start_capture/stop_capture, focus_assist, set_location, calibrate_horizon, session_status. Short, warm, plain replies.
+- **V5** Claude agent tools: list_tonight, describe(target), goto, next, stop, where_am_i (also answers "what am I looking at"), sync, take_picture/stop_picture, focus (main or finder), barlow, set_location, horizon_walk, session_status. Short, warm, plain replies.
 - **V6** Offline command grammar (no internet or LLM needed): go to, stop, next, what's good tonight, where am I, sync, focus (main/finder), take a picture / stop recording, Barlow in/out, use my location, horizon walk / mark / done, set up the telescope / ready / skip.
 - **V7** Tablet GPS sets the site during setup; saved locally (never in the repo or sent to the LLM); a move > 1 km resets the mount model.
 - **V8** One guidance loop per session, broadcast to every connected tablet.
@@ -135,7 +135,7 @@ The current requirements for the project. Each has an ID for reference.
 - **CV4** Hardware tools: browser viewer (`viewer.py`) and matplotlib viewer (`viewer_plot.py`) sharing common code; exposures in seconds (values > 10 rejected); display rotated 180 deg (lens inversion) with `--raw`; scripts run the project venv from their shebang.
 - **CV5** Hardware checkout results recorded.
 - **CV6** Docs: one-page large-print user guide and a developer runbook.
-- **CV7** Store: SQLite for locations, horizon masks, sessions, images, calibration.
+- **CV7** Per-install state is kept in simple files under `data/` (TOML/JSON plus images), and calibration survives a restart: mount model, encoder directions, main-camera axes and the finder-to-main offset.
 
 ## 16. Development process
 
