@@ -2,7 +2,6 @@
 
 import math
 
-ARCSEC_PER_RAD = 206.265e3
 SIDEREAL_ARCSEC_PER_S = 15.04
 
 
