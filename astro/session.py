@@ -20,7 +20,7 @@ from astro.capture.recorder import CaptureRefused, Recorder
 from astro.capture.roi import brightest_blob, roi_around
 from astro.devices.base import Camera
 from astro.guidance.centering import CALIBRATED, Centerer
-from astro.guidance.engine import CueLimiter, Guide
+from astro.guidance.engine import CueLimiter, DirectionLearner, Guide, wrap180
 from astro.intents import Intent, match_name, parse
 from astro.planner.catalog import load_targets
 from astro.planner.horizon import HorizonMask
@@ -37,6 +37,7 @@ Clock = Callable[[], datetime]
 TARGET_REFRESH_S = 1.0  # targets drift ~15"/s, so re-resolve their alt/az once a second
 FOCUS_STEP_S = 1.0  # one finder focus measurement per second while coaching
 CENTER_STEP_S = 0.5  # main-camera centering cue rate
+DIRECTION_PROBE_S = 1.5  # after a left/right cue, look this long for the azimuth to move
 ENCODER_STALE_S = 1.0  # encoder positions older than this mean the board or cable is gone
 MIN_HFR_PX = 0.5  # floor so a perfectly sharp (tiny) star can't blow up the focus score
 TOLERANCE_ARCMIN = {False: 4.0, True: 2.0}  # guidance tolerance without / with the 2x Barlow
@@ -113,6 +114,11 @@ class Session:
         self.centerer = Centerer((main_sensor[0], main_sensor[1]))  # learns finder->main offset
         self._centering = False
         self._center_at = -1e9
+        # G3: which way "right" turns the scope, learned from the first left/right push.
+        self.right_is_plus_az = True
+        self._direction_learner = DirectionLearner()
+        self._direction_known = False
+        self._direction_probe: tuple[str, float, float] | None = None  # (word, az, t)
         self._center_limiter = CueLimiter()  # centering cues obey the guide's pacing
         # Commands and the guidance tick run on worker threads (camera calls block), so
         # serialize them: one camera capture or state change at a time.
@@ -279,7 +285,8 @@ class Session:
         safe = self.target_safety(alt, az)
         if not safe.ok:
             return [say(f"I can't go to {name}: it's {safe.reason}.")]
-        guide = Guide(*self._aim(alt, az), tolerance_arcmin=TOLERANCE_ARCMIN[self.barlow])
+        guide = Guide(*self._aim(alt, az), tolerance_arcmin=TOLERANCE_ARCMIN[self.barlow],
+                          right_is_plus_az=self.right_is_plus_az)
         self._centering = False
         self.target, self.guide, self._focus_coach = name, guide, None
         return [*pre, say(f"Let's find {name}.")]
@@ -389,8 +396,11 @@ class Session:
                 self.target, self.guide = None, None
                 return [say("Stopping: the target is no longer safe to point at.")]
             self.guide.target = self._aim(alt, az)
-        state, cue = self.guide.update(*self.position(), t)
-        out = [{"type": "state", "target": self.target, **asdict(state)}]
+        alt_now, az_now = self.position()
+        state, cue = self.guide.update(alt_now, az_now, t)
+        out = [{"type": "state", "target": self.target, "right_is_plus_az": self.right_is_plus_az,
+                **asdict(state)}]
+        out += self._learn_direction(az_now, t, cue.text if cue else None)
         if cue:
             out.append(say(cue.text))
             if cue.text == "stop" and state.on_target and self._should_center():
@@ -409,6 +419,28 @@ class Session:
         if not self.finder.synced:  # e.g. the encoder board restarted and was reset
             return "I lost track of where the telescope points. Say 'sync' and let me look again."
         return None
+
+    def _learn_direction(self, az: float, t: float, spoken: str | None) -> list[dict]:
+        """G3: after the first left/right cue, see which way the azimuth moved and adopt the
+        user's sense of left and right (once per session)."""
+        if self._direction_known:
+            return []
+        if self._direction_probe is not None and t - self._direction_probe[2] >= DIRECTION_PROBE_S:
+            word, az0, _ = self._direction_probe
+            self._direction_probe = None
+            learned = self._direction_learner.observe(word, wrap180(az - az0))
+            if learned is not None:
+                self._direction_known = True
+                if learned != self.right_is_plus_az:
+                    self.right_is_plus_az = learned
+                    if self.guide is not None:
+                        self.guide.right_is_plus_az = learned
+                    return [say("Got it, I'll use your left and right from now on.")]
+        if spoken and self._direction_probe is None:
+            word = next((w for w in ("left", "right") if w in spoken.split(", ")[0].split()), None)
+            if word:
+                self._direction_probe = (word, az, t)
+        return []
 
     def _aim(self, alt: float, az: float) -> tuple[float, float]:
         """Where the finder model should point so the target lands in the main camera."""
@@ -439,7 +471,8 @@ class Session:
         if step.lost:  # back to finder guidance, as the words promise
             self._centering = False
             alt, az = self.altaz_of(self.target)
-            self.guide = Guide(*self._aim(alt, az), tolerance_arcmin=TOLERANCE_ARCMIN[self.barlow])
+            self.guide = Guide(*self._aim(alt, az), tolerance_arcmin=TOLERANCE_ARCMIN[self.barlow],
+                          right_is_plus_az=self.right_is_plus_az)
         elif step.done:
             self._centering = False
         urgent = step.done or step.lost or step.say == CALIBRATED

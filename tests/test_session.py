@@ -93,3 +93,24 @@ def test_timezone_lookup_uses_exact_coordinates(monkeypatch):
     assert str(Site(26.712345, -80.054321).timezone) == "America/New_York"
     assert seen == [(26.712345, -80.054321)]
     coords._zone_at.cache_clear()
+
+
+def test_learns_the_users_left_and_right():
+    """Review G3: a user whose 'right' turns the scope toward smaller azimuth still arrives."""
+    s, scope = make(scope=SimScope(45, 300))
+    s.handle("go to Albireo")
+    user, t, state, said = SimUser(right_is_plus_az=False), 0.0, None, []
+    for _ in range(2000):
+        for m in s.tick(t):
+            if m["type"] == "say":
+                user.hear(m["text"], t)
+                said.append(m["text"])
+            else:
+                state = m
+        scope.step(*user.act(t), 0.1)
+        t += 0.1
+        if state and state["on_target"] and user.v == (0.0, 0.0):
+            break
+    assert "Got it, I'll use your left and right from now on." in said
+    assert s.right_is_plus_az is False and state["on_target"]
+    assert state["right_is_plus_az"] is False  # the tablet arrow follows the user's sense
