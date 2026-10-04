@@ -68,6 +68,7 @@ def test_barlow_change_requires_refocus(tmp_path):
 def test_capture_without_planet_explains(tmp_path):
     s, cam = make_session(tmp_path)
     cam.true_altaz = lambda: (80.0, 10.0)  # empty sky
+    cam._stars = lambda alt, az, roi: 0.0  # and no field stars
     s.main_focus_ok = True
     assert "don't see anything bright" in texts(s.handle("take a picture"))[0]
 
@@ -283,3 +284,36 @@ def test_picture_keeps_capture_time_name_and_every_job_is_announced(tmp_path):
     ready = [x for x in said if "is ready" in x]
     assert ready == ["Your picture of Saturn is ready. Tap Pictures to see it.",
                      "Your picture of Jupiter is ready. Tap Pictures to see it."]
+
+
+def test_deep_sky_capture_live_stacks_drifting_stars(tmp_path):
+    from astro.pointing.coords import radec_to_altaz
+
+    start = time.monotonic()
+    clock = lambda: EVENING + timedelta(seconds=time.monotonic() - start)
+    alt, az = radec_to_altaz(299.90, 22.72, WPB, EVENING)  # M27; scope fixed, sky drifts
+    cam = SimMainCamera(lambda: (alt, az), WPB, clock)
+    s = Session(WPB, lambda: (alt, az), clock=clock, main_camera=cam,
+                main_sensor=cam.sensor_size, data_dir=tmp_path)
+    s.target, s.main_focus_ok, s.stack_seconds = "Dumbbell Nebula", True, 4
+    assert "Stacking short pictures of Dumbbell Nebula" in texts(s.handle("take a picture"))[0]
+    msgs = []
+    for i in range(200):
+        msgs += s.tick(float(i))
+        if any("is ready" in m.get("text", "") for m in msgs):
+            break
+        time.sleep(0.05)
+    live = [m for m in msgs if m["type"] == "live"]
+    ready = [m["text"] for m in msgs if "is ready" in m.get("text", "")]
+    assert live and ready and ready[0].startswith("Your picture of Dumbbell Nebula is ready, from")
+    frames = s.stacker.current.frames
+    assert frames >= 5 and s.stacker.current.skipped <= 1
+    assert (tmp_path / "gallery" / s.stacker.current.preview.name).exists()
+
+
+def test_plain_stop_ends_a_picture(tmp_path):
+    s, _ = make_session(tmp_path)
+    s.main_focus_ok, s.record_seconds = True, 5
+    s.handle("take a picture")
+    assert texts(s.handle("stop")) == ["Stopping the recording."]
+    assert s.recorder.current.done.wait(5)

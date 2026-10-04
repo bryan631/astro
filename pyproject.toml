@@ -3,7 +3,7 @@ name = "astro"
 version = "0.1.0"
 description = "Voice-guided push-to and astrophotography for an 8-inch Dobsonian"
 requires-python = ">=3.11"
-dependencies = ["numpy>=1.26", "astropy>=6", "scipy>=1.11", "fastapi>=0.110", "uvicorn[standard]>=0.29", "anthropic>=0.40", "pillow>=10"]
+dependencies = ["numpy>=1.26", "astropy>=6", "scipy>=1.11", "astroalign>=2.5", "fastapi>=0.110", "uvicorn[standard]>=0.29", "anthropic>=0.40", "pillow>=10"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6", "httpx>=0.27"]
