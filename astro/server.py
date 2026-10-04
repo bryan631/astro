@@ -9,12 +9,12 @@ import functools
 import json
 import os
 import time
-import tomllib
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
+from astro import site_store
 from astro.agent import Agent
 from astro.devices.sim.finder import SimFinderCamera
 from astro.devices.sim.main_cam import SimMainCamera
@@ -44,9 +44,7 @@ load_env()
 
 
 def load_site() -> Site:
-    with (ROOT / "config" / "site.toml").open("rb") as f:
-        cfg = tomllib.load(f)
-    return Site(cfg["lat_deg"], cfg["lon_deg"], cfg.get("elevation_m", 0.0))
+    return site_store.load(ROOT)
 
 
 def build_session() -> tuple[Session, SimScope | None]:
@@ -60,7 +58,8 @@ def build_session() -> tuple[Session, SimScope | None]:
     override = os.environ.get("ASTRO_DEV_OVERRIDE") == "1"
     main = SimMainCamera(lambda: (scope.alt, scope.az), site, clock)
     session = Session(site, clock=clock, developer_override=override, finder=finder,
-                      main_camera=main, main_sensor=main.sensor_size, data_dir=ROOT / "data")
+                      main_camera=main, main_sensor=main.sensor_size, data_dir=ROOT / "data",
+                      on_site_change=lambda s: site_store.save(ROOT, s))
     return session, scope
 
 
@@ -104,6 +103,9 @@ async def ws(socket: WebSocket) -> None:
 
     await socket.send_json({"type": "hello", "server_stt": stt.available(),
                             "server_tts": tts.available()})
+    if not site_store.has_saved(ROOT):  # setup: first run at this installation
+        for out in session.request_location():
+            await send(out)
     loop = asyncio.create_task(guidance_loop())
     try:
         while True:
@@ -118,6 +120,13 @@ async def ws(socket: WebSocket) -> None:
                 data = json.loads(msg["text"])
                 if data.get("type") == "text":
                     await handle_text(data["text"])
+                elif data.get("type") == "location":
+                    for out in session.set_location(float(data["lat"]), float(data["lon"]),
+                                                    data.get("alt"), data.get("accuracy")):
+                        await send(out)
+                elif data.get("type") == "location_error":
+                    await send({"type": "say", "text": "I couldn't get the tablet's location. "
+                                f"{data.get('message', '')} Using the saved location for now."})
     except WebSocketDisconnect:
         pass
     finally:

@@ -109,6 +109,10 @@ class FinderSync:
         self.encoders, self.site, self.clock = encoders, site, clock
         self.synced = False
 
+    def reset(self, site: Site) -> None:
+        """New site: the old mount model's alt/az frame no longer applies; re-sync from scratch."""
+        self.site, self.model, self.synced = site, MountModel(), False
+
     def position(self) -> tuple[float, float]:
         """Current true (alt, az) through the mount model."""
         return self.model.to_sky(*self.encoders())
