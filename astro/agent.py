@@ -125,8 +125,8 @@ class Agent:
             return [{"type": "say", "text": self.session.status_text()}]
         if name == "list_tonight":
             return [{"type": "say", "text": self.session.tonight_by_category()}]
-        if name == "goto":
-            return self.session.handle(f"go to {args.get('target', '')}")
+        if name == "goto":  # by name, not re-parsed as a sentence ("Andromeda (M31)")
+            return self.session.goto_spoken(args.get("target", ""))
         if name in _COMMANDS:
             return self.session.handle(_COMMANDS[name])
         return [{"type": "say", "text": f"Unknown tool {name}."}]

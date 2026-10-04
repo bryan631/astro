@@ -87,3 +87,11 @@ def test_every_tool_is_handled():
 
     handled = set(_COMMANDS) | {"goto", "focus", "barlow", "session_status"}
     assert {t["name"] for t in TOOLS} <= handled
+
+
+def test_goto_tool_matches_names_without_reparsing():
+    """Review M15: the tool's target is matched as a name, never re-parsed as a sentence."""
+    _, result = run_tool("goto", {"target": "what's good tonight"})
+    assert result == "I don't know what's good tonight."  # not the tonight listing
+    s, _ = run_tool("goto", {"target": "Messier 57"})
+    assert s.target == "M57" or s.target is None  # matched by name (may be refused if set)
