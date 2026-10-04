@@ -89,7 +89,7 @@ function sendLocation() {
     p => ws.send(JSON.stringify({type: "location", lat: p.coords.latitude, lon: p.coords.longitude,
                                  alt: p.coords.altitude, accuracy: p.coords.accuracy})),
     e => ws.send(JSON.stringify({type: "location_error", message: e.message})),
-    {enableHighAccuracy: true, timeout: 20000, maximumAge: 0}  // always a fresh fix);
+    {enableHighAccuracy: true, timeout: 20000, maximumAge: 0});  // always a fresh fix
 }
 function send(text) { if (text.trim()) ws.send(JSON.stringify({type: "text", text})); }
 document.getElementById("typed").onsubmit = e => {
