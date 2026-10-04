@@ -19,6 +19,8 @@ from astro.devices.svbony import SvbonyCamera
 MODELS = {"finder": "SV905C", "main": "SV705C"}
 FOCUS_EVERY_S = 1.0  # focus numbers are slower than display; update them once a second
 MAX_EXPOSURE_S = 10
+RETRY_S = 1.0  # pause after a failed capture before trying again
+FIRST_FRAME_TIMEOUT_S = 30
 
 
 def parse_args(description: str, extra=None) -> argparse.Namespace:
@@ -63,6 +65,15 @@ class LiveCamera:
         self._thread.start()
         return self
 
+    def wait_first_frame(self) -> None:
+        """Block until a frame exists; exit with a message if the camera never delivers one."""
+        deadline = time.time() + FIRST_FRAME_TIMEOUT_S + 3 * self.args.exp
+        while self.latest is None:
+            if time.time() > deadline:
+                self.stop()
+                raise SystemExit("No frames from the camera. Is another program using it?")
+            time.sleep(0.05)
+
     def stop(self) -> None:
         self._stop.set()
         self._thread.join()  # never close the SDK while a capture is in flight
@@ -87,7 +98,12 @@ class LiveCamera:
                 self.cam.set_exposure(self._pending.pop("exposure_s"))
             if "gain" in self._pending:
                 self.cam.set_gain(int(self._pending.pop("gain")))
-            raw = self.cam.capture()  # the driver reopens the camera on SDK timeouts
+            try:
+                raw = self.cam.capture()  # the driver reopens the camera once on SDK timeouts
+            except RuntimeError as e:  # still failing: keep the viewer alive and retry
+                print(f"capture failed ({e}); retrying in {RETRY_S:g} s", flush=True)
+                self._stop.wait(RETRY_S)
+                continue
             now = time.time()
             fps, t = 0.9 * fps + 0.1 / max(now - t, 1e-6), now
             if now - focus_t >= FOCUS_EVERY_S:

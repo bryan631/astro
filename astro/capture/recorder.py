@@ -53,13 +53,19 @@ class Recorder:
             raise CaptureRefused("I'm already recording.")
         if reason := self.safety():
             raise CaptureRefused(f"I can't take pictures now: {reason}.")
-        self.camera.set_roi(None)
-        center = brightest_blob(self.camera.capture())
+        try:
+            self.camera.set_roi(None)
+            center = brightest_blob(self.camera.capture())
+        except (RuntimeError, OSError) as e:  # SDK gave up after its retry
+            raise CaptureRefused(f"The main camera isn't responding: {e}") from e
         if center is None:
             raise CaptureRefused("I don't see anything bright in the main camera. "
                                  "Let's center it first.")
         roi = roi_around(center, ROI_PX, self.sensor)
-        self.camera.set_roi(roi)
+        try:
+            self.camera.set_roi(roi)
+        except (RuntimeError, OSError) as e:
+            raise CaptureRefused(f"The main camera isn't responding: {e}") from e
         stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")  # microseconds: never reuse a name
         self.out_dir.mkdir(parents=True, exist_ok=True)
         rec = Recording(self.out_dir / f"{stamp}_{name.replace(' ', '_')}.ser")

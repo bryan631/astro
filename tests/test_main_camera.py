@@ -203,3 +203,38 @@ def test_quick_recordings_get_distinct_files(tmp_path, monkeypatch):
     second = recorder.start("Mars", 0.05)
     second.done.wait(3)
     assert first.path != second.path
+
+
+class DeadCamera(DriftingPlanet):
+    def capture(self):
+        raise RuntimeError("SVB error 11")
+
+
+def test_capture_start_failure_is_spoken(tmp_path):
+    s, _ = make_session(tmp_path)
+    s.recorder.camera = DeadCamera()
+    s.main_focus_ok = True
+    assert texts(s.handle("take a picture"))[0].startswith("The main camera isn't responding")
+
+
+def test_focus_camera_failure_stops_focus_without_crashing(tmp_path):
+    s, _ = make_session(tmp_path)
+    s.handle("focus")
+    s.main_camera = DeadCamera()
+    assert "stopped responding" in texts(s.tick(0.0))[0] and s._focus_coach is None
+
+
+def test_barlow_restarts_active_focus_coach(tmp_path):
+    s, _ = make_session(tmp_path)
+    s.handle("focus")
+    old = s._focus_coach
+    s.handle("barlow in")
+    assert s._focus_coach is not old
+
+
+def test_stop_recording_after_it_finished(tmp_path):
+    s, _ = make_session(tmp_path)
+    s.main_focus_ok, s.record_seconds = True, 0.1
+    s.handle("take a picture")
+    s.recorder.current.done.wait(5)
+    assert texts(s.handle("stop recording")) == ["We're not recording."]

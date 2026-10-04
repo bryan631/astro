@@ -21,6 +21,7 @@ from astro.planner.tonight import PLANETS, plan
 from astro.pointing.coords import Site, body_altaz, radec_to_altaz
 from astro.pointing.finder_sync import FinderSync, check_focus
 from astro.pointing.geometry import separation_deg
+from astro.pointing.platesolve import finder_gray
 from astro.safety import DAYTIME_SUN_ALT_DEG, check_target
 
 Clock = Callable[[], datetime]
@@ -100,6 +101,8 @@ class Session:
         if intent.name in ("barlow_on", "barlow_off"):
             self.barlow = intent.name == "barlow_on"
             self.main_focus_ok = False
+            if self._focus_coach is not None and self._focus_mode == "main":
+                self._focus_coach = FocusCoach()  # old scores don't compare across optics
             if self.guide is not None:  # an active guide switches tolerance too
                 self.guide.tol_deg = TOLERANCE_ARCMIN[self.barlow] / 60
             return [say("Got it. The Barlow changes focus, so we'll refocus before taking pictures.")]
@@ -108,7 +111,7 @@ class Session:
         if intent.name == "capture":
             return self.capture()
         if intent.name == "stop_capture":
-            if self.recorder is None or self.recorder.current is None:
+            if self.recorder is None or not self.recorder.busy:
                 return [say("We're not recording.")]
             self.recorder.stop()
             return [say("Stopping the recording.")]
@@ -244,7 +247,10 @@ class Session:
         self._focus_at = t
         if stop := self._stop_focus_if_unsafe():
             return stop
-        report = self.finder.focus_report()
+        try:
+            report = self.finder.focus_report()
+        except (RuntimeError, OSError) as e:
+            return self._camera_failed("finder", e)
         if report.stars == 0:
             return [say("I can't see any stars yet.")]
         # Fewer visible stars also means softer focus, so fold the count into the score.
@@ -258,7 +264,10 @@ class Session:
         self._focus_at = t
         if stop := self._stop_focus_if_unsafe():
             return stop
-        frame = self.main_camera.capture()
+        try:
+            frame = self.main_camera.capture()
+        except (RuntimeError, OSError) as e:
+            return self._camera_failed("main", e)
         if self.target is None or self.target in self._extended_targets():
             center = brightest_blob(frame)
             if center is None:
@@ -267,12 +276,17 @@ class Session:
             r = roi_around(center, FOCUS_CROP_PX, (w, h))
             score = laplacian_variance(frame[r.y:r.y + r.height, r.x:r.x + r.width])
         else:  # stars: smaller is sharper
-            report = check_focus(frame.astype(float))
+            report = check_focus(finder_gray(frame))  # expects hot-pixel-cleaned, binned gray
             if report.stars == 0:
                 return [say("I don't see any stars in the main camera.")]
             score = 1 / max(report.hfr_px, MIN_HFR_PX)
         cue = self._focus_coach.update(score)
         return [say(cue)] if cue else []
+
+    def _camera_failed(self, which: str, error: Exception) -> list[dict]:
+        """A camera failed even after the driver's retry: stop focusing and say so."""
+        self._focus_coach = None
+        return [say(f"The {which} camera stopped responding, so I stopped focusing. ({error})")]
 
     def exposure_safety(self) -> str | None:
         """Spoken reason why taking an exposure now is unsafe, else None (astro/safety.py)."""

@@ -17,8 +17,7 @@ REFRESH_MS = 50
 
 args = parse_args(__doc__)
 live = LiveCamera(args).start()
-while live.latest is None:
-    time.sleep(0.05)
+live.wait_first_frame()
 fig, ax = plt.subplots(figsize=(10, 7))
 ax.set_axis_off()
 fig.tight_layout()
