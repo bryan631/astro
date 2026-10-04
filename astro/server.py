@@ -67,11 +67,16 @@ def build_session() -> tuple[Session, SimScope | None]:
 
 @functools.cache
 def build_real_session() -> Session:
-    """Real hardware is opened once per process and shared by every tablet connection."""
+    """Real hardware is opened once per process; every tablet shares this session (one Hub)."""
     site, clock = load_site(), utcnow
     cfg = devices.load(Path(os.environ.get("ASTRO_DEVICES", ROOT / "config" / "devices.toml")))
-    finder, _ = devices.build_pointing(cfg, solver(), site, clock)
-    main = devices.open_camera(cfg["main"]) if cfg["main"]["driver"] != "none" else None
+    devices.validate(cfg)  # all drivers known before any hardware opens
+    finder, close_pointing = devices.build_pointing(cfg, solver(), site, clock)
+    try:
+        main = devices.open_camera(cfg["main"]) if cfg["main"]["driver"] != "none" else None
+    except Exception:
+        close_pointing()  # roll back, so the next attempt doesn't find the finder still owned
+        raise
     override = os.environ.get("ASTRO_DEV_OVERRIDE") == "1"
     return Session(site, clock=clock, developer_override=override, finder=finder,
                    main_camera=main, main_sensor=main.sensor_size if main else (3856, 2180),
@@ -94,41 +99,80 @@ app = FastAPI()
 stt, tts = Stt(), Tts()
 
 
+class Hub:
+    """One session's tablets: a single guidance loop whose output goes to every client."""
+
+    def __init__(self, session: Session, scope: SimScope | None):
+        self.session, self.scope = session, scope
+        self.agent = Agent(session)
+        self.user = SimUser() if scope else None
+        self.clients: set[WebSocket] = set()
+        self._loop: asyncio.Task | None = None
+        self._t0 = time.monotonic()
+
+    def join(self, socket: WebSocket) -> None:
+        self.clients.add(socket)
+        if self._loop is None or self._loop.done():
+            self._loop = asyncio.create_task(self._guidance_loop())
+
+    def leave(self, socket: WebSocket) -> None:
+        self.clients.discard(socket)
+        if not self.clients and self._loop is not None:
+            self._loop.cancel()
+
+    async def broadcast(self, msg: dict) -> None:
+        audio = None
+        if msg["type"] == "say" and tts.available():
+            audio = await asyncio.to_thread(tts.synthesize, msg["text"])
+        for client in list(self.clients):
+            try:
+                await client.send_json(msg)
+                if audio:
+                    await client.send_bytes(audio)
+            except (WebSocketDisconnect, RuntimeError):
+                self.clients.discard(client)
+
+    async def handle_text(self, socket: WebSocket, text: str) -> None:
+        await socket.send_json({"type": "heard", "text": text})
+        for out in await asyncio.to_thread(self.agent.handle, text):
+            await self.broadcast(out)
+
+    async def _guidance_loop(self) -> None:
+        while True:
+            t = time.monotonic() - self._t0
+            for msg in await asyncio.to_thread(self.session.tick, t):  # camera calls block
+                if self.user and msg["type"] == "say":
+                    self.user.hear(msg["text"], t)
+                await self.broadcast(msg)
+            if self.user and self.scope:
+                self.scope.step(*self.user.act(t), TICK_S)
+            await asyncio.sleep(TICK_S)
+
+
+def get_hub() -> Hub:
+    """Sim: a fresh simulated world per connection. Real: one shared hub for the hardware."""
+    if SIM:
+        return Hub(*build_session())
+    global _real_hub
+    if _real_hub is None:
+        _real_hub = Hub(build_real_session(), None)
+    return _real_hub
+
+
+_real_hub: Hub | None = None
+
+
 @app.websocket("/ws")
 async def ws(socket: WebSocket) -> None:
     await socket.accept()
-    session, scope = build_session()
-    agent = Agent(session)
-    user = SimUser() if scope else None
-    t0 = time.monotonic()
-
-    async def send(msg: dict) -> None:
-        await socket.send_json(msg)
-        if msg["type"] == "say" and tts.available():
-            await socket.send_bytes(await asyncio.to_thread(tts.synthesize, msg["text"]))
-
-    async def handle_text(text: str) -> None:
-        await socket.send_json({"type": "heard", "text": text})
-        for out in await asyncio.to_thread(agent.handle, text):
-            await send(out)
-
-    async def guidance_loop() -> None:
-        while True:
-            t = time.monotonic() - t0
-            for msg in await asyncio.to_thread(session.tick, t):  # camera calls block
-                if user and msg["type"] == "say":
-                    user.hear(msg["text"], t)
-                await send(msg)
-            if user and scope:
-                scope.step(*user.act(t), TICK_S)
-            await asyncio.sleep(TICK_S)
-
+    hub = get_hub()
+    session = hub.session
     await socket.send_json({"type": "hello", "server_stt": stt.available(),
                             "server_tts": tts.available()})
+    hub.join(socket)
     if not site_store.has_saved(ROOT):  # setup: first run at this installation
         for out in session.request_location():
-            await send(out)
-    loop = asyncio.create_task(guidance_loop())
+            await hub.broadcast(out)
     try:
         while True:
             msg = await socket.receive()
@@ -136,23 +180,26 @@ async def ws(socket: WebSocket) -> None:
                 break
             if msg.get("bytes"):  # recorded speech from the tablet
                 text = await asyncio.to_thread(stt.transcribe, msg["bytes"])
-                await handle_text(text) if text else await send(
-                    {"type": "say", "text": "Sorry, I didn't hear anything."})
+                if text:
+                    await hub.handle_text(socket, text)
+                else:
+                    await hub.broadcast({"type": "say", "text": "Sorry, I didn't hear anything."})
             elif msg.get("text"):
                 data = json.loads(msg["text"])
                 if data.get("type") == "text":
-                    await handle_text(data["text"])
+                    await hub.handle_text(socket, data["text"])
                 elif data.get("type") == "location":
                     for out in session.set_location(float(data["lat"]), float(data["lon"]),
                                                     data.get("alt"), data.get("accuracy")):
-                        await send(out)
+                        await hub.broadcast(out)
                 elif data.get("type") == "location_error":
-                    await send({"type": "say", "text": "I couldn't get the tablet's location. "
-                                f"{data.get('message', '')} Using the saved location for now."})
+                    await hub.broadcast({"type": "say", "text": "I couldn't get the tablet's "
+                                         f"location. {data.get('message', '')} Using the saved "
+                                         "location for now."})
     except WebSocketDisconnect:
         pass
     finally:
-        loop.cancel()
+        hub.leave(socket)
 
 
 GALLERY = ROOT / "data" / "gallery"

@@ -33,18 +33,43 @@ def open_camera(cfg: dict) -> Camera:
     return cam
 
 
-def build_pointing(cfg: dict, solver: FinderSolver, site: Site,
-                   clock: Callable[[], datetime]) -> tuple[FinderSync | SolveTracker, Camera]:
-    """Finder camera plus the mount: encoders + model (mcu), or plate solving alone (solve)."""
+MOUNT_DRIVERS = ("solve", "mcu")
+CAMERA_DRIVERS = ("svbony",)
+
+
+def validate(cfg: dict) -> None:
+    """Reject unknown drivers before any hardware is touched."""
+    if cfg["mount"]["driver"] not in MOUNT_DRIVERS:
+        raise ValueError(f"unknown mount driver {cfg['mount']['driver']!r}")
+    if cfg["finder"]["driver"] not in CAMERA_DRIVERS:
+        raise ValueError(f"unknown finder driver {cfg['finder']['driver']!r}")
+    if cfg["main"]["driver"] not in (*CAMERA_DRIVERS, "none"):
+        raise ValueError(f"unknown main camera driver {cfg['main']['driver']!r}")
+
+
+def build_pointing(cfg: dict, solver: FinderSolver, site: Site, clock: Callable[[], datetime]
+                   ) -> tuple[FinderSync | SolveTracker, Callable[[], None]]:
+    """Finder camera plus the mount: encoders + model (mcu), or plate solving alone (solve).
+
+    Returns (pointing, close). If anything fails part-way, what was opened is closed again."""
+    validate(cfg)
     mount = cfg["mount"]
-    if mount["driver"] not in ("solve", "mcu"):  # check config before touching hardware
-        raise ValueError(f"unknown mount driver {mount['driver']!r}")
     finder_cam = open_camera(cfg["finder"])
     if mount["driver"] == "solve":
-        return SolveTracker(finder_cam, solver, site, clock).start(), finder_cam
+        tracker = SolveTracker(finder_cam, solver, site, clock).start()
+
+        def close_tracker() -> None:
+            tracker.stop()
+            finder_cam.close()
+
+        return tracker, close_tracker
     from astro.devices.mcu import Mcu  # mcu
 
-    mcu = Mcu(mount.get("port") or None).start()
+    try:
+        mcu = Mcu(mount.get("port") or None).start()
+    except Exception:
+        finder_cam.close()
+        raise
     az = EncoderAxis(mount.get("counts_per_rev", 9216), mount.get("az_sign", 1))
     alt = EncoderAxis(mount.get("counts_per_rev", 9216), mount.get("alt_sign", 1))
 
@@ -52,4 +77,8 @@ def build_pointing(cfg: dict, solver: FinderSolver, site: Site,
         az_counts, alt_counts = mcu.counts()
         return alt.to_degrees(alt_counts), az.to_degrees(az_counts)
 
-    return FinderSync(finder_cam, solver, MountModel(), encoders, site, clock), finder_cam
+    def close_mcu() -> None:
+        mcu.close()
+        finder_cam.close()
+
+    return FinderSync(finder_cam, solver, MountModel(), encoders, site, clock), close_mcu

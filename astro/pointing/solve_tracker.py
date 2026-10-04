@@ -36,7 +36,10 @@ class SolveTracker:
         return self
 
     def stop(self) -> None:
+        """Stop and wait for the worker, so nothing captures or solves after this returns."""
         self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join()
 
     def position(self) -> tuple[float, float]:
         """Last solved (alt, az). The scope sits still between pushes, so this stays valid."""
