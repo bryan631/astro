@@ -693,6 +693,10 @@ class Session:
         facts = []
         if self.finder is not None:
             facts.append("aligned with the stars" if self.finder.synced else "not aligned yet")
+            if sol := getattr(self.finder, "last_solution", None):
+                facts.append(f"last plate solve: {sol.matches} stars matched, "
+                             f"false-match odds {sol.false_prob:.0e}, roll {sol.roll_deg:.0f} deg, "
+                             f"{sol.scale_arcsec_px:.1f} arcsec per pixel")
         facts.append(f"target: {self.target}" if self.target else "no target")
         facts.append("Barlow in" if self.barlow else "no Barlow")
         if self.main_camera is not None:

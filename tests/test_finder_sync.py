@@ -150,3 +150,11 @@ def test_real_one_star_frame_is_not_called_out_of_focus():
 
     report = check_focus(finder_gray(frames.load("one_star_gain1000")))
     assert report.stars == 1 and "a star or two" in report.reason
+
+
+def test_solve_is_kept_and_reported_in_status(solver):
+    _, _, s = make_session(solver)
+    s.finder.sync()
+    sol = s.finder.last_solution
+    assert sol is not None and sol.matches > 0
+    assert "last plate solve" in s.status_text() and "arcsec per pixel" in s.status_text()

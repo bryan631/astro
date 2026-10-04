@@ -1,5 +1,6 @@
 """Background planetary recording: SER video with an ROI that follows the planet."""
 
+import logging
 import shutil
 import threading
 import time
@@ -11,6 +12,8 @@ from pathlib import Path
 from astro.capture.roi import brightest_blob, roi_around
 from astro.capture.ser import SerWriter
 from astro.devices.base import Camera, Roi
+
+log = logging.getLogger(__name__)
 
 ROI_PX = 512  # square planet ROI, sensor pixels
 RECENTER_EVERY = 50  # frames between drift checks
@@ -72,6 +75,9 @@ class Recorder:
             center = brightest_blob(self.camera.capture())
         except (RuntimeError, OSError) as e:  # SDK gave up after its retry
             raise CaptureRefused(f"The main camera isn't responding: {e}") from e
+        temp = getattr(self.camera, "temperature_c", lambda: None)()
+        log.info("recording", extra={"data": {"name": name, "seconds": seconds,
+                                              "sensor_temp_c": temp}})
         if center is None:
             raise CaptureRefused("I don't see anything bright in the main camera. "
                                  "Let's center it first.")

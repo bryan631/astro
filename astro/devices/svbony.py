@@ -17,6 +17,7 @@ from astro.devices.base import Roi
 
 DEFAULT_LIB = "~/sdk/SVBCameraSDK/lib/x64/libSVBCameraSDK.so"
 RAW8, GAIN, EXPOSURE = 0, 0, 1  # SVB_IMG_RAW8, SVB_GAIN, SVB_EXPOSURE (microseconds)
+CURRENT_TEMPERATURE = 16  # SVB_CURRENT_TEMPERATURE, 0.1 C
 TIMEOUT = 11  # SVB_ERROR_TIMEOUT
 # After video capture starts, the SDK returns 2 blank (bias-only) frames before real exposures
 # (seen on the SV905C at 0.4-1.6 s: 0.5 s, then ~0 s, then frames at the exposure time).
@@ -112,6 +113,16 @@ class SvbonyCamera:
         if roi is not None and (roi.x % 2 or roi.y % 2 or roi.width % 8 or roi.height % 2):
             raise ValueError("ROI needs even x/y/height and width divisible by 8")
         self._change(roi=roi)
+
+    def temperature_c(self) -> float | None:
+        """Sensor temperature (noise and dark frames depend on it), or None if unavailable."""
+        if self._id is None:
+            return None
+        value, auto = C.c_long(), C.c_int()
+        if self._lib.SVBGetControlValue(self._id, CURRENT_TEMPERATURE, C.byref(value),
+                                        C.byref(auto)) != 0:
+            return None
+        return value.value / 10
 
     def capture(self) -> np.ndarray:
         """Next RAW8 frame. Reopens once on an SDK timeout."""

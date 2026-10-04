@@ -145,3 +145,13 @@ def test_close_releases_handle():
 def test_rejects_misaligned_roi():
     with pytest.raises(ValueError):
         connected(FakeSdk()).set_roi(Roi(1, 0, 16, 8))
+
+
+def test_temperature_in_tenths_of_a_degree():
+    sdk = FakeSdk()
+
+    def get(cid, ctrl, value, auto):
+        value._obj.value = 235
+        return 0
+    sdk.SVBGetControlValue = get
+    assert connected(sdk).temperature_c() == 23.5

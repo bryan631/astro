@@ -34,7 +34,7 @@ Scripts: `scripts/hwcheck/` (`enumerate.py`, `checklist.py`). SDK lives in `~/sd
 - Finder at 0.8 s, gain 100, focused for tight faint stars (focus gate: 22 stars, HFR 0.96 binned px).
 - Solved in 12 ms: RA 10.014°, Dec +2.112°, roll 222.5°, 10 matches, RMSE 10″, false-match prob 5e-13.
 - Measured horizontal FOV 10.39° (estimate was 11°). The bright object 0.94° from center is Saturn.
-- Frame kept as `tests/data/finder_saturn.npy` (regression test).
+- Frame kept as `tests/data/finder/saturn_field.npz` (regression test).
 
 ## Finder exposure sweep (2026-10-03, ~23:00 PDT, same field, 2 frames per cell)
 - **SDK quirk:** the first 2 frames after video capture starts are blank (bias only). The driver
