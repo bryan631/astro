@@ -16,6 +16,7 @@ class Intent:
 
 
 _PATTERNS = [
+    ("horizon_start", r"\b(start|begin|do|record)( the)? horizon( walk)?\b|\bhorizon walk\b"),
     ("stop_capture", r"\b(stop|end|finish) (the )?(capture|recording|pictures?)\b"),
     ("barlow_on", r"\b(barlow (is )?(on|in)|(put|added?) (in )?the barlow)\b"),
     ("barlow_off", r"\b(barlow (is )?(off|out)|(took|take|removed?) (out )?the barlow)\b"),
@@ -26,7 +27,6 @@ _PATTERNS = [
     ("finder_focus", r"\bfocus (the )?finder\b"),
     ("focus", r"\bfocus\b"),
     ("sync", r"\b(sync|align|plate ?solve|find (out )?where (we are|i am|it is) pointing)\b"),
-    ("horizon_start", r"\b(start|begin|do|record)( the)? horizon( walk)?\b|\bhorizon walk\b"),
     ("horizon_mark", r"^(mark|mark it|mark this|here)\b"),
     ("location", r"\b(set|update|use|get|find) (my |our |the )?(location|position|gps)\b"),
     ("where", r"\b(where am i|what am i (looking at|pointing at))\b"),

@@ -59,3 +59,18 @@ def test_store_roundtrip(tmp_path):
     assert horizon_store.load(tmp_path) == mask
     assert (tmp_path / horizon_store.STELLARIUM).read_text() == "0.0 22.5\n180.0 31.0\n"
     assert horizon_store.load(tmp_path / "nowhere") == HorizonMask()
+
+
+def test_record_the_horizon_is_not_a_capture():
+    assert parse("record the horizon") == Intent("horizon_start")
+    assert parse("record the horizon walk") == Intent("horizon_start")
+    assert parse("record") == Intent("capture")
+
+
+def test_horizon_walk_ends_focus_coaching():
+    from astro.capture.focus import FocusCoach
+
+    s, _ = walk_session([])
+    s._focus_coach, s._focus_mode = FocusCoach(), "finder"
+    s.handle("start the horizon walk")
+    assert s._focus_coach is None

@@ -421,6 +421,7 @@ class Session:
                 return [say(f"Before the horizon walk, I need to see the stars. {msg}")]
         self._horizon = []
         self.target, self.guide, self._centering = None, None, False
+        self._focus_coach = None  # one mode at a time: focus prompts would talk over the walk
         return [say("Let's record the treeline. Point the telescope just above the trees and "
                     "say 'mark'. Then move along the treeline and mark again. "
                     "Eight to fifteen marks all the way around is ideal. Say 'done' to finish.")]
