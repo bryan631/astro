@@ -82,3 +82,9 @@ def test_confidence_is_minus_log10_false_prob():
     from astro.pointing.platesolve import Solution
 
     assert Solution(0, 0, 0, 10, 0, 10, 1e-12, 5).confidence == pytest.approx(12)
+
+
+def test_real_frame_reports_pixel_scale(solver):
+    raw = np.load(__import__("pathlib").Path(__file__).parent / "data" / "finder_saturn.npy")
+    sol = solver.solve(raw)
+    assert sol.scale_arcsec_px == pytest.approx(10.39 * 3600 / 1280, rel=0.01)  # ~29.2"/px

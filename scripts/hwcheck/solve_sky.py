@@ -5,7 +5,8 @@
 Usage (finder on a tripod, pointed at clear sky):
     scripts/hwcheck/solve_sky.py --save tests/data/sky        (defaults: 0.8 s, gain 200)
 Prints one line per frame and a summary (solve rate, time, failure reasons) on Ctrl+C.
-"conf" is -log10 of the false-match probability: higher is better, solves need >= 5.
+"rotation" is the camera's angle on the sky (tetra3 roll), "scale" the sky angle per sensor
+pixel; "conf" is -log10 of the false-match probability: higher is better, solves need >= 5.
 """
 
 import argparse
