@@ -79,6 +79,7 @@ def test_barlow_and_focus_tools():
 def test_session_status_tool_reports_facts():
     _, result = run_tool("session_status", {})
     assert "no target" in result and "no Barlow" in result and "treeline not recorded" in result
+    assert "no weather forecast" in result
 
 
 def test_every_tool_is_handled():

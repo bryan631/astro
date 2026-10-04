@@ -471,7 +471,11 @@ class Session:
                     "I'll only suggest things above it.")]
 
     def status_text(self) -> str:
-        """Short facts for the agent to summarize (not spoken verbatim)."""
+        """Short facts for the agent to summarize (not spoken verbatim); a locked snapshot."""
+        with self._lock:
+            return self._status_facts()
+
+    def _status_facts(self) -> str:
         facts = []
         if self.finder is not None:
             facts.append("aligned with the stars" if self.finder.synced else "not aligned yet")
@@ -485,6 +489,9 @@ class Session:
         facts.append(f"{len(pictures)} pictures in the gallery")
         facts.append("treeline recorded" if self.horizon.points != HorizonMask().points
                      else "treeline not recorded (default 20 degrees)")
+        clouds = self.clouds()
+        facts.append(f"cloud cover about {clouds:.0f}%" if clouds is not None
+                     else "no weather forecast (offline)")
         return "; ".join(facts)
 
     def request_location(self) -> list[dict]:
