@@ -40,6 +40,7 @@ SIM = os.environ.get("ASTRO_SIM") == "1"
 OFFLINE = os.environ.get("ASTRO_OFFLINE") == "1"  # no forecast fetches (tests, field hotspot)
 TICK_S = 0.1
 THINKING_AFTER_S = 1.0  # say "Let me think." if an answer takes longer than this
+SORRY = "Sorry, something went wrong. Please try that again."
 
 
 def load_env(path: Path = ROOT / ".env") -> None:
@@ -162,7 +163,11 @@ def warm_speech() -> None:
 
 
 class Hub:
-    """One session's tablets: a single guidance loop whose output goes to every client."""
+    """One session's tablets: a single guidance loop whose output goes to every client.
+
+    Everything outgoing goes through one queue and one sender task: messages keep their order,
+    a message and its audio are never interleaved with another, and the guidance loop never
+    waits for speech synthesis."""
 
     def __init__(self, session: Session, scope: SimScope | None):
         self.session, self.scope = session, scope
@@ -170,31 +175,55 @@ class Hub:
         self.user = SimUser() if scope else None
         self.clients: set[WebSocket] = set()
         self._loop: asyncio.Task | None = None
+        self._sender: asyncio.Task | None = None
+        self._outbox: asyncio.Queue[dict | None] = asyncio.Queue()
+        self._state: dict | None = None  # newest unsent state; None in the queue stands for it
         self._t0 = time.monotonic()
 
     def join(self, socket: WebSocket) -> None:
         self.clients.add(socket)
         if self._loop is None or self._loop.done():
             self._loop = asyncio.create_task(self._guidance_loop())
+        if self._sender is None or self._sender.done():
+            self._sender = asyncio.create_task(self._send_loop())
 
     def leave(self, socket: WebSocket) -> None:
         self.clients.discard(socket)
-        if not self.clients and self._loop is not None:
-            self._loop.cancel()
+        if not self.clients:
+            for task in (self._loop, self._sender):
+                if task is not None:
+                    task.cancel()
 
     async def broadcast(self, msg: dict) -> None:
-        if msg["type"] in LOGGED:
-            log.info(msg["type"], extra={"data": {k: v for k, v in msg.items() if k != "type"}})
-        audio = None
-        if msg["type"] == "say" and tts.available():
-            audio = await asyncio.to_thread(tts.synthesize, msg["text"])
-        for client in list(self.clients):
-            try:
-                await client.send_json(msg)
-                if audio:
-                    await client.send_bytes(audio)
-            except (WebSocketDisconnect, RuntimeError):
-                self.clients.discard(client)
+        """Queue a message for every tablet (returns at once). States coalesce: a slow
+        tablet gets the newest one, not a growing backlog; events keep their order."""
+        if msg["type"] == "state":
+            queued, self._state = self._state is not None, msg
+            if queued:
+                return
+            msg = None
+        await self._outbox.put(msg)
+
+    async def _send_loop(self) -> None:
+        while True:
+            msg = await self._outbox.get()
+            if msg is None:
+                msg, self._state = self._state, None
+            if msg["type"] in LOGGED:
+                log.info(msg["type"], extra={"data": {k: v for k, v in msg.items() if k != "type"}})
+            audio = None
+            if msg["type"] == "say" and tts.available():
+                try:
+                    audio = await asyncio.to_thread(tts.synthesize, msg["text"])
+                except Exception:  # the words still go out as text
+                    log.exception("speech synthesis failed")
+            for client in list(self.clients):
+                try:
+                    await client.send_json(msg)
+                    if audio:
+                        await client.send_bytes(audio)
+                except (WebSocketDisconnect, RuntimeError):
+                    self.clients.discard(client)
 
     async def handle_text(self, socket: WebSocket, text: str) -> None:
         log.info("heard", extra={"data": {"text": text}})
@@ -207,13 +236,16 @@ class Hub:
             await self.broadcast(out)
 
     async def _guidance_loop(self) -> None:
+        failing = False  # speak a failure once per streak, not ten times a second
         while True:
             t = time.monotonic() - self._t0
             try:
                 msgs = await asyncio.to_thread(self.session.tick, t)  # camera calls block
+                failing = False
             except Exception:  # never let one bad tick end guidance for the night
                 log.exception("tick failed")
-                msgs = []
+                msgs = [] if failing else [{"type": "say", "text": SORRY}]
+                failing = True
             for msg in msgs:
                 if self.user and msg["type"] == "say":
                     self.user.hear(msg["text"], t)
@@ -239,47 +271,60 @@ _real_hub: Hub | None = None
 @app.websocket("/ws")
 async def ws(socket: WebSocket) -> None:
     await socket.accept()
-    hub = get_hub()
-    session = hub.session
+    try:
+        hub = get_hub()
+    except Exception as e:  # e.g. a camera not plugged in: say so instead of a dead page
+        log.exception("startup failed")
+        await socket.send_json({"type": "say", "text": f"The telescope isn't ready: {e}"})
+        await socket.close()
+        return
     await socket.send_json({"type": "hello", "server_stt": stt.available(),
                             "server_tts": tts.available()})
     hub.join(socket)
     if not site_store.has_saved(ROOT):  # setup: first run at this installation
-        for out in session.request_location():
+        for out in hub.session.request_location():
             await hub.broadcast(out)
     try:
         while True:
             msg = await socket.receive()
             if msg["type"] == "websocket.disconnect":
                 break
-            if msg.get("bytes"):  # recorded speech from the tablet
-                text = await asyncio.to_thread(stt.transcribe, msg["bytes"])
-                if text:
-                    await hub.handle_text(socket, text)
-                else:
-                    await hub.broadcast({"type": "say", "text": "Sorry, I didn't hear anything."})
-            elif msg.get("text"):
-                data = json.loads(msg["text"])
-                if data.get("type") == "text":
-                    await hub.handle_text(socket, data["text"])
-                elif data.get("type") == "location":
-                    log.info("location", extra={"data": {"accuracy_m": data.get("accuracy")}})
-                    request_id = data.get("id")
-                    for out in session.set_location(float(data["lat"]), float(data["lon"]),
-                                                    data.get("alt"), data.get("accuracy"),
-                                                    int(request_id) if request_id is not None
-                                                    else None):
-                        await hub.broadcast(out)
-                elif data.get("type") == "location_error":
-                    request_id = data.get("id")
-                    for out in session.location_failed(str(data.get("message", "")),
-                                                       int(request_id) if request_id is not None
-                                                       else None):
-                        await hub.broadcast(out)
+            try:  # one bad message must not drop the tablet
+                await handle_message(hub, socket, msg)
+            except Exception:
+                log.exception("message failed")
+                await hub.broadcast({"type": "say", "text": SORRY})
     except WebSocketDisconnect:
         pass
     finally:
         hub.leave(socket)
+
+
+async def handle_message(hub: Hub, socket: WebSocket, msg: dict) -> None:
+    session = hub.session
+    if msg.get("bytes"):  # recorded speech from the tablet
+        text = await asyncio.to_thread(stt.transcribe, msg["bytes"])
+        if text:
+            await hub.handle_text(socket, text)
+        else:
+            await hub.broadcast({"type": "say", "text": "Sorry, I didn't hear anything."})
+        return
+    if not msg.get("text"):
+        return
+    data = json.loads(msg["text"])
+    request_id = int(data["id"]) if data.get("id") is not None else None
+    if data.get("type") == "text":
+        await hub.handle_text(socket, data["text"])
+    elif data.get("type") == "location":
+        log.info("location", extra={"data": {"accuracy_m": data.get("accuracy")}})
+        alt = float(data["alt"]) if data.get("alt") is not None else None
+        accuracy = float(data["accuracy"]) if data.get("accuracy") is not None else None
+        for out in session.set_location(float(data["lat"]), float(data["lon"]), alt, accuracy,
+                                        request_id):
+            await hub.broadcast(out)
+    elif data.get("type") == "location_error":
+        for out in session.location_failed(str(data.get("message", "")), request_id):
+            await hub.broadcast(out)
 
 
 GALLERY = ROOT / "data" / "gallery"
