@@ -98,6 +98,7 @@ class SvbonyCamera:
             raise
 
     def close(self) -> None:
+        self._lost = False  # an explicit close cancels reconnecting; _reopen re-arms it
         if self._id is None:
             return
         if self._streaming:
