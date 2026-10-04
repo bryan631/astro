@@ -161,7 +161,8 @@ def test_failing_tick_does_not_end_guidance(monkeypatch):
     monkeypatch.setattr(session, "tick", flaky_tick)
     monkeypatch.setattr(server, "build_session", lambda: (session, None))
     with TestClient(server.app).websocket_connect("/ws") as ws:
-        assert "still guiding" in receive_until(ws, "say")
+        assert "something went wrong" in receive_until(ws, "say")  # spoken once
+        assert "still guiding" in receive_until(ws, "say")  # and guidance carries on
     assert calls["n"] >= 2
 
 
@@ -209,3 +210,37 @@ def test_slow_answer_says_let_me_think(monkeypatch):
         ws.send_json({"type": "text", "text": "tell me something"})
         assert "Let me think." in receive_until(ws, "say")
         assert "here you go" in receive_until(ws, "say")
+
+
+def test_bad_message_is_spoken_and_keeps_the_connection():
+    with TestClient(server.app).websocket_connect("/ws") as ws:
+        ws.send_text("{not json")
+        assert "something went wrong" in receive_until(ws, "say")
+        ws.send_json({"type": "text", "text": "go to pizza"})
+        assert "I don't know pizza." in receive_until(ws, "say")  # still connected
+
+
+def test_hardware_startup_failure_is_spoken(monkeypatch):
+    def broken():
+        raise RuntimeError("SV905C not found")
+
+    monkeypatch.setattr(server, "get_hub", broken)
+    with TestClient(server.app).websocket_connect("/ws") as ws:
+        assert "isn't ready: SV905C not found" in receive_until(ws, "say")
+
+
+def test_state_updates_coalesce_while_events_keep_order():
+    import asyncio
+
+    from astro.server import Hub
+
+    async def run():
+        hub = Hub.__new__(Hub)
+        hub._outbox, hub._state = asyncio.Queue(), None
+        for i in range(50):
+            await hub.broadcast({"type": "state", "n": i})
+        await hub.broadcast({"type": "say", "text": "hi"})
+        await hub.broadcast({"type": "state", "n": 99})
+        return hub._outbox.qsize(), hub._state
+    size, state = asyncio.run(run())
+    assert size == 2 and state == {"type": "state", "n": 99}
