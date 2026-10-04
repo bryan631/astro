@@ -23,6 +23,7 @@ from astro.guidance.centering import Centerer
 from astro.guidance.engine import Guide
 from astro.intents import match_name, parse
 from astro.planner.catalog import load_targets
+from astro.planner.horizon import HorizonMask
 from astro.planner.tonight import PLANETS, plan
 from astro.pointing.coords import Site, body_altaz, radec_to_altaz
 from astro.pointing.finder_sync import FinderSync, check_focus
@@ -40,6 +41,7 @@ TOLERANCE_ARCMIN = {False: 4.0, True: 2.0}  # guidance tolerance without / with 
 RECORD_SECONDS = 60  # planetary video length
 STACK_SECONDS = 90  # deep-sky live stack; the target drifts out of the field in ~2 min
 FOCUS_CROP_PX = 256  # sharpness measured on a crop around the planet
+MIN_HORIZON_MARKS = 3
 SITE_MOVE_KM = 1.0  # moving farther than this from the model's site invalidates the mount model
 CLOUD_CACHE_S = 15 * 60  # Open-Meteo is hourly; don't ask on every request
 CLOUDY_PCT = 50  # at or above this cloud cover, tonight's suggestions mention the clouds
@@ -56,11 +58,16 @@ class Session:
                  finder: FinderSync | None = None, main_camera: Camera | None = None,
                  main_sensor: tuple[int, int] = (3856, 2180), data_dir: Path = Path("data"),
                  on_site_change: Callable[[Site], None] | None = None,
+                 horizon: HorizonMask | None = None,
+                 on_horizon_change: Callable[[HorizonMask], None] | None = None,
                  weather: Callable[[float, float, datetime], float | None] | None = None):
         """Pointing comes from `finder` (encoders + mount model + plate solving), or, for
         tests without a finder, from `position()` returning true (alt, az)."""
         self.site, self.clock, self.finder = site, clock, finder
         self.on_site_change = on_site_change  # e.g. persist the GPS fix, update simulators
+        self.horizon = horizon or HorizonMask()  # treeline for the planner
+        self.on_horizon_change = on_horizon_change
+        self._horizon: list[tuple[float, float]] | None = None  # points during a horizon walk
         self._model_site = site  # site the current mount model was built for
         self.weather = weather  # (lat, lon, when) -> cloud % or None offline; None = no forecast
         self._clouds: float | None = None
@@ -123,6 +130,8 @@ class Session:
             name = match_name(intent.target or "", self.names())
             return self.goto(name) if name else [say(f"I don't know {intent.target}.")]
         if intent.name == "stop":
+            if self._horizon is not None:  # "done" / "stop" finishes the horizon walk
+                return self.finish_horizon()
             if self._focus_coach is not None:
                 if self._focus_mode == "main":
                     self.main_focus_ok = True
@@ -162,6 +171,10 @@ class Session:
             if not self._suggestions:
                 return [say("Ask me what's good tonight first.")]
             return self.goto(self._suggestions.pop(0))
+        if intent.name == "horizon_start":
+            return self.start_horizon()
+        if intent.name == "horizon_mark":
+            return self.mark_horizon()
         if intent.name == "location":
             return self.request_location()
         if intent.name == "where":
@@ -246,7 +259,8 @@ class Session:
 
     def tonight(self) -> list[dict]:
         clouds = self.clouds()
-        choices = plan(self.site, self.clock(), cloud_cover=clouds)
+        choices = plan(self.site, self.clock(), mask=self.horizon,
+                       cloud_cover=clouds)
         flat = sorted((c for cs in choices.values() for c in cs), key=lambda c: -c.score)
         if not flat:
             return [say("Nothing good is up right now.")]
@@ -262,7 +276,8 @@ class Session:
     def tonight_by_category(self) -> str:
         """Compact text for the agent: best target per category."""
         clouds = self.clouds()
-        choices = plan(self.site, self.clock(), cloud_cover=clouds)
+        choices = plan(self.site, self.clock(), mask=self.horizon,
+                       cloud_cover=clouds)
         lines = [f"{cat}: {cs[0].name} (best around {cs[0].best_time:%H:%M}). {cs[0].note}"
                  for cat, cs in choices.items()]
         if clouds is not None:
@@ -423,6 +438,37 @@ class Session:
         """A camera failed even after the driver's retry: stop focusing and say so."""
         self._focus_coach = None
         return [say(f"The {which} camera stopped responding, so I stopped focusing. ({error})")]
+
+    # --- horizon walk (calibration wizard) ------------------------------------------------
+    def start_horizon(self) -> list[dict]:
+        if self.finder is not None and not self.finder.synced:
+            ok, msg = self.finder.sync()  # marks are only as good as the pointing
+            if not ok:
+                return [say(f"Before the horizon walk, I need to see the stars. {msg}")]
+        self._horizon = []
+        self.target, self.guide, self._centering = None, None, False
+        self._focus_coach = None  # one mode at a time: focus prompts would talk over the walk
+        return [say("Let's record the treeline. Point the telescope just above the trees and "
+                    "say 'mark'. Then move along the treeline and mark again. "
+                    "Eight to fifteen marks all the way around is ideal. Say 'done' to finish.")]
+
+    def mark_horizon(self) -> list[dict]:
+        if self._horizon is None:
+            return [say("Say 'start the horizon walk' first.")]
+        alt, az = self.position()
+        self._horizon.append((az % 360, alt))
+        return [say(f"Marked {len(self._horizon)}.")]
+
+    def finish_horizon(self) -> list[dict]:
+        points, self._horizon = self._horizon or [], None
+        if len(points) < MIN_HORIZON_MARKS:
+            return [say(f"I only have {len(points)} marks, so I kept the old horizon. "
+                        "We need at least three.")]
+        self.horizon = HorizonMask(tuple(sorted(points)))
+        if self.on_horizon_change:
+            self.on_horizon_change(self.horizon)
+        return [say(f"Saved the treeline from {len(points)} marks. "
+                    "I'll only suggest things above it.")]
 
     def request_location(self) -> list[dict]:
         """Ask the tablet for a GPS fix; it answers with a `location` message (see set_location)."""

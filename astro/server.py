@@ -7,6 +7,7 @@ In sim mode a simulated user follows the spoken cues so the whole loop can be wa
 import asyncio
 import functools
 import json
+import logging
 import os
 import time
 from pathlib import Path
@@ -14,12 +15,13 @@ from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
-from astro import site_store
+from astro import logs, site_store
 from astro.agent import Agent
 from astro.devices import config as devices
 from astro.devices.sim.finder import SimFinderCamera
 from astro.devices.sim.main_cam import SimMainCamera
 from astro.devices.sim.scope import SimEncoders, SimScope, SimUser
+from astro.planner import horizon_store
 from astro.planner.weather import cloud_cover_pct
 from astro.pointing.coords import Site
 from astro.pointing.finder_sync import FinderSync
@@ -43,6 +45,8 @@ def load_env(path: Path = ROOT / ".env") -> None:
 
 
 load_env()
+log = logging.getLogger("astro.server")
+LOGGED = {"say", "picture", "get_location"}  # not the 10 Hz "state" or "live" updates
 
 
 def load_site() -> Site:
@@ -63,6 +67,8 @@ def build_session() -> tuple[Session, SimScope | None]:
     session = Session(site, clock=clock, developer_override=override, finder=finder,
                       main_camera=main, main_sensor=main.sensor_size, data_dir=ROOT / "data",
                       on_site_change=lambda s: on_site_change(s, camera, main),
+                      horizon=horizon_store.load(ROOT),
+                      on_horizon_change=lambda m: horizon_store.save(ROOT, m),
                       weather=cloud_cover_pct)
     return session, scope
 
@@ -83,6 +89,8 @@ def build_real_session() -> Session:
     return Session(site, clock=clock, developer_override=override, finder=finder,
                    main_camera=main, main_sensor=main.sensor_size if main else (3856, 2180),
                    data_dir=ROOT / "data", on_site_change=lambda s: site_store.save(ROOT, s),
+                   horizon=horizon_store.load(ROOT),
+                   on_horizon_change=lambda m: horizon_store.save(ROOT, m),
                    weather=cloud_cover_pct)
 
 
@@ -99,6 +107,13 @@ def solver() -> FinderSolver:
 
 
 app = FastAPI()
+
+
+@app.on_event("startup")
+def start_logging() -> None:
+    if os.environ.get("ASTRO_NO_LOG_FILE"):  # tests
+        return
+    log.info("server start", extra={"data": {"log": str(logs.setup(ROOT)), "sim": SIM}})
 stt, tts = Stt(), Tts()
 
 
@@ -124,6 +139,8 @@ class Hub:
             self._loop.cancel()
 
     async def broadcast(self, msg: dict) -> None:
+        if msg["type"] in LOGGED:
+            log.info(msg["type"], extra={"data": {k: v for k, v in msg.items() if k != "type"}})
         audio = None
         if msg["type"] == "say" and tts.available():
             audio = await asyncio.to_thread(tts.synthesize, msg["text"])
@@ -136,6 +153,7 @@ class Hub:
                 self.clients.discard(client)
 
     async def handle_text(self, socket: WebSocket, text: str) -> None:
+        log.info("heard", extra={"data": {"text": text}})
         await socket.send_json({"type": "heard", "text": text})
         for out in await asyncio.to_thread(self.agent.handle, text):
             await self.broadcast(out)
@@ -143,7 +161,12 @@ class Hub:
     async def _guidance_loop(self) -> None:
         while True:
             t = time.monotonic() - self._t0
-            for msg in await asyncio.to_thread(self.session.tick, t):  # camera calls block
+            try:
+                msgs = await asyncio.to_thread(self.session.tick, t)  # camera calls block
+            except Exception:  # never let one bad tick end guidance for the night
+                log.exception("tick failed")
+                msgs = []
+            for msg in msgs:
                 if self.user and msg["type"] == "say":
                     self.user.hear(msg["text"], t)
                 await self.broadcast(msg)
@@ -192,6 +215,7 @@ async def ws(socket: WebSocket) -> None:
                 if data.get("type") == "text":
                     await hub.handle_text(socket, data["text"])
                 elif data.get("type") == "location":
+                    log.info("location", extra={"data": {"accuracy_m": data.get("accuracy")}})
                     for out in session.set_location(float(data["lat"]), float(data["lon"]),
                                                     data.get("alt"), data.get("accuracy")):
                         await hub.broadcast(out)
