@@ -17,6 +17,16 @@ import wave
 from pathlib import Path
 
 CUE_CACHE = 256  # distinct phrases kept as audio
+WAV_BYTES_PER_S = 16000 * 2  # ffmpeg output: 16 kHz mono 16-bit
+# Whisper encodes a fixed 30 s window (1500 audio frames) unless told otherwise; a short
+# command needs only its own length: ~1.24 s -> ~0.4 s per command on this CPU.
+WHISPER_FULL_CTX, WHISPER_MIN_CTX, CTX_MARGIN = 1500, 256, 1.5
+
+
+def audio_ctx(seconds: float) -> int:
+    """Whisper audio context covering `seconds` of speech with margin (50 frames per second)."""
+    return int(min(WHISPER_FULL_CTX, max(WHISPER_MIN_CTX, seconds * CTX_MARGIN * 50)))
+
 
 
 def _tool(env_bin: str, env_model: str) -> tuple[str, str] | None:
@@ -42,8 +52,9 @@ class Stt:
             src.write_bytes(audio)
             subprocess.run(["ffmpeg", "-loglevel", "error", "-i", src, "-ar", "16000", "-ac", "1", wav],
                            check=True, timeout=20)
-            out = subprocess.run([binary, "-m", model, "-f", wav, "-nt", "-np"], check=True,
-                                 capture_output=True, text=True, timeout=30)
+            ctx = audio_ctx(wav.stat().st_size / WAV_BYTES_PER_S)
+            out = subprocess.run([binary, "-m", model, "-f", wav, "-nt", "-np", "-ac", str(ctx)],
+                                 check=True, capture_output=True, text=True, timeout=30)
         return " ".join(out.stdout.split())
 
 
