@@ -58,7 +58,15 @@ class MountModel:
         return self.fit()
 
     def fit(self) -> float:
-        fit_tilt = len(self.syncs) >= 2
+        if len(self.syncs) == 1:
+            # Exact closed form. A least-squares start from zero can land on the equivalent
+            # "flipped over the zenith" solution, which only matches this one point.
+            s = self.syncs[0]
+            self.alt_offset_deg = s.true_alt_deg - s.enc_alt_deg
+            self.az_offset_deg = (s.true_az_deg - s.enc_az_deg) % 360
+            self.tilt_n_deg = self.tilt_e_deg = 0.0
+            return 0.0
+        fit_tilt = True
         x0 = [self.az_offset_deg, self.alt_offset_deg]
         if fit_tilt:
             x0 += [self.tilt_n_deg, self.tilt_e_deg]

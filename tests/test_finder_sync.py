@@ -9,7 +9,7 @@ if not os.environ.get("ASTRO_REQUIRE_SOLVER"):
 
 from astro.devices.sim.finder import SimFinderCamera
 from astro.devices.sim.scope import SimEncoders, SimScope
-from astro.pointing.coords import Site
+from astro.pointing.coords import Site, radec_to_altaz
 from astro.pointing.finder_sync import FinderSync, check_focus
 from astro.pointing.geometry import separation_deg
 from astro.pointing.mount_model import MountModel
@@ -62,3 +62,46 @@ def test_sharp_vs_soft_hfr(solver):
     sharp = make(solver)[1].focus_report()
     soft = make(solver, blur_px=5)[1].focus_report()
     assert sharp.ok and sharp.hfr_px < soft.hfr_px
+
+
+def make_session(solver, alt=60, az=200, **cam):
+    from astro.session import Session
+
+    scope, fs = make(solver, alt, az, **cam)
+    return scope, fs, Session(WPB, clock=lambda: EVENING, finder=fs)
+
+
+def test_goto_syncs_first_then_guides_true_scope_onto_target(solver):
+    from astro.devices.sim.scope import SimUser
+
+    scope, _, s = make_session(solver)
+    said = [m["text"] for m in s.handle("go to albireo")]
+    assert said == ["Got it, I know where we're pointing.", "Let's find Albireo."]
+    user, t, state = SimUser(), 0.0, None
+    for _ in range(1500):
+        for m in s.tick(t):
+            if m["type"] == "say":
+                user.hear(m["text"], t)
+            else:
+                state = m
+        scope.step(*user.act(t), 0.1)
+        t += 0.1
+    assert state["on_target"]
+    # The *true* scope (not just the model) ended up on Albireo.
+    assert separation_deg(scope.alt, scope.az, *radec_to_altaz(292.68, 27.96, WPB, EVENING)) < 0.15
+
+
+def test_goto_refuses_with_reason_when_finder_soft(solver):
+    _, _, s = make_session(solver, blur_px=9)
+    assert "out of focus" in s.handle("go to albireo")[0]["text"]
+
+
+def test_voice_guided_finder_focus(solver):
+    _, fs, s = make_session(solver, blur_px=6)
+    assert "focus ring" in s.handle("focus the finder")[0]["text"]
+    said = []
+    for i, blur in enumerate([6, 4, 2.5, 2.0, 3.5]):  # user turns the ring past best focus
+        fs.camera.blur_px = blur
+        said += [m["text"] for m in s.tick(float(i * 2))]
+    assert "sharper" in said and said[-1].startswith("passed it")
+    assert s.handle("stop")[0]["text"] == "OK, focus is set."
