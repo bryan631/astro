@@ -33,7 +33,7 @@ def open_camera(cfg: dict) -> Camera:
     return cam
 
 
-MOUNT_DRIVERS = ("solve", "mcu")
+MOUNT_DRIVERS = ("solve", "mcu", "handset")  # handset: IntelliScope RS-232 fallback (P2-3)
 CAMERA_DRIVERS = ("svbony",)
 
 
@@ -64,30 +64,44 @@ def build_pointing(cfg: dict, solver: FinderSolver, site: Site, clock: Callable[
             finder_cam.close()
 
         return tracker, close_tracker
-    from astro.devices.mcu import Mcu  # mcu
-
-    mcu = None
+    source = None  # encoder counts: the Nano Every (mcu) or the IntelliScope handset
     try:
-        mcu = Mcu(mount.get("port") or None)
-        mcu.start()
+        source = _open_encoders(mount)
     except Exception:  # close whatever opened: the serial port and its workers, the camera
-        if mcu is not None:
-            mcu.close()
+        if source is not None:
+            source.close()
         finder_cam.close()
         raise
     az = EncoderAxis(mount.get("counts_per_rev", 9216), mount.get("az_sign", 1))
     alt = EncoderAxis(mount.get("counts_per_rev", 9216), mount.get("alt_sign", 1))
 
     def encoders() -> tuple[float, float]:
-        az_counts, alt_counts = mcu.counts()
+        az_counts, alt_counts = source.counts()
         return alt.to_degrees(alt_counts), az.to_degrees(az_counts)
 
     finder = FinderSync(finder_cam, solver, MountModel(), encoders, site, clock)
-    finder.encoder_age = mcu.position_age  # session stops guiding on frozen counts
-    mcu.on_reboot = lambda: finder.reset(finder.site)  # counts reset: the old model is wrong
+    finder.encoder_age = source.position_age  # session stops guiding on frozen counts
+    if hasattr(source, "on_reboot"):
+        source.on_reboot = lambda: finder.reset(finder.site)  # counts reset: model is wrong
 
-    def close_mcu() -> None:
-        mcu.close()
+    def close_encoders() -> None:
+        source.close()
         finder_cam.close()
 
-    return finder, close_mcu
+    return finder, close_encoders
+
+
+def _open_encoders(mount: dict):
+    """The encoder source for the mount driver; caller closes it if anything later fails."""
+    if mount["driver"] == "handset":
+        from astro.devices.handset import Handset
+
+        return Handset(mount.get("port") or "/dev/ttyUSB0")
+    from astro.devices.mcu import Mcu
+
+    mcu = Mcu(mount.get("port") or None)
+    try:
+        return mcu.start()
+    except Exception:
+        mcu.close()
+        raise

@@ -11,8 +11,8 @@ driver = "svbony"      # svbony | none
 model = "SV705C"
 
 [mount]
-driver = "solve"       # mcu (IntelliScope encoders via the Nano Every) | solve (finder only)
-port = ""              # mcu: serial port; empty = first /dev/ttyACM*
+driver = "solve"       # mcu (encoders via the Nano Every) | handset (IntelliScope RS-232) | solve (finder only)
+port = ""              # mcu: empty = first /dev/ttyACM*; handset: empty = /dev/ttyUSB0
 counts_per_rev = 9216
 az_sign = 1            # flip to -1 if azimuth runs backwards
 alt_sign = 1
