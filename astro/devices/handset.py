@@ -12,6 +12,7 @@ import serial
 
 BAUD = 9600
 QUERY = b"Q"
+MAX_REPLY = 64  # bytes; a reply is 14, leaving room for leading noise (timeout bounds the wait)
 _REPLY = re.compile(rb"([+-]\d{5})\t([+-]\d{5})\r")
 
 
@@ -29,9 +30,12 @@ class Handset:
 
     def counts(self) -> tuple[int, int]:
         """MountEncoders: query the handset; keep the last good reading if it doesn't answer."""
-        self._ser.reset_input_buffer()
-        self._ser.write(QUERY)
-        reply = parse_reply(self._ser.read_until(b"\r", 16))
+        try:
+            self._ser.reset_input_buffer()
+            self._ser.write(QUERY)
+            reply = parse_reply(self._ser.read_until(b"\r", MAX_REPLY))
+        except (serial.SerialException, OSError):  # adapter unplugged: same as no answer
+            reply = None
         if reply is None:
             self.failures += 1
             return self._last

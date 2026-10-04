@@ -37,3 +37,24 @@ def test_counts_queries_and_keeps_last_good_reading():
     assert h.counts() == (10, 20) and h.failures == 1  # no answer: last good reading
     assert h.counts() == (11, 21) and h.failures == 0
     assert port.written == [b"Q"] * 3
+
+
+class UnpluggedPort(FakePort):
+    def write(self, data):
+        import serial
+
+        raise serial.SerialException("device disconnected")
+
+
+def test_unplugged_adapter_counts_as_failure():
+    h = Handset("/dev/ttyUSB0", serial_factory=lambda *a, **k: UnpluggedPort([]))
+    assert h.counts() == (0, 0) and h.failures == 1
+
+
+def test_read_allows_leading_noise():
+    port = FakePort([b"junk+09215\t+00000\r"])
+    sizes = []
+    real_read = port.read_until
+    port.read_until = lambda term, size: (sizes.append(size), real_read(term, size))[1]
+    assert Handset("p", serial_factory=lambda *a, **k: port).counts() == (9215, 0)
+    assert sizes[0] >= len(b"junk+09215\t+00000\r")
