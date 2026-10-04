@@ -11,3 +11,5 @@ certs/
 vendor/
 models/
 voice.env
+/data/
+/*.npy

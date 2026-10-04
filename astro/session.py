@@ -8,21 +8,29 @@ import threading
 from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
+from pathlib import Path
 
-from astro.capture.focus import FocusCoach
+from astro.capture.focus import FocusCoach, laplacian_variance
+from astro.capture.recorder import CaptureRefused, Recorder
+from astro.capture.roi import brightest_blob, roi_around
+from astro.devices.base import Camera
 from astro.guidance.engine import Guide
 from astro.intents import match_name, parse
 from astro.planner.catalog import load_targets
 from astro.planner.tonight import PLANETS, plan
 from astro.pointing.coords import Site, body_altaz, radec_to_altaz
-from astro.pointing.finder_sync import FinderSync
+from astro.pointing.finder_sync import FinderSync, check_focus
 from astro.pointing.geometry import separation_deg
-from astro.safety import check_target
+from astro.pointing.platesolve import finder_gray
+from astro.safety import DAYTIME_SUN_ALT_DEG, check_target
 
 Clock = Callable[[], datetime]
 TARGET_REFRESH_S = 1.0  # targets drift ~15"/s, so re-resolve their alt/az once a second
 FOCUS_STEP_S = 1.0  # one finder focus measurement per second while coaching
 MIN_HFR_PX = 0.5  # floor so a perfectly sharp (tiny) star can't blow up the focus score
+TOLERANCE_ARCMIN = {False: 4.0, True: 2.0}  # guidance tolerance without / with the 2x Barlow
+RECORD_SECONDS = 60  # planetary video length
+FOCUS_CROP_PX = 256  # sharpness measured on a crop around the planet
 
 
 def utcnow() -> datetime:
@@ -32,7 +40,8 @@ def utcnow() -> datetime:
 class Session:
     def __init__(self, site: Site, position: Callable[[], tuple[float, float]] | None = None,
                  clock: Clock = utcnow, developer_override: bool = False,
-                 finder: FinderSync | None = None):
+                 finder: FinderSync | None = None, main_camera: Camera | None = None,
+                 main_sensor: tuple[int, int] = (3856, 2180), data_dir: Path = Path("data")):
         """Pointing comes from `finder` (encoders + mount model + plate solving), or, for
         tests without a finder, from `position()` returning true (alt, az)."""
         self.site, self.clock, self.finder = site, clock, finder
@@ -46,6 +55,14 @@ class Session:
         self._suggestions: list[str] = []
         self._resolved_at = -1e9
         self._focus_coach: FocusCoach | None = None
+        self._focus_mode = ""  # "finder" or "main"
+        self.main_camera, self.main_sensor = main_camera, main_sensor
+        self.barlow = False
+        self.main_focus_ok = False  # pre-flight gate: reset per session and on Barlow change
+        self.record_seconds = RECORD_SECONDS
+        self.recorder = (Recorder(main_camera, main_sensor, data_dir / "captures",
+                                  self.exposure_safety) if main_camera else None)
+        self._announced_done = True
         self._focus_at = -1e9
         # Commands and the guidance tick run on worker threads (camera calls block), so
         # serialize them: one camera capture or state change at a time.
@@ -74,9 +91,30 @@ class Session:
             name = match_name(intent.target or "", self.names())
             return self.goto(name) if name else [say(f"I don't know {intent.target}.")]
         if intent.name == "stop":
-            was_focusing = self._focus_coach is not None
-            self.target, self.guide, self._focus_coach = None, None, None
-            return [say("OK, focus is set." if was_focusing else "Stopped.")]
+            if self._focus_coach is not None:
+                if self._focus_mode == "main":
+                    self.main_focus_ok = True
+                self._focus_coach = None
+                return [say("OK, focus is set.")]
+            self.target, self.guide = None, None
+            return [say("Stopped.")]
+        if intent.name in ("barlow_on", "barlow_off"):
+            self.barlow = intent.name == "barlow_on"
+            self.main_focus_ok = False
+            if self._focus_coach is not None and self._focus_mode == "main":
+                self._focus_coach = FocusCoach()  # old scores don't compare across optics
+            if self.guide is not None:  # an active guide switches tolerance too
+                self.guide.tol_deg = TOLERANCE_ARCMIN[self.barlow] / 60
+            return [say("Got it. The Barlow changes focus, so we'll refocus before taking pictures.")]
+        if intent.name == "focus":
+            return self.start_main_focus()
+        if intent.name == "capture":
+            return self.capture()
+        if intent.name == "stop_capture":
+            if self.recorder is None or not self.recorder.busy:
+                return [say("We're not recording.")]
+            self.recorder.stop()
+            return [say("Stopping the recording.")]
         if intent.name == "sync":
             return self.sync()
         if intent.name == "finder_focus":
@@ -100,9 +138,34 @@ class Session:
         if self.finder is None:
             return [say("There's no finder camera connected.")]
         self.target, self.guide = None, None
-        self._focus_coach = FocusCoach()
+        self._focus_coach, self._focus_mode = FocusCoach(), "finder"
         return [say("Point at some stars, then turn the finder's focus ring slowly. "
                     "I'll tell you when it gets sharper. Say stop when I say it's the sharpest.")]
+
+    def start_main_focus(self) -> list[dict]:
+        if self.main_camera is None:
+            return [say("There's no main camera connected.")]
+        if self.recorder is not None and self.recorder.busy:  # one user of the camera at a time
+            return [say("I'm recording right now. Say 'stop recording' first.")]
+        self.guide = None  # keep the target; we're on it
+        self.main_focus_ok = False  # a new focus pass must finish before capture
+        self._focus_coach, self._focus_mode = FocusCoach(), "main"
+        return [say("Turn the telescope's focus knob slowly. I'll tell you when it gets sharper. "
+                    "Say stop when I say it's the sharpest.")]
+
+    def capture(self) -> list[dict]:
+        if self.recorder is None:
+            return [say("There's no main camera connected.")]
+        if self._focus_coach is not None:  # focus is still using a camera
+            return [say("Let's finish focusing first. Say done when it's sharpest.")]
+        if not self.main_focus_ok:  # pre-flight gate (plan Phase 1 step 8)
+            return [say("Let's make sure it's sharp first."), *self.start_main_focus()]
+        try:
+            self.recorder.start(self.target or "capture", self.record_seconds)
+        except CaptureRefused as e:
+            return [say(str(e))]
+        self._announced_done = False
+        return [say(f"Recording for {self.record_seconds:g} seconds. Try not to touch the telescope.")]
 
     def goto(self, name: str) -> list[dict]:
         pre: list[dict] = []
@@ -115,7 +178,8 @@ class Session:
         safe = check_target(alt, az, self.site, self.clock(), self.override)
         if not safe.ok:
             return [say(f"I can't go to {name}: it's {safe.reason}.")]
-        self.target, self.guide, self._focus_coach = name, Guide(alt, az), None
+        guide = Guide(alt, az, tolerance_arcmin=TOLERANCE_ARCMIN[self.barlow])
+        self.target, self.guide, self._focus_coach = name, guide, None
         return [*pre, say(f"Let's find {name}.")]
 
     def tonight(self) -> list[dict]:
@@ -154,7 +218,15 @@ class Session:
             return self._tick(t)
 
     def _tick(self, t: float) -> list[dict]:
+        rec = self.recorder.current if self.recorder else None
+        if rec is not None and rec.done.is_set() and not self._announced_done:
+            self._announced_done = True
+            if rec.error:
+                return [say(f"{rec.error} I saved {rec.frames} frames.")]
+            return [say(f"Done. I saved {rec.frames} frames.")]
         if self._focus_coach is not None:
+            if self._focus_mode == "main":
+                return self._main_focus_step(t)
             return self._finder_focus_step(t)
         if self.guide is None or self.target is None:
             return []
@@ -176,12 +248,68 @@ class Session:
         if t - self._focus_at < FOCUS_STEP_S or self.finder is None or self._focus_coach is None:
             return []
         self._focus_at = t
-        report = self.finder.focus_report()
+        if stop := self._stop_focus_if_unsafe():
+            return stop
+        try:
+            report = self.finder.focus_report()
+        except (RuntimeError, OSError) as e:
+            return self._camera_failed("finder", e)
         if report.stars == 0:
             return [say("I can't see any stars yet.")]
         # Fewer visible stars also means softer focus, so fold the count into the score.
         cue = self._focus_coach.update(report.stars / max(report.hfr_px, MIN_HFR_PX))
         return [say(cue)] if cue else []
+
+
+    def _main_focus_step(self, t: float) -> list[dict]:
+        if t - self._focus_at < FOCUS_STEP_S or self.main_camera is None or self._focus_coach is None:
+            return []
+        self._focus_at = t
+        if stop := self._stop_focus_if_unsafe():
+            return stop
+        try:
+            frame = self.main_camera.capture()
+        except (RuntimeError, OSError) as e:
+            return self._camera_failed("main", e)
+        if self.target is None or self.target in self._extended_targets():
+            center = brightest_blob(frame)
+            if center is None:
+                return [say("I don't see anything bright in the main camera.")]
+            h, w = frame.shape
+            r = roi_around(center, FOCUS_CROP_PX, (w, h))
+            score = laplacian_variance(frame[r.y:r.y + r.height, r.x:r.x + r.width])
+        else:  # stars: smaller is sharper
+            report = check_focus(finder_gray(frame))  # expects hot-pixel-cleaned, binned gray
+            if report.stars == 0:
+                return [say("I don't see any stars in the main camera.")]
+            score = 1 / max(report.hfr_px, MIN_HFR_PX)
+        cue = self._focus_coach.update(score)
+        return [say(cue)] if cue else []
+
+    def _camera_failed(self, which: str, error: Exception) -> list[dict]:
+        """A camera failed even after the driver's retry: stop focusing and say so."""
+        self._focus_coach = None
+        return [say(f"The {which} camera stopped responding, so I stopped focusing. ({error})")]
+
+    def exposure_safety(self) -> str | None:
+        """Spoken reason why taking an exposure now is unsafe, else None (astro/safety.py)."""
+        when = self.clock()
+        if self.finder is not None and not self.finder.synced:
+            # Pointing unknown: we can't rule out the Sun, so allow only when it is down.
+            if body_altaz("sun", self.site, when)[0] > DAYTIME_SUN_ALT_DEG:
+                return "it's daytime and I don't know where the telescope is pointing"
+            return None
+        result = check_target(*self.position(), self.site, when, self.override)
+        return None if result.ok else f"the telescope is pointing {result.reason}"
+
+    def _stop_focus_if_unsafe(self) -> list[dict]:
+        if reason := self.exposure_safety():
+            self._focus_coach = None
+            return [say(f"I stopped focusing: {reason}.")]
+        return []
+
+    def _extended_targets(self) -> set[str]:
+        return {p.capitalize() for p in PLANETS} | {"Moon"}
 
 
 def say(text: str) -> dict:

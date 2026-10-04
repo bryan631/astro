@@ -16,6 +16,17 @@ def solver():
     return FinderSolver()
 
 
+def test_remove_hot_pixels_keeps_stars():
+    from astro.pointing.platesolve import remove_hot_pixels
+
+    img = np.full((9, 9), 10, np.uint8)
+    img[2, 2] = 200  # hot pixel: neighbors dark
+    img[5:8, 5:8] = 60
+    img[6, 6] = 200  # star: light spills into neighbors
+    out = remove_hot_pixels(img)
+    assert out[2, 2] == 10 and out[6, 6] == 200
+
+
 def test_bin2x2():
     raw = np.arange(16, dtype=np.uint8).reshape(4, 4)
     assert bin2x2(raw).tolist() == [[10, 18], [42, 50]]
@@ -56,3 +67,18 @@ def test_solve_rate_on_finder_format_frames(solver):
                      sigma_px=2.0, mag_limit=6.5, seed=i)
         solved += solver.solve(img) is not None
     assert solved >= 26
+
+
+def test_real_finder_frame_solves(solver):
+    """SV905C, 0.8 s gain 100, 2026-10-03 22:36 PDT; Saturn ~0.94 deg from center."""
+    raw = np.load(__import__("pathlib").Path(__file__).parent / "data" / "finder_saturn.npy")
+    sol = solver.solve(raw)
+    assert sol is not None and sol.matches >= 8
+    assert separation_deg(sol.dec_deg, sol.ra_deg, 2.112, 10.014) < 0.02
+    assert sol.fov_deg == pytest.approx(10.39, abs=0.05)
+
+
+def test_confidence_is_minus_log10_false_prob():
+    from astro.pointing.platesolve import Solution
+
+    assert Solution(0, 0, 0, 10, 0, 10, 1e-12, 5).confidence == pytest.approx(12)

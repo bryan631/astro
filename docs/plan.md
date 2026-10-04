@@ -160,7 +160,7 @@ Phase 1 is done when: in sim mode a full session works end-to-end via the tablet
 4. First-light checklist: back-focus reach (prime vs Barlow), collimation (see below), solve reliability,
    guidance feel (tolerance, voice pacing), dew performance, battery runtime.
    - Collimation check (main camera): defocused-star test measuring ring (donut) evenness and how
-     centred the secondary's shadow is, with spoken guidance for the primary-mirror collimation
+     centered the secondary's shadow is, with spoken guidance for the primary-mirror collimation
      screws ("turn the top screw a quarter turn… better… stop"). Run at first light, periodically,
      and prompt for it after the scope has been moved or transported.
 5. Teach + tune: simplify prompts based on how he actually talks; tune cue pacing for his

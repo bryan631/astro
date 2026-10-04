@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 from astro.agent import Agent
 from astro.devices.sim.finder import SimFinderCamera
+from astro.devices.sim.main_cam import SimMainCamera
 from astro.devices.sim.scope import SimEncoders, SimScope, SimUser
 from astro.pointing.coords import Site
 from astro.pointing.finder_sync import FinderSync
@@ -57,7 +58,10 @@ def build_session() -> tuple[Session, SimScope | None]:
     camera = SimFinderCamera(lambda: (scope.alt, scope.az), site, clock, solver()._t3.star_table)
     finder = FinderSync(camera, solver(), MountModel(), SimEncoders(scope), site, clock)
     override = os.environ.get("ASTRO_DEV_OVERRIDE") == "1"
-    return Session(site, clock=clock, developer_override=override, finder=finder), scope
+    main = SimMainCamera(lambda: (scope.alt, scope.az), site, clock)
+    session = Session(site, clock=clock, developer_override=override, finder=finder,
+                      main_camera=main, main_sensor=main.sensor_size, data_dir=ROOT / "data")
+    return session, scope
 
 
 @functools.cache

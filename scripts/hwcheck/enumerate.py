@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S sh -c 'exec "$(dirname "$0")/../../.venv/bin/python" "$0" "$@"'
+# Runs with the project .venv (relative to this file), from any directory.
 """List SVBony cameras, grab one RAW8 frame from each, save a debayered PNG."""
 import sys
 
@@ -18,6 +19,6 @@ for info in cams:
         cam.start()
         raw = cam.frame()
     print(f"  frame {raw.shape} min={raw.min()} max={raw.max()} mean={raw.mean():.1f}")
-    code = getattr(cv2, f"COLOR_Bayer{svb.BAYER[p.bayer]}2BGR")
+    code = getattr(cv2, f"COLOR_Bayer{svb.CV_BAYER[p.bayer]}2BGR")
     small = cv2.resize(cv2.cvtColor(raw, code), None, fx=0.25, fy=0.25, interpolation=cv2.INTER_AREA)
     cv2.imwrite(f"{out}/{name.replace(' ', '_')}.png", small)

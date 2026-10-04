@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S sh -c 'exec "$(dirname "$0")/../../.venv/bin/python" "$0" "$@"'
+# Runs with the project .venv (relative to this file), from any directory.
 """Plan checklist per camera: 10x connect, ROI fps (RAW8), exposure sweep, debayer sample."""
 import sys
 import time
@@ -57,7 +58,7 @@ for info in svb.enumerate_cameras():
         cam.start()
         cam.frame()
         raw = cam.frame()
-    bgr = cv2.cvtColor(raw, getattr(cv2, f"COLOR_Bayer{svb.BAYER[p.bayer]}2BGR"))
+    bgr = cv2.cvtColor(raw, getattr(cv2, f"COLOR_Bayer{svb.CV_BAYER[p.bayer]}2BGR"))
     b, g, r = bgr.reshape(-1, 3).mean(0)
     print(f"debayer {svb.BAYER[p.bayer]}: mean R={r:.1f} G={g:.1f} B={b:.1f}")
     cv2.imwrite(f"{out}/{name}_checklist.png", cv2.resize(bgr, None, fx=0.25, fy=0.25, interpolation=cv2.INTER_AREA))

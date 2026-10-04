@@ -13,7 +13,7 @@ import numpy as np
 
 from astro.devices.base import Camera
 from astro.pointing.finder_sync import check_focus
-from astro.pointing.platesolve import FinderSolver, bin2x2
+from astro.pointing.platesolve import FinderSolver, finder_gray
 
 SOLVED = "solved"
 NO_MATCH = "stars visible but no pattern match"
@@ -37,7 +37,7 @@ class SkyTestStats:
 def test_frame(raw: np.ndarray, solver: FinderSolver, stats: SkyTestStats) -> str:
     """Focus-check and solve one raw finder frame; update `stats`; return a report line."""
     stats.frames += 1
-    focus = check_focus(bin2x2(raw))
+    focus = check_focus(finder_gray(raw))
     seen = f"stars {focus.stars} hfr {focus.hfr_px:.2f}"
     sol = solver.solve(raw)
     if sol is None:
@@ -46,7 +46,7 @@ def test_frame(raw: np.ndarray, solver: FinderSolver, stats: SkyTestStats) -> st
     stats.outcomes[SOLVED] += 1
     stats.solve_ms.append(sol.ms)
     return (f"{stats.frames}: RA {sol.ra_deg:.3f} Dec {sol.dec_deg:+.3f} roll {sol.roll_deg:.1f} "
-            f"fov {sol.fov_deg:.2f} matches {sol.matches} {sol.ms:.0f} ms | {seen}")
+            f"fov {sol.fov_deg:.2f} matches {sol.matches} conf {sol.confidence:.1f} {sol.ms:.0f} ms | {seen}")
 
 
 def run(camera: Camera, solver: FinderSolver, every_s: float, save_dir: Path | None = None,

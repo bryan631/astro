@@ -3,9 +3,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 sudo apt-get update -q
-sudo apt-get install -y -q python3-venv python3-pip
+sudo apt-get install -y -q python3-venv python3-pip python3-tk
 [ -d .venv ] || python3 -m venv .venv
-.venv/bin/pip install -q -e ".[dev]"
+.venv/bin/pip install -q -e ".[dev,tools]"
 scripts/install-solver.sh
 [ -f .env ] || echo "# ANTHROPIC_API_KEY=" > .env
 ASTRO_SIM=1 .venv/bin/pytest -q

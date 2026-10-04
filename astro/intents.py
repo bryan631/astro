@@ -10,13 +10,16 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Intent:
-    name: str  # goto, stop, next, tonight, capture, stop_capture, focus, finder_focus, sync, where
+    name: str  # goto, stop, next, tonight, capture, stop_capture, focus, finder_focus, sync,
+    # where, barlow_on, barlow_off
     target: str | None = None
 
 
 _PATTERNS = [
     ("stop_capture", r"\b(stop|end|finish) (the )?(capture|recording|pictures?)\b"),
-    ("stop", r"^(stop|halt|hold|freeze|that's it)\b"),
+    ("barlow_on", r"\b(barlow (is )?(on|in)|(put|added?) (in )?the barlow)\b"),
+    ("barlow_off", r"\b(barlow (is )?(off|out)|(took|take|removed?) (out )?the barlow)\b"),
+    ("stop", r"^(stop|halt|hold|freeze|that's it|done)\b"),
     ("next", r"\b(next|another one|something else)\b"),
     ("tonight", r"\b(what('s| is) (good|up|out|visible)|what can i see|tonight)\b"),
     ("capture", r"\b(capture|take (a )?(picture|photo|image)s?|record)\b"),

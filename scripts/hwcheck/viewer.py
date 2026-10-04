@@ -1,89 +1,18 @@
-#!/usr/bin/env python3
-"""Live MJPEG viewer for an SVBony camera. Open http://localhost:8080 in the ChromeOS browser.
+#!/usr/bin/env -S sh -c 'exec "$(dirname "$0")/../../.venv/bin/python" "$0" "$@"'
+# Runs with the project .venv (relative to this file), from any directory.
+"""Live camera view in the browser (MJPEG).
 
-  ./viewer.py finder --exp 50 --gain 100
-  ./viewer.py main --roi 1280x720
+    scripts/hwcheck/viewer.py finder --exp 0.5 --gain 100     then open http://localhost:8080
 """
-import argparse
-import threading
+
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import cv2
-import svb
+from live import LiveCamera, parse_args
 
-ap = argparse.ArgumentParser()
-ap.add_argument("cam", help="finder (SV905C), main (SV705C) or a camera index")
-ap.add_argument("--exp", type=float, default=20, help="exposure in ms")
-ap.add_argument("--gain", type=int, default=None)
-ap.add_argument("--roi", default=None, help="WxH, centered, e.g. 1280x720")
-ap.add_argument("--width", type=int, default=960, help="max stream width")
-ap.add_argument("--port", type=int, default=8080)
-args = ap.parse_args()
-
-cams = svb.enumerate_cameras()
-key = {"finder": "SV905C", "main": "SV705C"}.get(args.cam)
-info = next((c for c in cams if key and key in c.name.decode()), None) if key else cams[int(args.cam)]
-if info is None:
-    raise SystemExit(f"no {args.cam} camera; found {[c.name.decode() for c in cams]}")
-
-with svb.Camera(info) as probe:
-    p = probe.prop
-w, h = map(int, args.roi.split("x")) if args.roi else (p.max_w, p.max_h)
-w, h = min(w, p.max_w) // 8 * 8, min(h, p.max_h) // 2 * 2
-
-
-def open_cam():
-    cam = svb.Camera(info)
-    try:
-        cam.set_control(svb.EXPOSURE, int(args.exp * 1000))
-        if args.gain is not None:
-            cam.set_control(svb.GAIN, args.gain)
-        cam.start((p.max_w - w) // 2 // 2 * 2, (p.max_h - h) // 2 // 2 * 2, w, h)
-    except RuntimeError:
-        cam.__exit__()
-        raise
-    return cam
-
-
-def reopen(old):
-    """Release the camera and keep retrying until it reopens, so capture never silently stops."""
-    old.__exit__()
-    while True:
-        try:
-            return open_cam()
-        except RuntimeError as e:
-            print(f"reopen failed: {e}; retrying in 2 s", flush=True)
-            time.sleep(2)
-
-
-cam = open_cam()
-print(f"{info.name.decode()} {w}x{h} exp={args.exp}ms; http://localhost:{args.port}", flush=True)
-
-jpeg, fps = b"", 0.0
-code = getattr(cv2, f"COLOR_Bayer{svb.BAYER[p.bayer]}2BGR")
-
-
-def grab():
-    global jpeg, fps, cam
-    t = time.time()
-    while True:
-        try:
-            raw = cam.frame(wait_ms=int(args.exp) * 3 + 2000)
-        except RuntimeError as e:  # SDK intermittently times out; reopen the camera (see docs/hardware-results.md)
-            print(f"{e}; reopening camera", flush=True)
-            cam = reopen(cam)
-            continue
-        img = cv2.cvtColor(raw, code)
-        if w > args.width:
-            img = cv2.resize(img, (args.width, h * args.width // w), interpolation=cv2.INTER_AREA)
-        now = time.time()
-        fps = 0.9 * fps + 0.1 / max(now - t, 1e-6)
-        t = now
-        focus = cv2.Laplacian(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var()  # higher = sharper
-        text = f"{fps:.1f} fps  max={raw.max()}  focus={focus:.0f}"
-        cv2.putText(img, text, (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])[1].tobytes()
+args = parse_args(__doc__, lambda ap: ap.add_argument("--port", type=int, default=8080))
+live = LiveCamera(args).start()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -94,9 +23,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=f")
         self.end_headers()
         try:
-            while True:
-                self.wfile.write(b"--f\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n%s\r\n" % (len(jpeg), jpeg))
-                time.sleep(max(0.03, args.exp / 1000))
+            while not live.stopped:
+                if live.latest is not None:
+                    jpeg = cv2.imencode(".jpg", live.latest, [cv2.IMWRITE_JPEG_QUALITY, 80])[1]
+                    self.wfile.write(b"--f\r\nContent-Type: image/jpeg\r\n\r\n" + jpeg.tobytes() + b"\r\n")
+                time.sleep(max(0.03, min(args.exp, 0.5)))
         except (BrokenPipeError, ConnectionResetError):
             pass
 
@@ -104,11 +35,12 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-threading.Thread(target=grab, daemon=True).start()
+server = ThreadingHTTPServer(("", args.port), Handler)
+server.daemon_threads = True
+print(f"{args.cam}: open http://localhost:{args.port}  (Ctrl+C to stop)", flush=True)
 try:
-    ThreadingHTTPServer(("", args.port), Handler).serve_forever()
+    server.serve_forever()
 except KeyboardInterrupt:
-    pass
+    print("\nstopping after the current exposure...", flush=True)
 finally:
-    cam.stop()
-    cam.close()
+    live.stop()

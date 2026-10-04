@@ -14,10 +14,34 @@ Scripts: `scripts/hwcheck/` (`enumerate.py`, `checklist.py`). SDK lives in `~/sd
 | Debayer (GR pattern) | plausible, bare sensor sees blue light (SV705C is now capped, no lens) | plausible: smooth, no mosaic artifacts; blue/purple cast because no white balance is applied. Out of focus, so color accuracy not judged |
 
 ## Quirks
+- **Color preview had red/blue swapped** in the first checkout scripts (OpenCV names Bayer codes by the second row, so this GRBG sensor needs `BayerGB`, not `BayerGR`). Fixed; the "bare sensor sees blue light" debayer note above was probably red. SER files and the solver were never affected.
 - **USB2 link.** Both cameras enumerate at 480M inside the container, even the USB3 SV705C. Full-frame rate (5.4 fps) and the 47 fps at 1280x720 look bus-limited. Retest on the MeLE miniPC for real USB3 numbers.
 - **Stop/start on one open handle is flaky.** Re-starting video capture on the same open camera intermittently returned `SVB_ERROR_TIMEOUT` (11), once leading to a libusb assert crash at exit. Closing and reopening the camera between runs was reliable. Exposure must be set before `SVBStartVideoCapture`.
 - **The SDK's bundled `libusb-1.0.so*` files are empty.** Load the system `libusb-1.0.so.0` with `RTLD_GLOBAL` first.
 - Needs udev rule `90-ckusb.rules` (mode 0666) for non-root access.
+
+## Finder on real sky (2026-10-03, first look)
+- 0.2 s at gain 1000: one bright star visible, saturated, with a red halo; could not be focused sharply.
+- "Capped" frames at several gains still showed drifting stars: the plastic cap passes infrared, and
+  the IMX225 is IR-sensitive. The red halo and soft focus point the same way: **IR focuses at a
+  different point than visible light. Try an IR-cut filter**, stop down to f/2-2.8, and focus on an
+  unsaturated star (gain 100-300) using `hfr` in the viewer overlay.
+- Hot pixels (~15 at gain 1000) and an 8-bit noise floor where the MAD is 0 fooled the star counter
+  (33,000 "stars" on a dark frame). Fixed: hot-pixel removal, noise floor, 2-px minimum star size.
+  Real frames are in `tests/data/` as regression tests.
+
+## First real-sky solve (2026-10-03 22:36 PDT)
+- Finder at 0.8 s, gain 100, focused for tight faint stars (focus gate: 22 stars, HFR 0.96 binned px).
+- Solved in 12 ms: RA 10.014°, Dec +2.112°, roll 222.5°, 10 matches, RMSE 10″, false-match prob 5e-13.
+- Measured horizontal FOV 10.39° (estimate was 11°). The bright object 0.94° from center is Saturn.
+- Frame kept as `tests/data/finder_saturn.npy` (regression test).
+
+## Finder exposure sweep (2026-10-03, ~23:00 PDT, same field, 2 frames per cell)
+- **SDK quirk:** the first 2 frames after video capture starts are blank (bias only). The driver
+  now discards them; before that, about half of a settings sweep looked like "no stars".
+- Solved every time at **>= 0.8 s with gain >= 100** (10-17 matches), and at 1.6 s even at gain 50.
+  Nothing solved at <= 0.4 s, even with 30-46 detections (mostly noise; the faint stars are missing).
+- HFR 0.8-1.1 binned px everywhere: focus is fine. Default for `solve_sky.py`: 0.8 s, gain 200.
 
 ## Still open
 - ~~**Finder focus**~~ done 2026-10-03 (distant object, `viewer.py`).

@@ -3,7 +3,15 @@
 import pytest
 
 from astro.devices.base import Roi
-from astro.devices.svbony import EXPOSURE, GAIN, RAW8, TIMEOUT, SvbError, SvbonyCamera
+from astro.devices.svbony import (
+    EXPOSURE,
+    GAIN,
+    RAW8,
+    STARTUP_FRAMES,
+    TIMEOUT,
+    SvbError,
+    SvbonyCamera,
+)
 
 
 class FakeSdk:
@@ -47,6 +55,7 @@ class FakeSdk:
         return 0
 
     def SVBGetVideoData(self, cid, buf, size, wait):
+        self.reads = getattr(self, "reads", 0) + 1
         if self.timeouts:
             self.timeouts -= 1
             return TIMEOUT
@@ -99,6 +108,15 @@ def test_exposure_and_gain_reach_the_sdk():
     cam.capture()
     assert sdk.controls == {EXPOSURE: 250_000, GAIN: 120}  # exposure in microseconds
     assert sdk.image_type == RAW8
+
+
+def test_blank_startup_frames_are_discarded():
+    sdk = FakeSdk()
+    cam = connected(sdk)
+    cam.capture()
+    assert sdk.reads == 1 + STARTUP_FRAMES
+    cam.capture()
+    assert sdk.reads == 2 + STARTUP_FRAMES  # only after a (re)start
 
 
 def test_unchanged_setting_does_not_reopen():
