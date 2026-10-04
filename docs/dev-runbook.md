@@ -31,6 +31,17 @@ simulated user follows the spoken cues so you can watch the arrow and hear the g
 - `astro/safety.py::check_target` runs before guiding and every second during guidance.
 - Sun exclusion is ≥20° and cannot be narrowed or overridden.
 
-## Tablet (prototype)
-Speech in/out currently uses the tablet browser's built-in recognizer and voices. On Android
-Chrome the recognizer may need internet; whisper.cpp + Piper on the server replace this next.
+## Tablet (Android) and HTTPS
+The mic needs HTTPS. On the MiniPC, use Tailscale certs (enable MagicDNS + HTTPS in the admin
+console), then `scripts/tailscale-cert.sh`; it prints the tablet URL. Install the tablet in the
+tailnet, open the URL in Chrome, and "Add to Home screen".
+
+## Speech
+`scripts/install-voice.sh` (MiniPC) builds whisper.cpp and installs Piper, writing `voice.env`.
+The server then announces `server_stt/server_tts` and the tablet records audio for the server
+(works offline). Without it the tablet uses Chrome's recognizer, which may need internet.
+
+## MiniPC services
+    sudo cp deploy/*.service deploy/*.timer /etc/systemd/system/
+    sudo systemctl enable --now astro astro-cert.timer
+`scripts/run.sh` serves HTTPS on port 8443 when `certs/` has a cert, plain HTTP otherwise.

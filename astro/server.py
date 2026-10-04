@@ -5,6 +5,7 @@ In sim mode a simulated user follows the spoken cues so the whole loop can be wa
 """
 
 import asyncio
+import json
 import os
 import time
 import tomllib
@@ -17,6 +18,7 @@ from astro.agent import Agent
 from astro.devices.sim.scope import SimScope, SimUser
 from astro.pointing.coords import Site
 from astro.session import Session
+from astro.voice.speech import Stt, Tts
 
 ROOT = Path(__file__).resolve().parents[1]
 SIM = os.environ.get("ASTRO_SIM") == "1"
@@ -50,6 +52,7 @@ def build_session() -> tuple[Session, SimScope | None]:
 
 
 app = FastAPI()
+stt, tts = Stt(), Tts()
 
 
 @app.websocket("/ws")
@@ -60,24 +63,43 @@ async def ws(socket: WebSocket) -> None:
     user = SimUser() if scope else None
     t0 = time.monotonic()
 
+    async def send(msg: dict) -> None:
+        await socket.send_json(msg)
+        if msg["type"] == "say" and tts.available():
+            await socket.send_bytes(await asyncio.to_thread(tts.synthesize, msg["text"]))
+
+    async def handle_text(text: str) -> None:
+        await socket.send_json({"type": "heard", "text": text})
+        for out in await asyncio.to_thread(agent.handle, text):
+            await send(out)
+
     async def guidance_loop() -> None:
         while True:
             t = time.monotonic() - t0
             for msg in session.tick(t):
                 if user and msg["type"] == "say":
                     user.hear(msg["text"], t)
-                await socket.send_json(msg)
+                await send(msg)
             if user and scope:
                 scope.step(*user.act(t), TICK_S)
             await asyncio.sleep(TICK_S)
 
+    await socket.send_json({"type": "hello", "server_stt": stt.available(),
+                            "server_tts": tts.available()})
     loop = asyncio.create_task(guidance_loop())
     try:
         while True:
-            msg = await socket.receive_json()
-            if msg.get("type") == "text":
-                for out in await asyncio.to_thread(agent.handle, msg["text"]):
-                    await socket.send_json(out)
+            msg = await socket.receive()
+            if msg["type"] == "websocket.disconnect":
+                break
+            if msg.get("bytes"):  # recorded speech from the tablet
+                text = await asyncio.to_thread(stt.transcribe, msg["bytes"])
+                await handle_text(text) if text else await send(
+                    {"type": "say", "text": "Sorry, I didn't hear anything."})
+            elif msg.get("text"):
+                data = json.loads(msg["text"])
+                if data.get("type") == "text":
+                    await handle_text(data["text"])
     except WebSocketDisconnect:
         pass
     finally:

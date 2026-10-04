@@ -35,17 +35,25 @@
 <script>
 const said = document.getElementById("said"), arrow = document.getElementById("arrow"),
       dist = document.getElementById("dist"), talk = document.getElementById("talk");
-let ws;
+let ws, serverStt = false, serverTts = false, player = null;
 function connect() {
   ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
-  ws.onmessage = e => handle(JSON.parse(e.data));
+  ws.binaryType = "blob";
+  ws.onmessage = e => typeof e.data === "string" ? handle(JSON.parse(e.data)) : play(e.data);
   ws.onclose = () => setTimeout(connect, 1000);
 }
+function stopAudio() { speechSynthesis.cancel(); if (player) player.pause(); }
+function play(blob) {  // server (Piper) speech; newest cue wins
+  stopAudio(); player = new Audio(URL.createObjectURL(blob)); player.play();
+}
 function speak(text) {
-  speechSynthesis.cancel();  // never talk over ourselves: newest cue wins
+  if (serverTts) return;  // audio arrives separately as a binary message
+  stopAudio();
   const u = new SpeechSynthesisUtterance(text); u.rate = 0.95; speechSynthesis.speak(u);
 }
 function handle(m) {
+  if (m.type === "hello") { serverStt = m.server_stt; serverTts = m.server_tts; setupTalk(); }
+  if (m.type === "heard") said.textContent = `“${m.text}”`;
   if (m.type === "say") { said.textContent = m.text; speak(m.text); }
   if (m.type === "state") {
     arrow.hidden = false;
@@ -65,17 +73,36 @@ document.getElementById("typed").onsubmit = e => {
 };
 document.getElementById("mode").onclick = () => document.body.classList.toggle("day");
 
-// Prototype speech input: browser recognizer when available. Whisper.cpp on the server comes next.
-const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
-if (Rec) {
-  const rec = new Rec(); rec.lang = "en-US"; rec.interimResults = false;
-  rec.onresult = e => send(e.results[0][0].transcript);
-  rec.onend = () => talk.classList.remove("listening");
-  const start = e => { e.preventDefault(); speechSynthesis.cancel(); talk.classList.add("listening"); rec.start(); };
-  talk.addEventListener("pointerdown", start);
-  talk.addEventListener("pointerup", () => rec.stop());
-} else {
-  talk.textContent = "Type below"; talk.disabled = true;
+// Speech input: record and send to the server (whisper.cpp) when available, which works
+// offline; otherwise use the browser's recognizer (on Android this may need internet).
+let talkReady = false;
+function setupTalk() {
+  if (talkReady) return; talkReady = true;
+  const listen = on => talk.classList.toggle("listening", on);
+  const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let start, stop;
+  if (serverStt && navigator.mediaDevices) {
+    let rec;
+    start = async () => {
+      const stream = await navigator.mediaDevices.getUserMedia({audio: true});
+      const chunks = []; rec = new MediaRecorder(stream);
+      rec.ondataavailable = e => chunks.push(e.data);
+      rec.onstop = () => { stream.getTracks().forEach(t => t.stop()); listen(false);
+                           ws.send(new Blob(chunks, {type: rec.mimeType})); };
+      rec.start();
+    };
+    stop = () => rec && rec.state === "recording" && rec.stop();
+  } else if (Rec) {
+    const rec = new Rec(); rec.lang = "en-US"; rec.interimResults = false;
+    rec.onresult = e => send(e.results[0][0].transcript);
+    rec.onend = () => listen(false);
+    start = () => rec.start(); stop = () => rec.stop();
+  } else {
+    talk.textContent = "Type below"; talk.disabled = true; return;
+  }
+  talk.addEventListener("pointerdown", e => { e.preventDefault(); stopAudio(); listen(true); start(); });
+  talk.addEventListener("pointerup", () => stop());
+  talk.addEventListener("pointerleave", () => stop());
 }
 connect();
 </script>
