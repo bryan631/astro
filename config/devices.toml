@@ -1,0 +1,18 @@
+# Hardware for this installation. ASTRO_SIM=1 ignores this file and uses simulators.
+
+[finder]
+driver = "svbony"      # svbony
+model = "SV905C"
+exposure_s = 0.8       # from the 2026-10-03 sweep: >= 0.8 s solved every time
+gain = 200
+
+[main]
+driver = "svbony"      # svbony | none
+model = "SV705C"
+
+[mount]
+driver = "solve"       # mcu (IntelliScope encoders via the Nano Every) | solve (finder only)
+port = ""              # mcu: serial port; empty = first /dev/ttyACM*
+counts_per_rev = 9216
+az_sign = 1            # flip to -1 if azimuth runs backwards
+alt_sign = 1

@@ -100,3 +100,44 @@ def test_gallery_lists_pictures(monkeypatch, tmp_path):
     (tmp_path / "a.png").write_bytes(b"png")
     monkeypatch.setattr(server, "GALLERY", tmp_path)
     assert TestClient(server.app).get("/gallery").json() == ["a.png"]
+
+
+def test_real_hub_is_shared_and_broadcasts(monkeypatch):
+    sim_session, _ = server.build_session()  # stands in for the real hardware session
+    monkeypatch.setattr(server, "SIM", False)
+    monkeypatch.setattr(server, "build_real_session", lambda: sim_session)
+    monkeypatch.setattr(server, "_real_hub", None)
+    client = TestClient(server.app)
+    with client.websocket_connect("/ws") as a, client.websocket_connect("/ws") as b:
+        a.send_json({"type": "text", "text": "go to pizza"})
+        assert "I don't know pizza." in receive_until(a, "say")
+        assert "I don't know pizza." in receive_until(b, "say")  # both tablets hear it
+    assert server._real_hub.session is sim_session
+
+
+def test_failed_main_camera_rolls_back_pointing(monkeypatch, tmp_path):
+    cfg = tmp_path / "devices.toml"
+    cfg.write_text('[finder]\ndriver = "svbony"\nmodel = "SV905C"\n'
+                   '[main]\ndriver = "svbony"\nmodel = "SV705C"\n[mount]\ndriver = "solve"\n')
+    closed = []
+    monkeypatch.setenv("ASTRO_DEVICES", str(cfg))
+    monkeypatch.setattr(server.devices, "build_pointing",
+                        lambda *a: (object(), lambda: closed.append("pointing")))
+
+    def broken_camera(cfg):
+        raise RuntimeError("SVB error 1")
+
+    monkeypatch.setattr(server.devices, "open_camera", broken_camera)
+    server.build_real_session.cache_clear()
+    with pytest.raises(RuntimeError):
+        server.build_real_session()
+    assert closed == ["pointing"]
+    server.build_real_session.cache_clear()
+
+
+def test_unknown_main_driver_rejected_before_hardware():
+    from astro.devices import config as devices
+
+    with pytest.raises(ValueError, match="main camera driver"):
+        devices.validate({"finder": {"driver": "svbony"}, "main": {"driver": "webcam"},
+                          "mount": {"driver": "solve"}})
