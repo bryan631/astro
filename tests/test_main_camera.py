@@ -344,3 +344,14 @@ def test_picture_silences_guidance_and_blocks_goto(tmp_path):
     assert texts(s.handle("go to jupiter"))[0].startswith("I'm taking a picture")
     s.recorder.stop()
     s.recorder.current.done.wait(5)
+
+
+def test_refused_capture_keeps_guidance(tmp_path):
+    from astro.guidance.engine import Guide
+
+    s, cam = make_session(tmp_path)
+    s.guide, s.main_focus_ok = Guide(45, 100), True
+    cam.true_altaz = lambda: (80.0, 10.0)  # nothing bright: the recorder refuses
+    cam._stars = lambda alt, az, roi: 0.0
+    assert "don't see anything bright" in texts(s.handle("take a picture"))[0]
+    assert s.guide is not None

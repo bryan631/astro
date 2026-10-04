@@ -59,7 +59,7 @@ function speak(text) {
 function handle(m) {
   if (m.type === "hello") { serverStt = m.server_stt; serverTts = m.server_tts; setupTalk(); }
   if (m.type === "heard") said.textContent = `“${m.text}”`;
-  if (m.type === "get_location") sendLocation();
+  if (m.type === "get_location") sendLocation(m.id);
   if (m.type === "picture" && !document.getElementById("gallery").hidden) showPictures();
   if (m.type === "live") {  // live stack preview: same file, rewritten as frames are added
     const img = document.getElementById("live");
@@ -80,15 +80,15 @@ function handle(m) {
   }
 }
 // Tablet GPS for the observing site (setup, or "use my location"). Needs HTTPS.
-function sendLocation() {
+function sendLocation(id) {  // echo the request id so stale answers can be ignored
   if (!navigator.geolocation) {
-    ws.send(JSON.stringify({type: "location_error", message: "This browser has no location service."}));
+    ws.send(JSON.stringify({type: "location_error", id, message: "This browser has no location service."}));
     return;
   }
   navigator.geolocation.getCurrentPosition(
-    p => ws.send(JSON.stringify({type: "location", lat: p.coords.latitude, lon: p.coords.longitude,
+    p => ws.send(JSON.stringify({type: "location", id, lat: p.coords.latitude, lon: p.coords.longitude,
                                  alt: p.coords.altitude, accuracy: p.coords.accuracy})),
-    e => ws.send(JSON.stringify({type: "location_error", message: e.message})),
+    e => ws.send(JSON.stringify({type: "location_error", id, message: e.message})),
     {enableHighAccuracy: true, timeout: 20000, maximumAge: 0});  // always a fresh fix
 }
 function send(text) { if (text.trim()) ws.send(JSON.stringify({type: "text", text})); }

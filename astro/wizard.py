@@ -19,9 +19,10 @@ def say(text: str) -> dict:
 class SetupWizard:
     def __init__(self, request_location: Callable[[], Reply], sync: Callable[[], tuple[bool, str]],
                  alignment: Callable[[], tuple[int, float | None]],
-                 start_horizon: Callable[[], Reply]):
+                 start_horizon: Callable[[], Reply], cancel_location: Callable[[], None]):
         self.request_location, self.sync = request_location, sync
         self.alignment, self.start_horizon = alignment, start_horizon
+        self.cancel_location = cancel_location
         self.syncs_done = 0
         self.step = "location"
         self.active = True
@@ -56,7 +57,8 @@ class SetupWizard:
         return []
 
     def skip(self) -> Reply:
-        if self.step == "location":
+        if self.step == "location":  # use the saved site; a late GPS answer must not reset syncs
+            self.cancel_location()
             return self.location_done()
         if self.step == "sync":
             self.step = "horizon"

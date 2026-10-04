@@ -61,3 +61,14 @@ def test_far_gps_fix_cannot_wipe_a_sync(solver):
     assert fs.alignment()[0] == 0
     s.set_location(26.9, -80.3, None, None)  # ~30 km away: resets the model, before any sync
     assert "Got it" in texts(s.handle("ready"))[0] and fs.alignment()[0] == 1
+
+
+def test_late_gps_after_skip_is_ignored(solver):
+    """Review (#31): skipping the location must void the outstanding GPS request."""
+    _, fs, s = make_session(solver, 60, 200)
+    out = s.handle("set up the telescope")
+    request = next(m["id"] for m in out if m["type"] == "get_location")
+    s.handle("skip")  # use the saved site
+    assert "Got it" in texts(s.handle("ready"))[0] and fs.alignment()[0] == 1
+    assert s.set_location(26.9, -80.3, None, None, request_id=request) == []  # late fix: ignored
+    assert fs.alignment()[0] == 1 and s.site.lat_deg == 26.7

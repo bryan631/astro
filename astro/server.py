@@ -225,11 +225,17 @@ async def ws(socket: WebSocket) -> None:
                     await hub.handle_text(socket, data["text"])
                 elif data.get("type") == "location":
                     log.info("location", extra={"data": {"accuracy_m": data.get("accuracy")}})
+                    request_id = data.get("id")
                     for out in session.set_location(float(data["lat"]), float(data["lon"]),
-                                                    data.get("alt"), data.get("accuracy")):
+                                                    data.get("alt"), data.get("accuracy"),
+                                                    int(request_id) if request_id is not None
+                                                    else None):
                         await hub.broadcast(out)
                 elif data.get("type") == "location_error":
-                    for out in session.location_failed(str(data.get("message", ""))):
+                    request_id = data.get("id")
+                    for out in session.location_failed(str(data.get("message", "")),
+                                                       int(request_id) if request_id is not None
+                                                       else None):
                         await hub.broadcast(out)
     except WebSocketDisconnect:
         pass
