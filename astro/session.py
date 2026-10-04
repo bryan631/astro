@@ -10,6 +10,8 @@ from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
+import numpy as np
+
 from astro.capture.focus import FocusCoach, laplacian_variance
 from astro.capture.recorder import CaptureRefused, Recorder
 from astro.capture.roi import brightest_blob, roi_around
@@ -31,7 +33,8 @@ MIN_HFR_PX = 0.5  # floor so a perfectly sharp (tiny) star can't blow up the foc
 TOLERANCE_ARCMIN = {False: 4.0, True: 2.0}  # guidance tolerance without / with the 2x Barlow
 RECORD_SECONDS = 60  # planetary video length
 FOCUS_CROP_PX = 256  # sharpness measured on a crop around the planet
-SITE_MOVE_DEG = 0.01  # ~1 km: a bigger move invalidates the mount model
+SITE_MOVE_KM = 1.0  # moving farther than this from the model's site invalidates the mount model
+EARTH_RADIUS_KM = 6371.0
 
 
 def utcnow() -> datetime:
@@ -47,7 +50,8 @@ class Session:
         """Pointing comes from `finder` (encoders + mount model + plate solving), or, for
         tests without a finder, from `position()` returning true (alt, az)."""
         self.site, self.clock, self.finder = site, clock, finder
-        self.on_site_change = on_site_change  # e.g. persist the GPS fix
+        self.on_site_change = on_site_change  # e.g. persist the GPS fix, update simulators
+        self._model_site = site  # site the current mount model was built for
         self.position = finder.position if finder else position
         self.override = developer_override
         self.catalog = {t.name: t for t in load_targets()}
@@ -308,11 +312,15 @@ class Session:
             return [say("That location doesn't look right, so I kept the old one.")]
         new = replace(self.site, lat_deg=lat, lon_deg=lon,
                       elevation_m=self.site.elevation_m if elevation_m is None else elevation_m)
-        moved = (abs(new.lat_deg - self.site.lat_deg) > SITE_MOVE_DEG
-                 or abs(new.lon_deg - self.site.lon_deg) > SITE_MOVE_DEG)
+        # Great-circle distance from where the mount model was built (separation_deg works on
+        # any lat/lon pair), so a chain of small updates can't drift away without a reset.
+        ref = self._model_site
+        moved_km = np.radians(separation_deg(ref.lat_deg, ref.lon_deg, lat, lon)) * EARTH_RADIUS_KM
         self.site = new
-        if moved and self.finder is not None:
-            self.finder.reset(new)
+        if moved_km > SITE_MOVE_KM:
+            self._model_site = new
+            if self.finder is not None:
+                self.finder.reset(new)
             self.target, self.guide = None, None
         if self.on_site_change:
             self.on_site_change(new)

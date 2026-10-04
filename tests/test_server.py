@@ -83,3 +83,14 @@ def test_location_error_is_spoken():
     with TestClient(server.app).websocket_connect("/ws") as ws:
         ws.send_json({"type": "location_error", "message": "Permission denied."})
         assert "couldn't get the tablet's location" in receive_until(ws, "say")
+
+
+def test_site_change_moves_simulated_sky(monkeypatch):
+    saved = []
+    monkeypatch.setattr(server.site_store, "save", lambda root, site: saved.append(site))
+    session, _ = server.build_session()
+    finder_cam, main_cam = session.finder.camera, session.main_camera
+    main_cam.capture()  # fills the body-position cache for the old site
+    session.set_location(40.0, -105.0, None, None)
+    assert finder_cam.site.lat_deg == 40.0 and main_cam.site.lat_deg == 40.0
+    assert main_cam._positions is None and saved[-1].lon_deg == -105.0

@@ -59,8 +59,15 @@ def build_session() -> tuple[Session, SimScope | None]:
     main = SimMainCamera(lambda: (scope.alt, scope.az), site, clock)
     session = Session(site, clock=clock, developer_override=override, finder=finder,
                       main_camera=main, main_sensor=main.sensor_size, data_dir=ROOT / "data",
-                      on_site_change=lambda s: site_store.save(ROOT, s))
+                      on_site_change=lambda s: on_site_change(s, camera, main))
     return session, scope
+
+
+def on_site_change(site: Site, finder_cam: SimFinderCamera, main_cam: SimMainCamera) -> None:
+    """Persist a GPS fix and move the simulated sky with it."""
+    site_store.save(ROOT, site)
+    finder_cam.site = site
+    main_cam.set_site(site)
 
 
 @functools.cache

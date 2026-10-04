@@ -37,6 +37,9 @@ class SimMainCamera:
         self._diam = np.array(list(BODIES.values()))
         self._positions: tuple[datetime, np.ndarray, np.ndarray] | None = None  # (when, alt, az)
 
+    def set_site(self, site: Site) -> None:
+        self.site, self._positions = site, None  # body positions depend on the site
+
     def connect(self) -> None: ...
     def close(self) -> None: ...
     def set_exposure(self, seconds: float) -> None: ...

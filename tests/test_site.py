@@ -56,3 +56,18 @@ def test_bad_coordinates_rejected():
     s = session()
     assert "doesn't look right" in s.set_location(123, 0, None, None)[0]["text"]
     assert s.site.lat_deg == 26.7
+
+
+def test_move_is_measured_as_distance_from_model_site():
+    finder = FakeFinder()
+    s = session(finder)
+    for i in range(1, 6):  # five 0.4 km steps north: each small, together 2 km
+        s.set_location(26.7 + i * 0.0036, -80.1, None, None)
+    assert finder.reset_to is not None and abs(finder.reset_to.lat_deg - 26.7 - 3 * 0.0036) < 1e-9
+
+
+def test_dateline_crossing_is_a_small_move():
+    finder = FakeFinder()
+    s = Session(Site(0.0, 179.9995), clock=lambda: datetime(2026, 10, 4, 3, tzinfo=UTC), finder=finder)
+    s.set_location(0.0, -179.9995, None, None)  # ~110 m east across the dateline
+    assert finder.reset_to is None
