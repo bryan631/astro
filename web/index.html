@@ -22,6 +22,7 @@
           border: 2px solid var(--dim); border-radius: 12px; }
   #typed input { flex: 1; }
   .on-target #arrow { color: #34c759; }
+  #live { width: 100%; max-width: 900px; border: 2px solid var(--dim); border-radius: 12px; }
   #gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; width: 100%; max-width: 900px; }
   #gallery img { width: 100%; border: 2px solid var(--dim); border-radius: 12px; }
   body.on-target:not(.day) #arrow { color: var(--fg); }
@@ -31,6 +32,7 @@
   <div id="said">Say "what's good tonight?"</div>
   <div id="arrow" hidden>&#x2191;</div>
   <div id="dist"></div>
+  <img id="live" hidden alt="live stack">
   <button id="talk">Hold to talk</button>
   <form id="typed"><input id="text" placeholder="or type here" autocomplete="off"><button class="small">Send</button></form>
   <div><button class="small" id="mode">Day mode</button> <button class="small" id="pics">Pictures</button></div>
@@ -59,6 +61,11 @@ function handle(m) {
   if (m.type === "heard") said.textContent = `“${m.text}”`;
   if (m.type === "get_location") sendLocation();
   if (m.type === "picture" && !document.getElementById("gallery").hidden) showPictures();
+  if (m.type === "live") {  // live stack preview: same file, rewritten as frames are added
+    const img = document.getElementById("live");
+    img.src = `/pictures/${m.file}?n=${m.frames}`; img.hidden = false;
+  }
+  if (m.type === "picture") document.getElementById("live").hidden = true;
   if (m.type === "say") { said.textContent = m.text; speak(m.text); }
   if (m.type === "state") {
     arrow.hidden = false;
@@ -82,7 +89,7 @@ function sendLocation() {
     p => ws.send(JSON.stringify({type: "location", lat: p.coords.latitude, lon: p.coords.longitude,
                                  alt: p.coords.altitude, accuracy: p.coords.accuracy})),
     e => ws.send(JSON.stringify({type: "location_error", message: e.message})),
-    {enableHighAccuracy: true, timeout: 20000, maximumAge: 0}  // always a fresh fix);
+    {enableHighAccuracy: true, timeout: 20000, maximumAge: 0});  // always a fresh fix
 }
 function send(text) { if (text.trim()) ws.send(JSON.stringify({type: "text", text})); }
 document.getElementById("typed").onsubmit = e => {
