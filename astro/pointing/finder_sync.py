@@ -113,6 +113,7 @@ class FinderSync:
         self.encoders, self.site, self.clock = encoders, site, clock
         self.synced = False
         self.last_rms: float | None = None  # arcmin, mount model fit after the latest sync
+        self.on_change: Callable[[], None] | None = None  # model changed: persist calibration
         # Seconds since the encoders last reported (None if not tracked, e.g. simulators).
         self.encoder_age: Callable[[], float] | None = None
         # Exposure gate (spoken reason or None); the session installs its exposure_safety.
@@ -125,6 +126,8 @@ class FinderSync:
     def reset(self, site: Site) -> None:
         """New site: the old mount model's alt/az frame no longer applies; re-sync from scratch."""
         self.site, self.model, self.synced = site, MountModel(), False
+        if self.on_change:
+            self.on_change()
 
     def position(self) -> tuple[float, float]:
         """Current true (alt, az) through the mount model."""
@@ -150,6 +153,8 @@ class FinderSync:
         rms = self.model.add_sync(Sync(enc[0], enc[1], alt, az))
         self.last_rms = rms
         self.synced = True
+        if self.on_change:
+            self.on_change()
         msg = "Got it, I know where we're pointing."
         if len(self.model.syncs) >= LOOSE_SYNC_SYNCS and rms > LOOSE_SYNC_ARCMIN:
             msg += " The alignment is still rough; another sync in a different part of the sky helps."

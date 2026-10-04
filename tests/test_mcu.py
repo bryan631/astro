@@ -173,10 +173,10 @@ def test_boot_after_positions_means_reboot():
     m, _ = make_mcu([])
     reboots = []
     m.on_reboot = lambda: reboots.append(1)
-    m.handle(Boot("astro-mcu", "0.1"))  # start-up: fine
+    m.handle(Boot("astro-mcu", "0.1"))  # start-up: counts are 0 (a restored model is stale)
     m.handle(Position(5, 5))
-    m.handle(Boot("astro-mcu", "0.1"))  # mid-session: counts were reset
-    assert reboots == [1]
+    m.handle(Boot("astro-mcu", "0.1"))  # mid-session: counts were reset again
+    assert reboots == [1, 1]
     assert parse(frame("BOOT astro-mcu 0.1")) == Boot("astro-mcu", "0.1")
 
 
