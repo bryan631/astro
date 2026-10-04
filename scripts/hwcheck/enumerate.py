@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """List SVBony cameras, grab one RAW8 frame from each, save a debayered PNG."""
 import sys
 

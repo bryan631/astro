@@ -1,7 +1,8 @@
+#!/usr/bin/env python3
 """Live MJPEG viewer for an SVBony camera. Open http://localhost:8080 in the ChromeOS browser.
 
-  python3 viewer.py finder --exp 50 --gain 100
-  python3 viewer.py main --roi 1280x720
+  ./viewer.py finder --exp 50 --gain 100
+  ./viewer.py main --roi 1280x720
 """
 import argparse
 import threading

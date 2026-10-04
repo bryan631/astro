@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Plan checklist per camera: 10x connect, ROI fps (RAW8), exposure sweep, debayer sample."""
 import sys
 import time
