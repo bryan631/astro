@@ -9,12 +9,16 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
+    env:
+      ASTRO_SIM: "1"
     steps:
       - uses: actions/checkout@v4
-
-      # No language chosen yet. Replace this step with setup, lint, and test
-      # steps once the first code lands (e.g. actions/setup-python + pytest).
-      - name: Placeholder
-        run: echo "No build or tests configured yet"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: pytest -q

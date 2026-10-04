@@ -1,0 +1,35 @@
+"""Device interfaces. Real drivers and simulators both implement these."""
+
+from dataclasses import dataclass
+from typing import Protocol
+
+import numpy as np
+
+
+@dataclass(frozen=True)
+class Roi:
+    x: int
+    y: int
+    width: int
+    height: int
+
+
+class Camera(Protocol):
+    """A camera returning 8-bit RAW (Bayer) frames."""
+
+    def connect(self) -> None: ...
+    def close(self) -> None: ...
+    def set_exposure(self, seconds: float) -> None: ...
+    def set_gain(self, gain: int) -> None: ...
+    def set_roi(self, roi: Roi | None) -> None: ...
+    def capture(self) -> np.ndarray:
+        """Block until one frame is ready; returns a 2-D uint8 array."""
+        ...
+
+
+class MountEncoders(Protocol):
+    """Raw encoder counts for the two axes."""
+
+    def counts(self) -> tuple[int, int]:
+        """Return (azimuth_counts, altitude_counts)."""
+        ...
