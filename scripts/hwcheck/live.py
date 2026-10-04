@@ -28,6 +28,8 @@ def parse_args(description: str, extra=None) -> argparse.Namespace:
     ap.add_argument("--gain", type=int, default=100)
     ap.add_argument("--roi", default=None, help="WxH, centered, e.g. 1280x720")
     ap.add_argument("--width", type=int, default=960, help="max display width")
+    ap.add_argument("--raw", action="store_true",
+                    help="show the sensor as-is (default rotates 180 deg: a lens inverts the image)")
     if extra:
         extra(ap)
     args = ap.parse_args()
@@ -83,6 +85,8 @@ class LiveCamera:
             if w > self.args.width:
                 img = cv2.resize(img, (self.args.width, h * self.args.width // w),
                                  interpolation=cv2.INTER_AREA)
+            if not self.args.raw:
+                img = cv2.rotate(img, cv2.ROTATE_180)  # display only; frames/solves are unchanged
             text = f"exp {self.cam.exposure_s:g}s gain {self.cam.gain}  {fps:.1f} fps  max {raw.max()}  {focus}"
             cv2.putText(img, text, (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
             self.raw, self.latest = raw, img
