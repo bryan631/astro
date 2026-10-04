@@ -8,7 +8,7 @@ import os
 
 import anthropic
 
-from astro.intents import parse
+from astro.intents import match_name, parse
 from astro.session import Session
 
 MODEL = "claude-haiku-4-5"
@@ -18,10 +18,13 @@ HISTORY_TURNS = 10
 SYSTEM = """You help a 77-year-old amateur astronomer use his telescope by voice.
 Replies are spoken aloud: one to three short, warm, plain sentences. No lists, no markdown,
 no jargon unless he asks. Use the tools to act; never invent where something is in the sky.
-Guidance cues ("push left", "stop") are spoken by the system, not by you."""
+Guidance cues ("push left", "stop") are spoken by the system, not by you.
+If he asks what to see, or refers to something suggested earlier, call list_tonight first.
+He views on the tablet screen, not through an eyepiece."""
 
 TOOLS = [
-    {"name": "list_tonight", "description": "Best targets visible tonight, ranked.",
+    {"name": "list_tonight", "description": "Targets visible tonight: the best one in each "
+     "category (planet, moon, nebula, cluster, galaxy, double star) with a short note.",
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "goto", "description": "Start guiding the telescope to a named target "
      "(planet, Moon, or catalog object like 'Ring Nebula' or 'M57').",
@@ -47,12 +50,21 @@ class Agent:
 
     def handle(self, text: str) -> list[dict]:
         """Return messages for the tablet. Core commands never need the network."""
-        if self.client is None or parse(text) is not None:
+        if self.client is None or self._offline_understands(text):
             return self.session.handle(text)
         try:
             return self._run(text)
         except anthropic.APIError:
             return self.session.handle(text)
+
+    def _offline_understands(self, text: str) -> bool:
+        """Fast path for exact commands; anything vague goes to Claude for context."""
+        intent = parse(text)
+        if intent is None or intent.name == "tonight":
+            return False  # Claude gives a nicer, conversational overview
+        if intent.name == "goto":
+            return match_name(intent.target or "", self.session.names()) is not None
+        return True
 
     def _run(self, text: str) -> list[dict]:
         messages = [*self.history, {"role": "user", "content": text}]
@@ -78,6 +90,8 @@ class Agent:
         return [*side_effects, {"type": "say", "text": reply or "OK."}]
 
     def _call(self, name: str, args: dict) -> list[dict]:
+        if name == "list_tonight":
+            return [{"type": "say", "text": self.session.tonight_by_category()}]
         if name == "goto":
             return self.session.handle(f"go to {args.get('target', '')}")
         if name in _COMMANDS:

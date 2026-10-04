@@ -1,6 +1,7 @@
 import os
 
 os.environ["ASTRO_SIM"] = "1"
+os.environ["ANTHROPIC_API_KEY"] = ""  # tests never call the real API
 
 from fastapi.testclient import TestClient
 

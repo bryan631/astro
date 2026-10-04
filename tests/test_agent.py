@@ -39,6 +39,12 @@ def test_core_commands_skip_the_llm():
     assert client.requests == []
 
 
+def test_vague_goto_goes_to_llm():
+    client = FakeClient([NS(stop_reason="end_turn", content=[text("Albireo it is.")])])
+    Agent(session(), client=client).handle("show me that pretty double star")
+    assert len(client.requests) == 1
+
+
 def test_tool_loop_goto():
     client = FakeClient([
         NS(stop_reason="tool_use", content=[NS(type="tool_use", id="t1", name="goto",

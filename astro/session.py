@@ -87,6 +87,13 @@ class Session:
         return [say(f"{best.name} is the best right now. {best.note} "
                     f"Other good ones: {others}. Say 'go to' a name, or 'next'.")]
 
+    def tonight_by_category(self) -> str:
+        """Compact text for the agent: best target per category."""
+        choices = plan(self.site, self.clock())
+        lines = [f"{cat}: {cs[0].name} (best around {cs[0].best_time:%H:%M}). {cs[0].note}"
+                 for cat, cs in choices.items()]
+        return "\n".join(lines) or "Nothing good is up right now."
+
     def where(self) -> list[dict]:
         alt, az = self.position()
         nearest = min(self.names(), key=lambda n: separation_deg(alt, az, *self.altaz_of(n)))
