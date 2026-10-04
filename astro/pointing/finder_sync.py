@@ -54,7 +54,8 @@ class FocusReport:
     stars: int
     hfr_px: float  # median half-flux radius of the brightest stars; inf if none
     ok: bool
-    reason: str = ""
+    reason: str = ""  # spoken explanation when not ok
+    outcome: str = "ok"  # machine-readable: ok, no_stars, not_sky, few_stars, out_of_focus
 
 
 def _clipped_std(gray: np.ndarray) -> float:
@@ -73,11 +74,11 @@ def check_focus(gray: np.ndarray) -> FocusReport:
     if n == 0:
         return FocusReport(0, float("inf"), False,
                            "I can't see any stars. Is the finder lens cap off, is it cloudy, "
-                           "or is the finder far out of focus?")
+                           "or is the finder far out of focus?", "no_stars")
     if n > MAX_PLAUSIBLE_STARS:
         return FocusReport(n, float("inf"), False,
                            "That doesn't look like a starry sky. It may still be too bright out, "
-                           "or the finder is seeing something nearby.")
+                           "or the finder is seeing something nearby.", "not_sky")
     peaks = ndimage.maximum_position(gray, labels, keep)
     unsaturated = [p for p in peaks if gray[p] < SATURATED_BINNED]
     brightest = sorted(unsaturated or peaks, key=lambda p: -gray[p])[:MAX_STARS_MEASURED]
@@ -90,13 +91,16 @@ def check_focus(gray: np.ndarray) -> FocusReport:
     hfr = float(np.median(hfrs))
     if n < FEW_STARS:  # too few stars to judge focus; say what we see
         return FocusReport(n, hfr, False,
-                           "I only see a star or two. Clouds or trees may be in the way.")
+                           "I only see a star or two. Clouds or trees may be in the way.",
+                           "few_stars")
     if hfr > HFR_MAX_PX or (n < MIN_STARS and hfr > HFR_SOFT_PX):
         return FocusReport(n, hfr, False,
-                           "The finder looks out of focus. Say 'focus the finder' and I'll help.")
+                           "The finder looks out of focus. Say 'focus the finder' and I'll help.",
+                           "out_of_focus")
     if n < MIN_STARS:
         return FocusReport(n, hfr, False,
-                           "I only see a few stars. Try pointing higher, away from trees and lights.")
+                           "I only see a few stars. Try pointing higher, away from trees and lights.",
+                           "few_stars")
     return FocusReport(n, hfr, True)
 
 
