@@ -1,0 +1,26 @@
+[
+ {
+  "file": "saturn_field.npz",
+  "expect": "solves",
+  "exposure_s": 0.8,
+  "gain": 100,
+  "taken": "2026-10-03T22:36-07:00",
+  "notes": "focused, Saturn near center"
+ },
+ {
+  "file": "one_star_gain1000.npz",
+  "expect": "few_stars",
+  "exposure_s": 0.2,
+  "gain": 1000,
+  "taken": "2026-10-03T21:58-07:00",
+  "notes": "before focusing; one bright star"
+ },
+ {
+  "file": "lens_cap.npz",
+  "expect": "no_stars",
+  "exposure_s": 0.2,
+  "gain": 1000,
+  "taken": "2026-10-03T21:58-07:00",
+  "notes": "lens cap on"
+ }
+]
