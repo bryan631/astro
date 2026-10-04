@@ -238,3 +238,12 @@ def test_stop_recording_after_it_finished(tmp_path):
     s.handle("take a picture")
     s.recorder.current.done.wait(5)
     assert texts(s.handle("stop recording")) == ["We're not recording."]
+
+
+def test_refocus_clears_gate_and_blocks_capture_until_done(tmp_path):
+    s, _ = make_session(tmp_path)
+    s.main_focus_ok = True
+    s.handle("focus")
+    assert not s.main_focus_ok
+    assert texts(s.handle("take a picture")) == ["Let's finish focusing first. Say done when it's sharpest."]
+    assert s.recorder.current is None

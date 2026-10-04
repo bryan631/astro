@@ -148,6 +148,7 @@ class Session:
         if self.recorder is not None and self.recorder.busy:  # one user of the camera at a time
             return [say("I'm recording right now. Say 'stop recording' first.")]
         self.guide = None  # keep the target; we're on it
+        self.main_focus_ok = False  # a new focus pass must finish before capture
         self._focus_coach, self._focus_mode = FocusCoach(), "main"
         return [say("Turn the telescope's focus knob slowly. I'll tell you when it gets sharper. "
                     "Say stop when I say it's the sharpest.")]
@@ -155,6 +156,8 @@ class Session:
     def capture(self) -> list[dict]:
         if self.recorder is None:
             return [say("There's no main camera connected.")]
+        if self._focus_coach is not None:  # focus is still using a camera
+            return [say("Let's finish focusing first. Say done when it's sharpest.")]
         if not self.main_focus_ok:  # pre-flight gate (plan Phase 1 step 8)
             return [say("Let's make sure it's sharp first."), *self.start_main_focus()]
         try:
