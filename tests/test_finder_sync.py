@@ -58,6 +58,13 @@ def test_blank_sky_explains():
     assert "can't see any stars" in check_focus(dark).reason
 
 
+def test_bright_scene_is_not_called_out_of_focus():
+    rng = np.random.default_rng(0)
+    scene = rng.normal(20, 3, (480, 640))  # lit room / twilight: thousands of bright details
+    scene[rng.integers(0, 480, 3000), rng.integers(0, 640, 3000)] = 200
+    assert "doesn't look like a starry sky" in check_focus(scene).reason
+
+
 def test_sharp_vs_soft_hfr(solver):
     sharp = make(solver)[1].focus_report()
     soft = make(solver, blur_px=5)[1].focus_report()
@@ -105,3 +112,21 @@ def test_voice_guided_finder_focus(solver):
         said += [m["text"] for m in s.tick(float(i * 2))]
     assert "sharper" in said and said[-1].startswith("passed it")
     assert s.handle("stop")[0]["text"] == "OK, focus is set."
+
+
+def test_where_syncs_before_answering(solver):
+    _, fs, s = make_session(solver, 70, 300)
+    out = s.handle("what am I looking at")[0]["text"]
+    assert fs.synced and "pointing yet" not in out
+
+
+def test_where_explains_when_it_cannot_sync(solver):
+    _, _, s = make_session(solver, blur_px=9)
+    assert s.handle("where am i")[0]["text"].startswith("I don't know where we're pointing yet.")
+
+
+def test_goto_ends_finder_focus_mode(solver):
+    _, _, s = make_session(solver)
+    s.handle("focus the finder")
+    s.handle("go to albireo")
+    assert any(m["type"] == "state" for m in s.tick(0.0))

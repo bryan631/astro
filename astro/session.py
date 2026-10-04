@@ -4,6 +4,7 @@
 messages for the tablet: {"type": "say", "text": ...} and {"type": "state", ...}.
 """
 
+import threading
 from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -19,6 +20,9 @@ from astro.pointing.geometry import separation_deg
 from astro.safety import check_target
 
 Clock = Callable[[], datetime]
+TARGET_REFRESH_S = 1.0  # targets drift ~15"/s, so re-resolve their alt/az once a second
+FOCUS_STEP_S = 1.0  # one finder focus measurement per second while coaching
+MIN_HFR_PX = 0.5  # floor so a perfectly sharp (tiny) star can't blow up the focus score
 
 
 def utcnow() -> datetime:
@@ -43,6 +47,9 @@ class Session:
         self._resolved_at = -1e9
         self._focus_coach: FocusCoach | None = None
         self._focus_at = -1e9
+        # Commands and the guidance tick run on worker threads (camera calls block), so
+        # serialize them: one camera capture or state change at a time.
+        self._lock = threading.Lock()
 
     # --- target resolution -------------------------------------------------------------
     def names(self) -> list[str]:
@@ -56,6 +63,10 @@ class Session:
 
     # --- commands ------------------------------------------------------------------------
     def handle(self, text: str) -> list[dict]:
+        with self._lock:
+            return self._handle(text)
+
+    def _handle(self, text: str) -> list[dict]:
         intent = parse(text)
         if intent is None:
             return [say("Sorry, I didn't catch that. Try 'what's good tonight' or 'go to Saturn'.")]
@@ -104,7 +115,7 @@ class Session:
         safe = check_target(alt, az, self.site, self.clock(), self.override)
         if not safe.ok:
             return [say(f"I can't go to {name}: it's {safe.reason}.")]
-        self.target, self.guide = name, Guide(alt, az)
+        self.target, self.guide, self._focus_coach = name, Guide(alt, az), None
         return [*pre, say(f"Let's find {name}.")]
 
     def tonight(self) -> list[dict]:
@@ -126,6 +137,10 @@ class Session:
         return "\n".join(lines) or "Nothing good is up right now."
 
     def where(self) -> list[dict]:
+        if self.finder is not None and not self.finder.synced:
+            ok, msg = self.finder.sync()  # encoders mean nothing until the first solve
+            if not ok:
+                return [say(f"I don't know where we're pointing yet. {msg}")]
         alt, az = self.position()
         nearest = min(self.names(), key=lambda n: separation_deg(alt, az, *self.altaz_of(n)))
         d = separation_deg(alt, az, *self.altaz_of(nearest))
@@ -135,11 +150,15 @@ class Session:
 
     # --- guidance loop -------------------------------------------------------------------
     def tick(self, t: float) -> list[dict]:
+        with self._lock:
+            return self._tick(t)
+
+    def _tick(self, t: float) -> list[dict]:
         if self._focus_coach is not None:
             return self._finder_focus_step(t)
         if self.guide is None or self.target is None:
             return []
-        if t - self._resolved_at >= 1.0:  # targets drift ~15"/s; refresh once a second
+        if t - self._resolved_at >= TARGET_REFRESH_S:
             self._resolved_at = t
             alt, az = self.altaz_of(self.target)
             if not check_target(alt, az, self.site, self.clock(), self.override).ok:
@@ -154,14 +173,14 @@ class Session:
 
 
     def _finder_focus_step(self, t: float) -> list[dict]:
-        if t - self._focus_at < 1.0 or self.finder is None or self._focus_coach is None:
+        if t - self._focus_at < FOCUS_STEP_S or self.finder is None or self._focus_coach is None:
             return []
         self._focus_at = t
         report = self.finder.focus_report()
         if report.stars == 0:
             return [say("I can't see any stars yet.")]
         # Fewer visible stars also means softer focus, so fold the count into the score.
-        cue = self._focus_coach.update(report.stars / max(report.hfr_px, 0.5))
+        cue = self._focus_coach.update(report.stars / max(report.hfr_px, MIN_HFR_PX))
         return [say(cue)] if cue else []
 
 

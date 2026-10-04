@@ -90,7 +90,7 @@ async def ws(socket: WebSocket) -> None:
     async def guidance_loop() -> None:
         while True:
             t = time.monotonic() - t0
-            for msg in session.tick(t):
+            for msg in await asyncio.to_thread(session.tick, t):  # camera calls block
                 if user and msg["type"] == "say":
                     user.hear(msg["text"], t)
                 await send(msg)
