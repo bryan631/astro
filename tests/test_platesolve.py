@@ -86,6 +86,6 @@ def test_confidence_is_minus_log10_false_prob():
 
 
 def test_real_frame_reports_pixel_scale(solver):
-    raw = np.load(__import__("pathlib").Path(__file__).parent / "data" / "finder_saturn.npy")
+    raw = frames.load("saturn_field")
     sol = solver.solve(raw)
     assert sol.scale_arcsec_px == pytest.approx(10.39 * 3600 / 1280, rel=0.01)  # ~29.2"/px
