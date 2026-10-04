@@ -70,6 +70,7 @@ class Session:
         self.on_horizon_change = on_horizon_change
         self._horizon: list[tuple[float, float]] | None = None  # points during a horizon walk
         self.wizard: SetupWizard | None = None  # first-time setup at a location
+        self._location_request = 0  # id of the GPS request whose answer we'd accept
         self._model_site = site  # site the current mount model was built for
         self.weather = weather  # (lat, lon, when) -> cloud % or None offline; None = no forecast
         self._clouds: float | None = None
@@ -235,25 +236,33 @@ class Session:
             return [say("Let's make sure it's sharp first."), *self.start_main_focus()]
         if self._camera_busy():
             return [say("I'm already recording." if self.recorder.busy else "I'm already stacking.")]
-        self._centering = False  # the picture takes over the camera
         name = self.target or "capture"
         try:
             if self.target is None or self.target in self._extended_targets():
                 self.recorder.start(name, self.record_seconds)
+                self._picture_started()
                 self._announced_done = False
                 return [say(f"Recording for {self.record_seconds:g} seconds. "
                             "Try not to touch the telescope.")]
             self.stacker.start(name, self.stack_seconds)  # deep-sky: live stack short subs
         except CaptureRefused as e:
-            return [say(str(e))]
+            return [say(str(e))]  # nothing started: guidance carries on as before
+        self._picture_started()
         self._stack_done_announced, self._preview_seen = False, 0
         return [say(f"Stacking short pictures of {name}. Watch it build up on the screen. "
                     "Try not to touch the telescope.")]
+
+    def _picture_started(self) -> None:
+        """The picture has the camera: guidance goes quiet (no "right a little" while the user
+        was asked not to touch the telescope). The target is kept."""
+        self._centering, self.guide = False, None
 
     def _camera_busy(self) -> bool:
         return any(job is not None and job.busy for job in (self.recorder, self.stacker))
 
     def goto(self, name: str) -> list[dict]:
+        if self._camera_busy():
+            return [say("I'm taking a picture. Say stop first, then we can move.")]
         pre: list[dict] = []
         if self.finder is not None and not self.finder.synced:
             ok, msg = self.finder.sync()  # need to know where we point before guiding
@@ -507,7 +516,8 @@ class Session:
             if self.finder is None:
                 return [say("There's no finder camera, so I can't run setup.")]
             self.wizard = SetupWizard(self.request_location, self.finder.sync,
-                                      self.finder.alignment, self.start_horizon)
+                                      self.finder.alignment, self.start_horizon,
+                                      self.cancel_location)
             self.target, self.guide, self._centering, self._focus_coach = None, None, False, None
             return self.wizard.start()
         return self.wizard.ready() if name == "ready" else self.wizard.skip()
@@ -537,13 +547,23 @@ class Session:
         return "; ".join(facts)
 
     def request_location(self) -> list[dict]:
-        """Ask the tablet for a GPS fix; it answers with a `location` message (see set_location)."""
+        """Ask the tablet for a GPS fix; it answers with a `location` message carrying the
+        same id (see set_location). A newer request or cancel_location() voids older ones."""
+        self._location_request += 1
         return [say("Let me ask the tablet where we are. Please allow location access."),
-                {"type": "get_location"}]
+                {"type": "get_location", "id": self._location_request}]
+
+    def cancel_location(self) -> None:
+        """Ignore the answer to the outstanding request (setup skipped it)."""
+        self._location_request += 1
 
     def set_location(self, lat: float, lon: float, elevation_m: float | None,
-                     accuracy_m: float | None) -> list[dict]:
-        """Use a GPS fix from the tablet. Moving resets pointing, so the next goto re-syncs."""
+                     accuracy_m: float | None, request_id: int | None = None) -> list[dict]:
+        """Use a GPS fix from the tablet. Moving resets pointing, so the next goto re-syncs.
+
+        A fix answering a cancelled or superseded request (`request_id`) is ignored."""
+        if request_id is not None and request_id != self._location_request:
+            return []
         if not (-90 <= lat <= 90 and -180 <= lon <= 180):
             return [say("That location doesn't look right, so I kept the old one.")]
         new = replace(self.site, lat_deg=lat, lon_deg=lon,
@@ -565,7 +585,19 @@ class Session:
         if self.on_site_change:
             self.on_site_change(new)
         near = f", accurate to about {accuracy_m:.0f} meters" if accuracy_m else ""
-        return [say(f"Got it, I know where we are{near}.")]
+        out = [say(f"Got it, I know where we are{near}.")]
+        if self.wizard_active:  # setup was waiting for this before the first sync
+            out += self.wizard.location_done()
+        return out
+
+    def location_failed(self, message: str, request_id: int | None = None) -> list[dict]:
+        """The tablet couldn't give a GPS fix: keep the saved site (setup moves on with it)."""
+        if request_id is not None and request_id != self._location_request:
+            return []  # answer to a request that was cancelled or superseded
+        out = [say(f"I couldn't get the tablet's location. {message} Using the saved location.")]
+        if self.wizard_active:
+            out += self.wizard.location_done()
+        return out
 
     def target_safety(self, alt: float, az: float) -> SafetyResult:
         """Sun, daytime and below-horizon checks, plus the local treeline (horizon mask)."""

@@ -29,6 +29,8 @@ def test_full_setup_walkthrough(solver):
     scope, fs, s = make_session(solver, 60, 200)
     out = s.handle("set up the telescope")
     assert any(m["type"] == "get_location" for m in out)
+    assert "waiting" in texts(s.handle("ready"))[0]  # no sync before the location arrives
+    out = s.set_location(26.7, -80.1, None, 5.0)  # the tablet's GPS fix
     assert "high in the sky" in texts(out)[-1]
     reports = []
     for alt, az in [(60, 200), (45, 290), (70, 60)]:  # three parts of the sky
@@ -45,6 +47,28 @@ def test_full_setup_walkthrough(solver):
 def test_failed_sync_can_retry_and_stop_ends_setup(solver):
     _, _, s = make_session(solver, blur_px=9)
     s.handle("set up the telescope")
+    s.location_failed("Permission denied.")  # no GPS: setup goes on with the saved site
     assert texts(s.handle("ready"))[0].endswith("Say ready to try again, or skip.")
     assert "setup stopped" in texts(s.handle("stop"))[0]
     assert "didn't catch that" in texts(s.handle("ready"))[0]  # no setup running: not a command
+
+
+def test_far_gps_fix_cannot_wipe_a_sync(solver):
+    """Review H7: the first sync only happens after the location, so a move can't erase it."""
+    _, fs, s = make_session(solver, 60, 200)
+    s.handle("set up the telescope")
+    s.handle("ready")  # too early: still waiting
+    assert fs.alignment()[0] == 0
+    s.set_location(26.9, -80.3, None, None)  # ~30 km away: resets the model, before any sync
+    assert "Got it" in texts(s.handle("ready"))[0] and fs.alignment()[0] == 1
+
+
+def test_late_gps_after_skip_is_ignored(solver):
+    """Review (#31): skipping the location must void the outstanding GPS request."""
+    _, fs, s = make_session(solver, 60, 200)
+    out = s.handle("set up the telescope")
+    request = next(m["id"] for m in out if m["type"] == "get_location")
+    s.handle("skip")  # use the saved site
+    assert "Got it" in texts(s.handle("ready"))[0] and fs.alignment()[0] == 1
+    assert s.set_location(26.9, -80.3, None, None, request_id=request) == []  # late fix: ignored
+    assert fs.alignment()[0] == 1 and s.site.lat_deg == 26.7
