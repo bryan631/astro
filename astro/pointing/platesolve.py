@@ -36,6 +36,7 @@ class Solution:
     matches: int
     false_prob: float  # probability the match is a coincidence; lower is better
     ms: float
+    scale_arcsec_px: float = 0.0  # sky angle per sensor pixel, from the solved field of view
 
     @property
     def confidence(self) -> float:
@@ -89,5 +90,7 @@ class FinderSolver:
         ms = (time.perf_counter() - t0) * 1000
         if r.get("RA") is None or r.get("Prob", 1) > max_false_prob:
             return None
+        width_px = image.shape[1]  # sensor pixels (before binning when bayer=True)
         return Solution(float(r["RA"]), float(r["Dec"]), float(r["Roll"]), float(r["FOV"]),
-                        float(r["RMSE"]), int(r["Matches"]), float(r["Prob"]), ms)
+                        float(r["RMSE"]), int(r["Matches"]), float(r["Prob"]), ms,
+                        float(r["FOV"]) * 3600 / width_px)
