@@ -63,7 +63,7 @@ function handle(m) {
   if (m.type === "picture" && !document.getElementById("gallery").hidden) showPictures();
   if (m.type === "live") {  // live stack preview: same file, rewritten as frames are added
     const img = document.getElementById("live");
-    img.src = `/pictures/${m.file}?n=${m.frames}`; img.hidden = false;
+    img.src = `${m.url}?n=${m.frames}`; img.hidden = false;
   }
   if (m.type === "picture") document.getElementById("live").hidden = true;
   if (m.type === "say") { said.textContent = m.text; speak(m.text); }

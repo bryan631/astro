@@ -16,7 +16,7 @@ import numpy as np
 
 from astro.capture.focus import FocusCoach, laplacian_variance
 from astro.capture.live_stacker import LiveStacker
-from astro.capture.recorder import CaptureRefused, Recorder
+from astro.capture.recorder import CaptureRefused, Recorder, prune
 from astro.capture.roi import brightest_blob, roi_around
 from astro.devices.base import Camera
 from astro.guidance.centering import CALIBRATED, Centerer
@@ -29,13 +29,14 @@ from astro.pointing.coords import Site, body_altaz, radec_to_altaz
 from astro.pointing.finder_sync import FinderSync, check_focus
 from astro.pointing.geometry import separation_deg
 from astro.pointing.platesolve import finder_gray
-from astro.process.planet import StackResult, process_ser
+from astro.process.planet import MIN_FRAMES, StackResult, process_ser
 from astro.safety import DAYTIME_SUN_ALT_DEG, SafetyResult, check_target
 from astro.wizard import SetupWizard
 
 Clock = Callable[[], datetime]
 TARGET_REFRESH_S = 1.0  # targets drift ~15"/s, so re-resolve their alt/az once a second
 FOCUS_STEP_S = 1.0  # one finder focus measurement per second while coaching
+MIN_FOCUS_SAMPLES = 3  # focus readings before "done" counts (else the gate was never checked)
 CENTER_STEP_S = 0.5  # main-camera centering cue rate
 DIRECTION_PROBE_S = 1.5  # after a left/right cue, look this long for the azimuth to move
 ENCODER_STALE_S = 1.0  # encoder positions older than this mean the board or cable is gone
@@ -104,7 +105,8 @@ class Session:
         self._announced_done = True
         self.gallery_dir = data_dir / "gallery"
         self.stack_seconds = STACK_SECONDS
-        self.stacker = (LiveStacker(main_camera, self.gallery_dir, self.exposure_safety)
+        self.stacker = (LiveStacker(main_camera, self.gallery_dir, self.exposure_safety,
+                                    preview_dir=data_dir / "live")
                         if main_camera else None)
         self._stack_done_announced = True
         self._preview_seen = 0
@@ -186,6 +188,9 @@ class Session:
             if self._horizon is not None:  # "done" / "stop" finishes the horizon walk
                 return self.finish_horizon()
             if self._focus_coach is not None:
+                if self._focus_coach.samples < MIN_FOCUS_SAMPLES:
+                    return [say("Keep turning slowly a little longer, so I can find the "
+                                "sharpest point.")]
                 if self._focus_mode == "main":
                     self.main_focus_ok = True
                 self._focus_coach = None
@@ -384,18 +389,21 @@ class Session:
         rec = self.recorder.current if self.recorder else None
         if rec is not None and rec.done.is_set() and not self._announced_done:
             self._announced_done = True
-            if rec.error:
-                return [say(f"{rec.error} I saved {rec.frames} frames.")]
+            if rec.frames < MIN_FRAMES:
+                return [say(f"{rec.error or 'Done.'} I only got {rec.frames} frames, "
+                            "not enough for a picture.")]
             job = self._processor.submit(process_ser, rec.path, self.gallery_dir)
             self._jobs.append((rec.name, job))
-            return [say(f"Done. I saved {rec.frames} frames. I'm making your picture now.")]
+            done = rec.error or "Done."  # e.g. drifted out of view: still make the picture
+            return [say(f"{done} I saved {rec.frames} frames. I'm making your picture now.")]
         if self._jobs and self._jobs[0][1].done():
             return self._announce_picture()
         if (live := self.stacker.current if self.stacker else None) is not None:
             if live.preview_version > self._preview_seen:  # tablet refreshes the live view
                 self._preview_seen = live.preview_version
                 if not live.done.is_set():
-                    return [{"type": "live", "file": live.preview.name, "frames": live.frames}]
+                    return [{"type": "live", "url": f"/live/{live.preview.name}",
+                             "frames": live.frames}]
             if live.done.is_set() and not self._stack_done_announced:
                 self._stack_done_announced = True
                 return self._announce_stack(live)
@@ -557,6 +565,7 @@ class Session:
             result = job.result()
         except (ValueError, OSError) as e:
             return [say(f"I couldn't make the picture of {name}: {e}")]
+        prune(self.recorder.out_dir)  # the picture is made: keep only the newest raw videos
         return [say(f"Your picture of {name} is ready. Tap Pictures to see it."),
                 {"type": "picture", "file": result.path.name}]
 
@@ -566,7 +575,7 @@ class Session:
         why = f"{live.error} " if live.error else ""
         return [say(f"{why}Your picture of {live.name} is ready, from {live.frames} short "
                     "pictures. Tap Pictures to see it."),
-                {"type": "picture", "file": live.preview.name}]
+                {"type": "picture", "file": live.picture.name}]
 
     def _camera_failed(self, which: str, error: Exception) -> list[dict]:
         """A camera failed even after the driver's retry: stop focusing and say so."""

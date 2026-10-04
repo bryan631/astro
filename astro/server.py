@@ -137,6 +137,7 @@ async def lifespan(app: FastAPI):
     network); shutdown releases the hardware (S5: heaters off on host shutdown)."""
     load_env()
     GALLERY.mkdir(parents=True, exist_ok=True)
+    LIVE.mkdir(parents=True, exist_ok=True)
     if not os.environ.get("ASTRO_NO_LOG_FILE"):  # tests
         log.info("server start", extra={"data": {"log": str(logs.setup(ROOT)), "sim": SIM}})
     warm_speech()
@@ -279,6 +280,7 @@ async def ws(socket: WebSocket) -> None:
 
 
 GALLERY = ROOT / "data" / "gallery"
+LIVE = ROOT / "data" / "live"  # live-stack previews while they build (not gallery pictures)
 
 
 @app.get("/gallery")
@@ -289,4 +291,5 @@ def gallery() -> list[str]:
 
 
 app.mount("/pictures", StaticFiles(directory=GALLERY, check_dir=False), name="pictures")
+app.mount("/live", StaticFiles(directory=LIVE, check_dir=False), name="live")
 app.mount("/", StaticFiles(directory=ROOT / "web", html=True), name="web")

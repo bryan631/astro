@@ -31,8 +31,10 @@ class FocusCoach:
         self.tol = tolerance
         self.best: float | None = None
         self.last: float | None = None
+        self.samples = 0  # readings so far ("done" too early means focus was never checked)
 
     def update(self, score: float) -> str | None:
+        self.samples += 1
         prev, self.last = self.last, score
         if self.best is None or score > self.best:
             self.best = score
