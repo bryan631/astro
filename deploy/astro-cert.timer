@@ -1,0 +1,10 @@
+# Install with astro-cert.service: sudo systemctl enable --now astro-cert.timer
+[Unit]
+Description=Monthly astro cert renewal
+
+[Timer]
+OnCalendar=monthly
+Persistent=true
+
+[Install]
+WantedBy=timers.target

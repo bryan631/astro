@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Astro</title>
+<link rel="manifest" href="manifest.json">
+<style>
+  :root { --bg: #000; --fg: #ff3b30; --dim: #7a1c17; }
+  body.day { --bg: #111; --fg: #f2f2f2; --dim: #555; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 28px/1.3 system-ui, sans-serif;
+         display: flex; flex-direction: column; align-items: center; gap: 24px; padding: 24px; min-height: 100vh; }
+  #said { font-size: 36px; text-align: center; min-height: 3em; max-width: 30ch; }
+  #arrow { font-size: 160px; line-height: 1; transition: transform .2s; }
+  #dist { font-size: 40px; }
+  #talk { width: 70vmin; height: 70vmin; max-width: 320px; max-height: 320px; border-radius: 50%;
+          border: 6px solid var(--fg); background: transparent; color: var(--fg); font-size: 40px; }
+  #talk.listening { background: var(--dim); }
+  #typed { display: flex; gap: 8px; width: 100%; max-width: 600px; }
+  #typed input, button.small { font-size: 24px; padding: 12px; background: var(--bg); color: var(--fg);
+          border: 2px solid var(--dim); border-radius: 12px; }
+  #typed input { flex: 1; }
+  .on-target #arrow { color: #34c759; }
+  body.on-target:not(.day) #arrow { color: var(--fg); }
+</style>
+</head>
+<body>
+  <div id="said">Say "what's good tonight?"</div>
+  <div id="arrow" hidden>&#x2191;</div>
+  <div id="dist"></div>
+  <button id="talk">Hold to talk</button>
+  <form id="typed"><input id="text" placeholder="or type here" autocomplete="off"><button class="small">Send</button></form>
+  <button class="small" id="mode">Day mode</button>
+<script>
+const said = document.getElementById("said"), arrow = document.getElementById("arrow"),
+      dist = document.getElementById("dist"), talk = document.getElementById("talk");
+let ws, serverStt = false, serverTts = false, player = null;
+function connect() {
+  ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
+  ws.binaryType = "blob";
+  ws.onmessage = e => typeof e.data === "string" ? handle(JSON.parse(e.data)) : play(e.data);
+  ws.onclose = () => setTimeout(connect, 1000);
+}
+function stopAudio() { speechSynthesis.cancel(); if (player) player.pause(); }
+function play(blob) {  // server (Piper) speech; newest cue wins
+  stopAudio(); player = new Audio(URL.createObjectURL(blob)); player.play();
+}
+function speak(text) {
+  if (serverTts) return;  // audio arrives separately as a binary message
+  stopAudio();
+  const u = new SpeechSynthesisUtterance(text); u.rate = 0.95; speechSynthesis.speak(u);
+}
+function handle(m) {
+  if (m.type === "hello") { serverStt = m.server_stt; serverTts = m.server_tts; setupTalk(); }
+  if (m.type === "heard") said.textContent = `“${m.text}”`;
+  if (m.type === "say") { said.textContent = m.text; speak(m.text); }
+  if (m.type === "state") {
+    arrow.hidden = false;
+    document.body.classList.toggle("on-target", m.on_target);
+    if (m.on_target) { arrow.innerHTML = "&#x25CF;"; arrow.style.transform = ""; dist.textContent = "On target"; return; }
+    arrow.innerHTML = "&#x2191;";
+    // Screen up = push up; screen right = push right (az sign handled server-side later).
+    const angle = Math.atan2(m.d_az_sky_deg, m.d_alt_deg) * 180 / Math.PI;
+    arrow.style.transform = `rotate(${angle}deg)`;
+    const d = m.distance_deg;
+    dist.textContent = d >= 1 ? `${d.toFixed(0)}°` : `${(d * 60).toFixed(0)}′`;
+  }
+}
+function send(text) { if (text.trim()) ws.send(JSON.stringify({type: "text", text})); }
+document.getElementById("typed").onsubmit = e => {
+  e.preventDefault(); const i = document.getElementById("text"); send(i.value); i.value = "";
+};
+document.getElementById("mode").onclick = () => document.body.classList.toggle("day");
+
+// Speech input: record and send to the server (whisper.cpp) when available, which works
+// offline; otherwise use the browser's recognizer (on Android this may need internet).
+let talkReady = false;
+function setupTalk() {
+  if (talkReady) return; talkReady = true;
+  const listen = on => talk.classList.toggle("listening", on);
+  const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let start, stop;
+  if (serverStt && navigator.mediaDevices) {
+    let rec;
+    start = async () => {
+      const stream = await navigator.mediaDevices.getUserMedia({audio: true});
+      const chunks = []; rec = new MediaRecorder(stream);
+      rec.ondataavailable = e => chunks.push(e.data);
+      rec.onstop = () => { stream.getTracks().forEach(t => t.stop()); listen(false);
+                           ws.send(new Blob(chunks, {type: rec.mimeType})); };
+      rec.start();
+    };
+    stop = () => rec && rec.state === "recording" && rec.stop();
+  } else if (Rec) {
+    const rec = new Rec(); rec.lang = "en-US"; rec.interimResults = false;
+    rec.onresult = e => send(e.results[0][0].transcript);
+    rec.onend = () => listen(false);
+    start = () => rec.start(); stop = () => rec.stop();
+  } else {
+    talk.textContent = "Type below"; talk.disabled = true; return;
+  }
+  talk.addEventListener("pointerdown", e => { e.preventDefault(); stopAudio(); listen(true); start(); });
+  talk.addEventListener("pointerup", () => stop());
+  talk.addEventListener("pointerleave", () => stop());
+}
+connect();
+</script>
+</body>
+</html>

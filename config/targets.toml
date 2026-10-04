@@ -1,0 +1,178 @@
+# Curated targets that work from a Bortle 7-8 suburb with an 8" Dob and no tracking.
+# ra/dec in degrees (J2000). Planets and the Moon are computed, not listed here.
+
+[[target]]
+name = "Orion Nebula"
+id = "M42"
+category = "nebula"
+ra = 83.82
+dec = -5.39
+note = "The best nebula in the sky; bright even from the suburbs."
+
+[[target]]
+name = "Pleiades"
+id = "M45"
+category = "cluster"
+ra = 56.75
+dec = 24.12
+note = "The Seven Sisters; wider than the eyepiece, beautiful in the finder."
+
+[[target]]
+name = "Beehive Cluster"
+id = "M44"
+category = "cluster"
+ra = 130.1
+dec = 19.67
+note = "Big, bright open cluster in Cancer."
+
+[[target]]
+name = "Hercules Cluster"
+id = "M13"
+category = "cluster"
+ra = 250.42
+dec = 36.46
+note = "Great globular cluster: a ball of hundreds of thousands of stars."
+
+[[target]]
+name = "M92"
+id = "M92"
+category = "cluster"
+ra = 259.28
+dec = 43.14
+note = "Bright globular cluster, often overlooked next to M13."
+
+[[target]]
+name = "M4"
+id = "M4"
+category = "cluster"
+ra = 245.9
+dec = -26.53
+note = "Loose globular cluster next to the red star Antares."
+
+[[target]]
+name = "Sagittarius Cluster"
+id = "M22"
+category = "cluster"
+ra = 279.1
+dec = -23.9
+note = "One of the brightest globular clusters, low in the south."
+
+[[target]]
+name = "Wild Duck Cluster"
+id = "M11"
+category = "cluster"
+ra = 282.77
+dec = -6.27
+note = "Rich, dense open cluster shaped like a flight of ducks."
+
+[[target]]
+name = "Double Cluster"
+id = "NGC 869"
+category = "cluster"
+ra = 35.1
+dec = 57.14
+note = "Two star clusters side by side in Perseus."
+
+[[target]]
+name = "M35"
+id = "M35"
+category = "cluster"
+ra = 92.23
+dec = 24.33
+note = "Large open cluster in Gemini."
+
+[[target]]
+name = "M41"
+id = "M41"
+category = "cluster"
+ra = 101.5
+dec = -20.73
+note = "Bright open cluster just south of Sirius."
+
+[[target]]
+name = "Ring Nebula"
+id = "M57"
+category = "nebula"
+ra = 283.4
+dec = 33.03
+note = "A small smoke ring left by a dying star."
+
+[[target]]
+name = "Dumbbell Nebula"
+id = "M27"
+category = "nebula"
+ra = 299.9
+dec = 22.72
+note = "Bright planetary nebula shaped like an apple core."
+
+[[target]]
+name = "Lagoon Nebula"
+id = "M8"
+category = "nebula"
+ra = 270.92
+dec = -24.38
+note = "Large glowing cloud in Sagittarius with a cluster inside."
+
+[[target]]
+name = "Saturn Nebula"
+id = "NGC 7009"
+category = "nebula"
+ra = 316.04
+dec = -11.36
+note = "Small, bright blue-green planetary nebula."
+
+[[target]]
+name = "Eskimo Nebula"
+id = "NGC 2392"
+category = "nebula"
+ra = 112.29
+dec = 20.91
+note = "Small bright planetary nebula with a face-like look."
+
+[[target]]
+name = "Andromeda Galaxy"
+id = "M31"
+category = "galaxy"
+ra = 10.68
+dec = 41.27
+note = "Our nearest big galaxy; from the suburbs you will see the bright core."
+
+[[target]]
+name = "Albireo"
+id = "Beta Cygni"
+category = "double star"
+ra = 292.68
+dec = 27.96
+note = "Gold and blue pair; the prettiest double star in the sky."
+
+[[target]]
+name = "Almach"
+id = "Gamma Andromedae"
+category = "double star"
+ra = 30.97
+dec = 42.33
+note = "Orange and blue pair, like a small Albireo."
+
+[[target]]
+name = "Mizar and Alcor"
+id = "Zeta UMa"
+category = "double star"
+ra = 200.98
+dec = 54.93
+note = "The famous pair in the Big Dipper's handle; Mizar itself splits in the scope."
+
+[[target]]
+name = "Castor"
+id = "Alpha Geminorum"
+category = "double star"
+ra = 113.65
+dec = 31.89
+note = "A tight, bright white pair in Gemini."
+
+[[target]]
+name = "Double Double"
+id = "Epsilon Lyrae"
+category = "double star"
+ra = 281.08
+dec = 39.67
+note = "Two pairs of stars, each splitting again at high power."

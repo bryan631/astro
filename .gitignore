@@ -7,3 +7,7 @@ __pycache__/
 
 # SVBony SDK writes camera config caches into the working directory
 *_Cfg_*.bin
+certs/
+vendor/
+models/
+voice.env
