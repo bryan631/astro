@@ -1,0 +1,5 @@
+# Observing site. The calibration wizard will manage this later.
+name = "Backyard"
+lat_deg = 26.7
+lon_deg = -80.1
+elevation_m = 5

@@ -67,7 +67,7 @@ class Guide:
                 return state, None
             if text == self._last_text and t - self._last_spoken_t < REPEAT_INTERVAL_S:
                 return state, None
-        spoken = "keep going" if text == self._last_text and text.startswith("push") else text
+        spoken = "keep going" if text == self._last_text else text
         self._last_text, self._last_spoken_t = text, t
         return state, Cue(spoken, state)
 
