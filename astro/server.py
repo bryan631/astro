@@ -139,8 +139,10 @@ async def lifespan(app: FastAPI):
     if not os.environ.get("ASTRO_NO_LOG_FILE"):  # tests
         log.info("server start", extra={"data": {"log": str(logs.setup(ROOT)), "sim": SIM}})
     warm_speech()
-    yield
-    close_hardware()
+    try:
+        yield
+    finally:  # also on errors/cancellation: never leave heaters, cameras or the solver running
+        close_hardware()
 
 
 app = FastAPI(lifespan=lifespan)
