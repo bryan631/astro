@@ -5,8 +5,9 @@ differently. Its image orientation is unknown too: any rotation in the focuser, 
 mirrored. Both are learned without a second plate solver:
 
 1. CameraAxes: while the user pushes, encoder motion (d_az on the sky, d_alt) and the planet's
-   motion in the image (dx, dy) are paired; least squares gives the 2x2 matrix mapping one to
-   the other (rotation, scale and any flip in one go).
+   motion in the image (dx, dy) are paired. A push moves a fixed target the *opposite* way in
+   the image, so least squares on (push, -motion) gives the 2x2 matrix A that maps a target's
+   sky offset from the camera's aim to its pixel offset from center (rotation, scale, flip).
 2. MainOffset: with the axes known, a target seen off-center converts to a sky offset (where the
    main camera points relative to the finder model), averaged over observations.
 """
@@ -21,19 +22,21 @@ MIN_SPREAD = 0.3  # moves must not all be in one direction (needs both axes to s
 
 @dataclass
 class CameraAxes:
-    """Fits pixels = A @ [d_az_sky_deg, d_alt_deg] from paired moves."""
+    """A maps a target's sky offset from the camera aim (d_az_sky, d_alt) to pixels from center."""
 
     _sky: list[np.ndarray] = field(default_factory=list)
     _px: list[np.ndarray] = field(default_factory=list)
     matrix: np.ndarray | None = None  # A, pixels per degree
 
     def add_move(self, d_az_sky_deg: float, d_alt_deg: float, dx_px: float, dy_px: float) -> bool:
-        """Record one move; returns True once the axes are solved."""
+        """Record one push (scope motion) and how far the target moved in the image.
+
+        Returns True once the axes are solved."""
         sky = np.array([d_az_sky_deg, d_alt_deg])
         if np.hypot(*sky) < MIN_MOTION_DEG:
             return self.matrix is not None
         self._sky.append(sky)
-        self._px.append(np.array([dx_px, dy_px]))
+        self._px.append(-np.array([dx_px, dy_px]))  # target moves opposite to the push
         s, p = np.array(self._sky), np.array(self._px)
         # Both directions present? (smallest singular value relative to largest)
         sv = np.linalg.svd(s / np.linalg.norm(s, axis=1, keepdims=True), compute_uv=False)
@@ -42,7 +45,7 @@ class CameraAxes:
         return self.matrix is not None
 
     def sky_offset(self, dx_px: float, dy_px: float) -> tuple[float, float]:
-        """Pixels from image center -> (d_az_sky_deg, d_alt_deg)."""
+        """A target's pixels from image center -> its sky offset from the camera aim (deg)."""
         if self.matrix is None:
             raise ValueError("camera axes not calibrated yet")
         d_az, d_alt = np.linalg.solve(self.matrix, [dx_px, dy_px])
