@@ -11,11 +11,14 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class Intent:
     name: str  # goto, stop, next, tonight, capture, stop_capture, focus, finder_focus, sync,
-    # where, barlow_on, barlow_off, location, horizon_start, horizon_mark
+    # where, barlow_on, barlow_off, location, horizon_start, horizon_mark, setup, ready, skip
     target: str | None = None
 
 
 _PATTERNS = [
+    ("setup", r"\b(set ?up|setup|calibrate)( the)?( telescope| scope)?\b"),
+    ("ready", r"^(ready|i'?m ready|go ahead|ok(ay)?|done pointing)\b"),
+    ("skip", r"^(skip|skip it|next step|not now)\b"),
     ("horizon_start", r"\b(start|begin|do|record)( the)? horizon( walk)?\b|\bhorizon walk\b"),
     ("stop_capture", r"\b(stop|end|finish) (the )?(capture|recording|pictures?)\b"),
     ("barlow_on", r"\b(barlow (is )?(on|in)|(put|added?) (in )?the barlow)\b"),

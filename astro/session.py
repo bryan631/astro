@@ -31,6 +31,7 @@ from astro.pointing.geometry import separation_deg
 from astro.pointing.platesolve import finder_gray
 from astro.process.planet import StackResult, process_ser
 from astro.safety import DAYTIME_SUN_ALT_DEG, check_target
+from astro.wizard import SetupWizard
 
 Clock = Callable[[], datetime]
 TARGET_REFRESH_S = 1.0  # targets drift ~15"/s, so re-resolve their alt/az once a second
@@ -68,6 +69,7 @@ class Session:
         self.horizon = horizon or HorizonMask()  # treeline for the planner
         self.on_horizon_change = on_horizon_change
         self._horizon: list[tuple[float, float]] | None = None  # points during a horizon walk
+        self.wizard: SetupWizard | None = None  # first-time setup at a location
         self._model_site = site  # site the current mount model was built for
         self.weather = weather  # (lat, lon, when) -> cloud % or None offline; None = no forecast
         self._clouds: float | None = None
@@ -124,12 +126,19 @@ class Session:
 
     def _handle(self, text: str) -> list[dict]:
         intent = parse(text)
+        if intent is not None and intent.name in ("ready", "skip") and not self.wizard_active:
+            intent = None  # "okay" outside setup is just conversation
+        if intent is not None and intent.name in ("setup", "ready", "skip"):
+            return self._wizard_command(intent.name)
         if intent is None:
             return [say("Sorry, I didn't catch that. Try 'what's good tonight' or 'go to Saturn'.")]
         if intent.name == "goto":
             name = match_name(intent.target or "", self.names())
             return self.goto(name) if name else [say(f"I don't know {intent.target}.")]
         if intent.name == "stop":
+            if self.wizard is not None and self.wizard.active:
+                self.wizard = None
+                return [say("OK, setup stopped. Say 'set up the telescope' to start again.")]
             if self._horizon is not None:  # "done" / "stop" finishes the horizon walk
                 return self.finish_horizon()
             if self._focus_coach is not None:
@@ -469,6 +478,20 @@ class Session:
             self.on_horizon_change(self.horizon)
         return [say(f"Saved the treeline from {len(points)} marks. "
                     "I'll only suggest things above it.")]
+
+    @property
+    def wizard_active(self) -> bool:
+        return self.wizard is not None and self.wizard.active
+
+    def _wizard_command(self, name: str) -> list[dict]:
+        if name == "setup":
+            if self.finder is None:
+                return [say("There's no finder camera, so I can't run setup.")]
+            self.wizard = SetupWizard(self.request_location, self.finder.sync,
+                                      self.finder.alignment, self.start_horizon)
+            self.target, self.guide, self._centering, self._focus_coach = None, None, False, None
+            return self.wizard.start()
+        return self.wizard.ready() if name == "ready" else self.wizard.skip()
 
     def status_text(self) -> str:
         """Short facts for the agent to summarize (not spoken verbatim); a locked snapshot."""

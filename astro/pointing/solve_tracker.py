@@ -41,6 +41,10 @@ class SolveTracker:
         if self._thread.is_alive():
             self._thread.join()
 
+    def alignment(self) -> tuple[int, float | None]:
+        """Plate solving alone needs no model: aligned once it has solved."""
+        return (1 if self.synced else 0), None
+
     def position(self) -> tuple[float, float]:
         """Last solved (alt, az). The scope sits still between pushes, so this stays valid."""
         return self._altaz

@@ -22,6 +22,7 @@ Voice/text commands (offline grammar; Claude handles anything vaguer):
 | Barlow in / Barlow out | resets the focus gate, guidance tolerance 4' to 2' |
 | use my location | tablet GPS, saved to `data/site.toml` (git-ignored) |
 | start the horizon walk / mark / done | record the treeline; saved to `data/horizon.toml` (+ Stellarium file) |
+| set up the telescope / ready / skip | first-time setup: GPS, 3 syncs (reports alignment), horizon walk |
 
 - `ASTRO_DEV_OVERRIDE=1` lifts the daytime lockout (the 20° Sun exclusion always applies).
 - `ANTHROPIC_API_KEY` in `.env` enables the Claude agent for free-form questions; without it
