@@ -3,13 +3,14 @@
 import pytest
 
 from astro.devices.base import Roi
-from astro.devices.svbony import TIMEOUT, SvbError, SvbonyCamera
+from astro.devices.svbony import EXPOSURE, GAIN, RAW8, TIMEOUT, SvbError, SvbonyCamera
 
 
 class FakeSdk:
     def __init__(self, timeouts=0):
         self.calls, self.open, self.timeouts = [], set(), timeouts
         self.roi = None
+        self.controls = {}
 
     def SVBGetNumOfConnectedCameras(self):
         return 2
@@ -53,8 +54,13 @@ class FakeSdk:
             buf[i] = 7
         return 0
 
-    def __getattr__(self, name):  # SVBSetOutputImageType, SVBSetControlValue
-        return lambda *a: 0
+    def SVBSetControlValue(self, cid, ctrl, value, auto):
+        self.controls[ctrl] = value.value  # passed as ctypes c_long
+        return 0
+
+    def SVBSetOutputImageType(self, cid, image_type):
+        self.image_type = image_type
+        return 0
 
 
 def connected(sdk, model="SV705C"):
@@ -83,6 +89,16 @@ def test_capture_full_frame_then_roi_reopens():
     assert frame.shape == (8, 16) and (frame == 7).all()
     assert sdk.roi == (8, 4, 16, 8)
     assert sdk.calls == ["open", "start", "stop", "close", "open", "start"]
+
+
+def test_exposure_and_gain_reach_the_sdk():
+    sdk = FakeSdk()
+    cam = connected(sdk)
+    cam.set_exposure(0.25)
+    cam.set_gain(120)
+    cam.capture()
+    assert sdk.controls == {EXPOSURE: 250_000, GAIN: 120}  # exposure in microseconds
+    assert sdk.image_type == RAW8
 
 
 def test_unchanged_setting_does_not_reopen():
