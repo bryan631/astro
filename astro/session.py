@@ -41,6 +41,7 @@ FOCUS_STEP_S = 1.0  # one finder focus measurement per second while coaching
 MIN_FOCUS_SAMPLES = 3  # focus readings before "done" counts (else the gate was never checked)
 CENTER_STEP_S = 0.5  # main-camera centering cue rate
 DIRECTION_PROBE_S = 1.5  # after a left/right cue, look this long for the azimuth to move
+FIX_STALE_S = 2.0  # a plate-solve fix older than this is too old to steer by
 ENCODER_STALE_S = 1.0  # encoder positions older than this mean the board or cable is gone
 MIN_HFR_PX = 0.5  # floor so a perfectly sharp (tiny) star can't blow up the focus score
 TOLERANCE_ARCMIN = {False: 4.0, True: 2.0}  # guidance tolerance without / with the 2x Barlow
@@ -115,6 +116,7 @@ class Session:
         self._stack_done_announced = True
         self._preview_seen = 0
         self._processor = ThreadPoolExecutor(max_workers=1)  # one stacking job at a time
+        self._holding = False  # asked the user to hold still for a fresh fix
         self._jobs: list[tuple[str, Future[StackResult]]] = []  # pictures being made, in order
         self._focus_at = -1e9
         self.centerer = Centerer((main_sensor[0], main_sensor[1]))  # learns finder->main offset
@@ -435,6 +437,13 @@ class Session:
                 self.target, self.guide = None, None
                 return [say("Stopping: the target is no longer safe to point at.")]
             self.guide.target = self._aim(alt, az)
+        fix_age = getattr(self.finder, "fix_age", None)
+        if fix_age is not None and fix_age() > FIX_STALE_S:  # solving only, scope moving
+            if self._holding:
+                return []
+            self._holding = True
+            return [say("Hold still for a second so I can see where we are.")]
+        self._holding = False
         alt_now, az_now = self.position()
         learned = self._learn_direction(az_now, t)  # before the cue: a flip must apply to it
         state, cue = self.guide.update(alt_now, az_now, t)

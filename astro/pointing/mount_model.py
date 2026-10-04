@@ -11,6 +11,10 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy.optimize import least_squares
 
+MAX_SYNCS = 12  # newest kept: an old sync can't outvote a bumped base forever
+OUTLIER_X = 3.0  # a sync this many times worse than the median (and over 30') is dropped
+OUTLIER_MIN_ARCMIN = 30.0
+
 
 def _vec(alt_deg: float, az_deg: float) -> np.ndarray:
     alt, az = np.radians(alt_deg), np.radians(az_deg)
@@ -54,8 +58,21 @@ class MountModel:
 
     def add_sync(self, sync: Sync) -> float:
         """Add a sync, refit, and return the RMS residual in arcminutes."""
-        self.syncs.append(sync)
-        return self.fit()
+        self.syncs = [*self.syncs, sync][-MAX_SYNCS:]
+        rms = self.fit()
+        if len(self.syncs) >= 4:  # enough to tell which one is wrong
+            errs = self.residuals_arcmin()
+            worst = int(np.argmax(errs))
+            if errs[worst] > max(OUTLIER_MIN_ARCMIN, OUTLIER_X * float(np.median(errs))):
+                del self.syncs[worst]  # a false solve or a bump: forget it
+                rms = self.fit()
+        return rms
+
+    def residuals_arcmin(self) -> np.ndarray:
+        """Per-sync pointing error of the current fit, arcminutes."""
+        return np.array([np.degrees(np.linalg.norm(
+            _vec(*self.to_sky(s.enc_alt_deg, s.enc_az_deg)) - _vec(s.true_alt_deg, s.true_az_deg)))
+            * 60 for s in self.syncs])
 
     def fit(self) -> float:
         if len(self.syncs) == 1:
@@ -66,10 +83,7 @@ class MountModel:
             self.az_offset_deg = (s.true_az_deg - s.enc_az_deg) % 360
             self.tilt_n_deg = self.tilt_e_deg = 0.0
             return 0.0
-        fit_tilt = True
-        x0 = [self.az_offset_deg, self.alt_offset_deg]
-        if fit_tilt:
-            x0 += [self.tilt_n_deg, self.tilt_e_deg]
+        x0 = [self.az_offset_deg, self.alt_offset_deg, self.tilt_n_deg, self.tilt_e_deg]
         targets = [_vec(s.true_alt_deg, s.true_az_deg) for s in self.syncs]
 
         def residuals(x: np.ndarray) -> np.ndarray:
@@ -78,13 +92,12 @@ class MountModel:
                 [_vec(*self.to_sky(s.enc_alt_deg, s.enc_az_deg)) - t for s, t in zip(self.syncs, targets)]
             )
 
-        result = least_squares(residuals, x0)
+        # Robust loss: one bad sync can't drag the fit, so it stands out to be dropped.
+        result = least_squares(residuals, x0, loss="soft_l1", f_scale=np.radians(0.5))
         self._set(result.x)
-        # Chord length ~ angle (radians) for small errors; 2 independent components per sync.
+        # Chord length ~ angle (radians) for small errors: RMS of the per-sync angular error.
         rms_rad = np.sqrt(np.sum(result.fun**2) / len(self.syncs))
         return float(np.degrees(rms_rad) * 60)
 
     def _set(self, x: np.ndarray) -> None:
-        self.az_offset_deg, self.alt_offset_deg = x[0], x[1]
-        if len(x) == 4:
-            self.tilt_n_deg, self.tilt_e_deg = x[2], x[3]
+        self.az_offset_deg, self.alt_offset_deg, self.tilt_n_deg, self.tilt_e_deg = map(float, x)
