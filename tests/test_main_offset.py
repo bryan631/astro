@@ -18,7 +18,7 @@ def test_axes_learned_from_pushes(rot, mirrored):
     true = camera(rot, mirrored)
     axes = CameraAxes()
     rng = np.random.default_rng(0)
-    for sky in ([0.05, 0], [0.04, 0.01], [0, -0.06], [0.03, 0.03]):
+    for sky in ([0.15, 0], [0.12, 0.03], [0, -0.18], [0.09, 0.09]):  # >= 2 encoder counts
         px = true @ -np.array(sky) + rng.normal(0, 3, 2)  # pushing moves the target opposite
         axes.add_move(*sky, *px)
     assert axes.matrix is not None
@@ -28,8 +28,8 @@ def test_axes_learned_from_pushes(rot, mirrored):
 
 def test_one_direction_is_not_enough():
     axes = CameraAxes()
-    axes.add_move(0.05, 0, 360, 0)
-    axes.add_move(0.08, 0.001, 576, 7)
+    axes.add_move(0.15, 0, 1080, 0)
+    axes.add_move(0.24, 0.003, 1728, 21)
     assert axes.matrix is None
     assert not axes.add_move(0.001, 0.0, 7, 0)  # tiny move ignored
 
@@ -37,7 +37,7 @@ def test_one_direction_is_not_enough():
 def test_offset_correction_centers_target():
     true = camera(30)
     axes = CameraAxes()
-    for sky in ([0.05, 0], [0, 0.05]):
+    for sky in ([0.15, 0], [0, 0.15]):
         axes.add_move(*sky, *(true @ -np.array(sky)))  # physical: target moves opposite
     # The main camera aims 0.1 deg right and 0.05 deg low of the finder model, so when the
     # model says "on target" the target sits at sky offset -cam_offset from the camera's aim.
@@ -53,7 +53,7 @@ def test_correction_moves_target_toward_center():
     """End to end with physical signs: after correcting, the target lands at the center."""
     true = camera(110, mirrored=True)
     axes = CameraAxes()
-    for sky in ([0.04, 0.0], [0.0, 0.04], [0.02, -0.03]):
+    for sky in ([0.12, 0.0], [0.0, 0.12], [0.06, -0.09]):
         axes.add_move(*sky, *(true @ -np.array(sky)))
     cam_offset = np.array([-0.07, 0.12])  # where the main camera aims vs the finder model
     offset = MainOffset()

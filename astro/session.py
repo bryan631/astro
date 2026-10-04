@@ -18,6 +18,7 @@ from astro.capture.live_stacker import LiveStacker
 from astro.capture.recorder import CaptureRefused, Recorder
 from astro.capture.roi import brightest_blob, roi_around
 from astro.devices.base import Camera
+from astro.guidance.centering import Centerer
 from astro.guidance.engine import Guide
 from astro.intents import match_name, parse
 from astro.planner.catalog import load_targets
@@ -32,6 +33,7 @@ from astro.safety import DAYTIME_SUN_ALT_DEG, check_target
 Clock = Callable[[], datetime]
 TARGET_REFRESH_S = 1.0  # targets drift ~15"/s, so re-resolve their alt/az once a second
 FOCUS_STEP_S = 1.0  # one finder focus measurement per second while coaching
+CENTER_STEP_S = 0.5  # main-camera centering cue rate
 MIN_HFR_PX = 0.5  # floor so a perfectly sharp (tiny) star can't blow up the focus score
 TOLERANCE_ARCMIN = {False: 4.0, True: 2.0}  # guidance tolerance without / with the 2x Barlow
 RECORD_SECONDS = 60  # planetary video length
@@ -83,6 +85,9 @@ class Session:
         self._processor = ThreadPoolExecutor(max_workers=1)  # one stacking job at a time
         self._jobs: list[tuple[str, Future[StackResult]]] = []  # pictures being made, in order
         self._focus_at = -1e9
+        self.centerer = Centerer((main_sensor[0], main_sensor[1]))  # learns finder->main offset
+        self._centering = False
+        self._center_at = -1e9
         # Commands and the guidance tick run on worker threads (camera calls block), so
         # serialize them: one camera capture or state change at a time.
         self._lock = threading.Lock()
@@ -117,7 +122,7 @@ class Session:
                 return [say("OK, focus is set.")]
             if self._camera_busy():  # "stop" while taking a picture ends the picture
                 return self._handle("stop recording")
-            self.target, self.guide = None, None
+            self.target, self.guide, self._centering = None, None, False
             return [say("Stopped.")]
         if intent.name in ("barlow_on", "barlow_off"):
             self.barlow = intent.name == "barlow_on"
@@ -188,6 +193,7 @@ class Session:
             return [say("Let's make sure it's sharp first."), *self.start_main_focus()]
         if self._camera_busy():
             return [say("I'm already recording." if self.recorder.busy else "I'm already stacking.")]
+        self._centering = False  # the picture takes over the camera
         name = self.target or "capture"
         try:
             if self.target is None or self.target in self._extended_targets():
@@ -216,7 +222,8 @@ class Session:
         safe = check_target(alt, az, self.site, self.clock(), self.override)
         if not safe.ok:
             return [say(f"I can't go to {name}: it's {safe.reason}.")]
-        guide = Guide(alt, az, tolerance_arcmin=TOLERANCE_ARCMIN[self.barlow])
+        guide = Guide(*self._aim(alt, az), tolerance_arcmin=TOLERANCE_ARCMIN[self.barlow])
+        self._centering = False
         self.target, self.guide, self._focus_coach = name, guide, None
         return [*pre, say(f"Let's find {name}.")]
 
@@ -278,6 +285,8 @@ class Session:
             if self._focus_mode == "main":
                 return self._main_focus_step(t)
             return self._finder_focus_step(t)
+        if self._centering:
+            return self._center_step(t)
         if self.guide is None or self.target is None:
             return []
         if t - self._resolved_at >= TARGET_REFRESH_S:
@@ -286,12 +295,45 @@ class Session:
             if not check_target(alt, az, self.site, self.clock(), self.override).ok:
                 self.target, self.guide = None, None
                 return [say("Stopping: the target is no longer safe to point at.")]
-            self.guide.target = (alt, az)
+            self.guide.target = self._aim(alt, az)
         state, cue = self.guide.update(*self.position(), t)
         out = [{"type": "state", "target": self.target, **asdict(state)}]
         if cue:
             out.append(say(cue.text))
+            if cue.text == "stop" and state.on_target and self._should_center():
+                self._centering, self.guide = True, None  # finish with the main camera
+                self.centerer.restart(self.altaz_of(self.target))  # true, uncorrected target
         return out
+
+    def _aim(self, alt: float, az: float) -> tuple[float, float]:
+        """Where the finder model should point so the target lands in the main camera."""
+        if self.centerer.offset.observations:
+            return self.centerer.offset.correct(alt, az)
+        return alt, az
+
+    def _should_center(self) -> bool:
+        return (self.main_camera is not None and self.target in self._extended_targets()
+                and not self._camera_busy())
+
+    def _center_step(self, t: float) -> list[dict]:
+        if t - self._center_at < CENTER_STEP_S:
+            return []
+        self._center_at = t
+        if self._camera_busy():  # a recording or stack took the camera
+            self._centering = False
+            return []
+        if reason := self.exposure_safety():
+            self._centering = False
+            return [say(f"I stopped centering: {reason}.")]
+        try:
+            frame = self.main_camera.capture()
+        except (RuntimeError, OSError) as e:
+            self._centering = False
+            return [say(f"The main camera stopped responding. ({e})")]
+        step = self.centerer.update(self.position(), brightest_blob(frame))
+        if step.done or step.say and step.say.startswith("I can't see it"):
+            self._centering = False
+        return [say(step.say)] if step.say else []
 
 
     def _finder_focus_step(self, t: float) -> list[dict]:
