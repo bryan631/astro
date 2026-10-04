@@ -41,7 +41,7 @@ def test_walk_records_marks_and_saves_mask():
 def test_too_few_marks_keeps_old_horizon():
     saved = []
     s, _ = walk_session(saved)
-    s.handle("horizon walk")
+    s.handle("start the horizon walk")
     s.handle("mark")
     assert "kept the old horizon" in texts(s.handle("done"))[0]
     assert saved == [] and s.horizon == HorizonMask()
@@ -74,3 +74,19 @@ def test_horizon_walk_ends_focus_coaching():
     s._focus_coach, s._focus_mode = FocusCoach(), "finder"
     s.handle("start the horizon walk")
     assert s._focus_coach is None
+
+
+def test_stopping_the_walk_keeps_the_marks():
+    saved = []
+    s, pos = walk_session(saved)
+    s.handle("start the horizon walk")
+    for az in (0, 120, 240):
+        pos.update(az=az)
+        s.handle("mark")
+    assert "from 3 marks" in texts(s.handle("finish the horizon walk"))[0]
+    assert len(saved[0].points) == 3
+
+
+def test_next_step_outside_setup_means_next():
+    s, _ = walk_session([])
+    assert texts(s.handle("next step"))[0] == "Ask me what's good tonight first."
