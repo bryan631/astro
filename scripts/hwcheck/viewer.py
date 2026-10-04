@@ -27,18 +27,34 @@ info = next((c for c in cams if key and key in c.name.decode()), None) if key el
 if info is None:
     raise SystemExit(f"no {args.cam} camera; found {[c.name.decode() for c in cams]}")
 
-p = svb.Camera(info).prop
+with svb.Camera(info) as probe:
+    p = probe.prop
 w, h = map(int, args.roi.split("x")) if args.roi else (p.max_w, p.max_h)
 w, h = min(w, p.max_w) // 8 * 8, min(h, p.max_h) // 2 * 2
 
 
 def open_cam():
     cam = svb.Camera(info)
-    cam.set_control(svb.EXPOSURE, int(args.exp * 1000))
-    if args.gain is not None:
-        cam.set_control(svb.GAIN, args.gain)
-    cam.start((p.max_w - w) // 2 // 2 * 2, (p.max_h - h) // 2 // 2 * 2, w, h)
+    try:
+        cam.set_control(svb.EXPOSURE, int(args.exp * 1000))
+        if args.gain is not None:
+            cam.set_control(svb.GAIN, args.gain)
+        cam.start((p.max_w - w) // 2 // 2 * 2, (p.max_h - h) // 2 // 2 * 2, w, h)
+    except RuntimeError:
+        cam.__exit__()
+        raise
     return cam
+
+
+def reopen(old):
+    """Release the camera and keep retrying until it reopens, so capture never silently stops."""
+    old.__exit__()
+    while True:
+        try:
+            return open_cam()
+        except RuntimeError as e:
+            print(f"reopen failed: {e}; retrying in 2 s", flush=True)
+            time.sleep(2)
 
 
 cam = open_cam()
@@ -56,9 +72,7 @@ def grab():
             raw = cam.frame(wait_ms=int(args.exp) * 3 + 2000)
         except RuntimeError as e:  # SDK intermittently times out; reopen the camera (see docs/hardware-results.md)
             print(f"{e}; reopening camera", flush=True)
-            cam.stop()
-            cam.close()
-            cam = open_cam()
+            cam = reopen(cam)
             continue
         img = cv2.cvtColor(raw, code)
         if w > args.width:

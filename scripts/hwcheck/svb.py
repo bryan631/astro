@@ -40,7 +40,19 @@ class Camera:
         self.id = info.camera_id
         check(lib.SVBOpenCamera(self.id), "SVBOpenCamera")
         self.prop = Prop()
-        check(lib.SVBGetCameraProperty(self.id, C.byref(self.prop)), "SVBGetCameraProperty")
+        try:
+            check(lib.SVBGetCameraProperty(self.id, C.byref(self.prop)), "SVBGetCameraProperty")
+        except RuntimeError:
+            self.close()
+            raise
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        """Always release the native handle, even after errors (stop is harmless if not started)."""
+        self.stop()
+        self.close()
 
     def set_control(self, ctrl, value):
         check(lib.SVBSetControlValue(self.id, ctrl, C.c_long(value), 0), f"SVBSetControlValue({ctrl})")
