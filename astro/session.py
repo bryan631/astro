@@ -142,6 +142,8 @@ class Session:
     def start_main_focus(self) -> list[dict]:
         if self.main_camera is None:
             return [say("There's no main camera connected.")]
+        if self.recorder is not None and self.recorder.busy:  # one user of the camera at a time
+            return [say("I'm recording right now. Say 'stop recording' first.")]
         self.guide = None  # keep the target; we're on it
         self._focus_coach, self._focus_mode = FocusCoach(), "main"
         return [say("Turn the telescope's focus knob slowly. I'll tell you when it gets sharper. "

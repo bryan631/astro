@@ -60,7 +60,7 @@ class Recorder:
                                  "Let's center it first.")
         roi = roi_around(center, ROI_PX, self.sensor)
         self.camera.set_roi(roi)
-        stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+        stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")  # microseconds: never reuse a name
         self.out_dir.mkdir(parents=True, exist_ok=True)
         rec = Recording(self.out_dir / f"{stamp}_{name.replace(' ', '_')}.ser")
         self._stop.clear()
@@ -93,8 +93,12 @@ class Recorder:
         except (RuntimeError, OSError, ValueError) as e:  # SDK error, disk full, bad frame
             rec.error = f"Recording failed: {e}"
         finally:
-            self.camera.set_roi(None)
-            rec.done.set()
+            try:
+                self.camera.set_roi(None)
+            except (RuntimeError, OSError) as e:  # e.g. camera unplugged: still report and finish
+                rec.error = rec.error or f"Recording stopped, and the camera did not reset: {e}"
+            finally:
+                rec.done.set()
 
     def _recenter(self, frame, roi: Roi, rec: Recording) -> Roi:
         blob = brightest_blob(frame)

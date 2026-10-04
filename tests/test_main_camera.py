@@ -171,3 +171,35 @@ def test_sim_main_camera_shows_every_planet(planet):
     alt, az = body_altaz(planet, WPB, EVENING)
     cam = SimMainCamera(lambda: (alt, az), WPB, lambda: EVENING)
     assert brightest_blob(cam.capture()) is not None
+
+
+def test_focus_refused_while_recording(tmp_path):
+    s, _ = make_session(tmp_path)
+    s.main_focus_ok, s.record_seconds = True, 2
+    s.handle("take a picture")
+    assert "recording right now" in texts(s.handle("focus"))[0]
+    s.recorder.stop()
+    s.recorder.current.done.wait(5)
+
+
+class UnresettableCamera(DriftingPlanet):
+    def set_roi(self, roi):
+        if roi is None and self.n:
+            raise RuntimeError("camera unplugged")
+        super().set_roi(roi)
+
+
+def test_recording_finishes_even_if_camera_reset_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr("astro.capture.recorder.ROI_PX", 128)
+    rec = Recorder(UnresettableCamera(), (800, 600), tmp_path, lambda: None).start("Mars", 0.1)
+    assert rec.done.wait(3) and "did not reset" in rec.error
+
+
+def test_quick_recordings_get_distinct_files(tmp_path, monkeypatch):
+    monkeypatch.setattr("astro.capture.recorder.ROI_PX", 128)
+    recorder = Recorder(DriftingPlanet(), (800, 600), tmp_path, lambda: None)
+    first = recorder.start("Mars", 0.05)
+    first.done.wait(3)
+    second = recorder.start("Mars", 0.05)
+    second.done.wait(3)
+    assert first.path != second.path
