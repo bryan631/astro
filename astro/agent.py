@@ -33,13 +33,16 @@ TOOLS = [
     {"name": "stop", "description": "Stop guiding.", "input_schema": {"type": "object", "properties": {}}},
     {"name": "where_am_i", "description": "What the telescope is pointing at now.",
      "input_schema": {"type": "object", "properties": {}}},
+    {"name": "set_location", "description": "Update where the telescope is, using the tablet's "
+     "GPS (e.g. after moving to a new place).",
+     "input_schema": {"type": "object", "properties": {}}},
     {"name": "next", "description": "Go to the next suggestion from tonight's list.",
      "input_schema": {"type": "object", "properties": {}}},
 ]
 
 # Tool name -> offline command text the session already understands.
 _COMMANDS = {"list_tonight": "what's good tonight", "stop": "stop", "where_am_i": "where am i",
-             "next": "next"}
+             "next": "next", "set_location": "set location"}
 
 
 class Agent:
