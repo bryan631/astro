@@ -86,6 +86,8 @@ class Agent:
         intent = parse(text)
         if intent is None or intent.name == "tonight":
             return False  # Claude gives a nicer, conversational overview
+        if intent.name == "skip" and "next" in text.lower():
+            return True  # "next step" means next (the session maps it), even outside setup
         if intent.name in ("ready", "skip") and not self.session.wizard_active:
             return False  # "okay" outside setup is conversation, not a command
         if intent.name == "goto":

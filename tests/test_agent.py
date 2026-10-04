@@ -95,3 +95,9 @@ def test_goto_tool_matches_names_without_reparsing():
     assert result == "I don't know what's good tonight."  # not the tonight listing
     s, _ = run_tool("goto", {"target": "Messier 57"})
     assert s.target == "M57" or s.target is None  # matched by name (may be refused if set)
+
+
+def test_next_step_stays_offline_with_a_key():
+    client = FakeClient([])
+    out = Agent(session(), client=client).handle("next step")
+    assert client.requests == [] and out[0]["text"] == "Ask me what's good tonight first."
