@@ -11,7 +11,7 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class Intent:
     name: str  # goto, stop, next, tonight, capture, stop_capture, focus, finder_focus, sync,
-    # where, barlow_on, barlow_off, location
+    # where, barlow_on, barlow_off, location, horizon_start, horizon_mark
     target: str | None = None
 
 
@@ -26,6 +26,8 @@ _PATTERNS = [
     ("finder_focus", r"\bfocus (the )?finder\b"),
     ("focus", r"\bfocus\b"),
     ("sync", r"\b(sync|align|plate ?solve|find (out )?where (we are|i am|it is) pointing)\b"),
+    ("horizon_start", r"\b(start|begin|do|record)( the)? horizon( walk)?\b|\bhorizon walk\b"),
+    ("horizon_mark", r"^(mark|mark it|mark this|here)\b"),
     ("location", r"\b(set|update|use|get|find) (my |our |the )?(location|position|gps)\b"),
     ("where", r"\b(where am i|what am i (looking at|pointing at))\b"),
     ("goto", r"\b(?:go ?to|find|show me|point (?:at|to)|take me to|look at)\s+(?:the\s+)?(.+)"),
