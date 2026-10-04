@@ -67,3 +67,12 @@ def test_solve_rate_on_finder_format_frames(solver):
                      sigma_px=2.0, mag_limit=6.5, seed=i)
         solved += solver.solve(img) is not None
     assert solved >= 26
+
+
+def test_real_finder_frame_solves(solver):
+    """SV905C, 0.8 s gain 100, 2026-10-03 22:36 PDT; Saturn ~0.94 deg from center."""
+    raw = np.load(__import__("pathlib").Path(__file__).parent / "data" / "finder_saturn.npy")
+    sol = solver.solve(raw)
+    assert sol is not None and sol.matches >= 8
+    assert separation_deg(sol.dec_deg, sol.ra_deg, 2.112, 10.014) < 0.02
+    assert sol.fov_deg == pytest.approx(10.39, abs=0.05)

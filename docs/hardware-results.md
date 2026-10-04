@@ -30,6 +30,12 @@ Scripts: `scripts/hwcheck/` (`enumerate.py`, `checklist.py`). SDK lives in `~/sd
   (33,000 "stars" on a dark frame). Fixed: hot-pixel removal, noise floor, 2-px minimum star size.
   Real frames are in `tests/data/` as regression tests.
 
+## First real-sky solve (2026-10-03 22:36 PDT)
+- Finder at 0.8 s, gain 100, focused for tight faint stars (focus gate: 22 stars, HFR 0.96 binned px).
+- Solved in 12 ms: RA 10.014°, Dec +2.112°, roll 222.5°, 10 matches, RMSE 10″, false-match prob 5e-13.
+- Measured horizontal FOV 10.39° (estimate was 11°). The bright object 0.94° from center is Saturn.
+- Frame kept as `tests/data/finder_saturn.npy` (regression test).
+
 ## Still open
 - ~~**Finder focus**~~ done 2026-10-03 (distant object, `viewer.py`).
 - **USB3 speed:** retest frame rates on the MeLE (container links at USB2).
