@@ -27,6 +27,7 @@ class SolveTracker:
         self.synced = False
         self.safety: Callable[[], str | None] | None = None  # exposure gate, set by the session
         self._altaz = (0.0, 0.0)
+        self.last_solution = None  # not logged: this solves about once a second
         self._solved_at = -1e9
         self._last_reason = "I haven't looked at the sky yet."
         self._camera_lock = threading.Lock()  # one capture at a time (tracker vs focus coach)
@@ -84,6 +85,7 @@ class SolveTracker:
             self._last_reason = ("I can see stars but couldn't recognize the pattern. "
                                  "Something may be blocking part of the view.")
             return False, self._last_reason
+        self.last_solution = sol
         self._altaz = radec_to_altaz(sol.ra_deg, sol.dec_deg, self.site, self.clock())
         self._solved_at, self.synced = time.monotonic(), True
         return True, ""

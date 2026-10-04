@@ -4,6 +4,7 @@ Every failure comes back with a plain-language reason the tablet can speak, inst
 silent solve failure (pre-flight focus gate, docs/plan.md Phase 1 step 3).
 """
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -16,7 +17,18 @@ from astro.capture.focus import half_flux_radius
 from astro.devices.base import Camera
 from astro.pointing.coords import Site, radec_to_altaz
 from astro.pointing.mount_model import MountModel, Sync
-from astro.pointing.platesolve import FinderSolver, finder_gray
+from astro.pointing.platesolve import FinderSolver, Solution, finder_gray
+
+log = logging.getLogger(__name__)
+
+
+def log_solution(sol: Solution) -> None:
+    """Every sync's solve, for judging confidence and scale afterwards (PS2/PS3)."""
+    log.info("solved", extra={"data": {
+        "ra_deg": round(sol.ra_deg, 4), "dec_deg": round(sol.dec_deg, 4),
+        "roll_deg": round(sol.roll_deg, 1), "fov_deg": round(sol.fov_deg, 3),
+        "scale_arcsec_px": round(sol.scale_arcsec_px, 2), "matches": sol.matches,
+        "false_prob": sol.false_prob, "rmse_arcsec": round(sol.rmse_arcsec, 1)}})
 
 # Robust noise: sigma = MAD / Phi^-1(3/4) for Gaussian noise (the familiar 1.4826).
 MAD_TO_SIGMA = 1 / norm.ppf(0.75)
@@ -114,6 +126,7 @@ class FinderSync:
         self.synced = False
         self.last_rms: float | None = None  # arcmin, mount model fit after the latest sync
         self.on_change: Callable[[], None] | None = None  # model changed: persist calibration
+        self.last_solution: Solution | None = None
         # How many times the encoder board has booted since we connected (None: not tracked).
         self.encoder_boots: Callable[[], int] | None = None
         # Seconds since the encoders last reported (None if not tracked, e.g. simulators).
@@ -151,6 +164,8 @@ class FinderSync:
         if sol is None:
             return False, ("I can see stars but couldn't recognize the pattern. "
                            "Something may be blocking part of the view.")
+        self.last_solution = sol
+        log_solution(sol)
         alt, az = radec_to_altaz(sol.ra_deg, sol.dec_deg, self.site, self.clock())
         rms = self.model.add_sync(Sync(enc[0], enc[1], alt, az))
         self.last_rms = rms

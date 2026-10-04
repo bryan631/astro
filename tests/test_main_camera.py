@@ -74,9 +74,12 @@ def test_capture_without_planet_explains(tmp_path):
 
 
 class DriftingPlanet:
-    """Camera stub: a bright square drifting right 1 px per frame (~3x real); honours ROI."""
+    """Camera stub: a bright square drifting right 1 px per frame (~3x real); honors ROI."""
 
     bayer = "GRBG"
+
+    def temperature_c(self):
+        return 21.0
 
     def __init__(self):
         self.n, self.roi = 0, None

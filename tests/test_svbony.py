@@ -147,6 +147,14 @@ def test_rejects_misaligned_roi():
         connected(FakeSdk()).set_roi(Roi(1, 0, 16, 8))
 
 
+def test_temperature_in_tenths_of_a_degree():
+    sdk = FakeSdk()
+
+    def get(cid, ctrl, value, auto):
+        value._obj.value = 235
+        return 0
+    sdk.SVBGetControlValue = get
+    assert connected(sdk).temperature_c() == 23.5
 def test_failed_reopen_retries_with_backoff(monkeypatch):
     import astro.devices.svbony as svb
 

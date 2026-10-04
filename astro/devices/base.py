@@ -28,6 +28,10 @@ class Camera(Protocol):
         """Block until one frame is ready; returns a 2-D uint8 array."""
         ...
 
+    def temperature_c(self) -> float | None:
+        """Sensor temperature in Celsius, or None if the camera can't tell."""
+        ...
+
 
 class MountEncoders(Protocol):
     """Raw encoder counts for the two axes."""
