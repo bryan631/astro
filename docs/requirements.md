@@ -46,7 +46,7 @@ Status as of 2026-10-04 (`main` after PR #26):
 | S2 | Every camera exposure is safety-checked: focus steps (finder and main), recording start and every second, live-stack start and every second, centering frames. | A | Done | `Session.exposure_safety`, recorder/stacker safety callbacks; tests. |
 | S3 | Before the first sync (pointing unknown), exposures are allowed only with the Sun down. | A | Done | `exposure_safety`. |
 | S4 | Refuse targets below the local horizon **mask** (trees), not just below 0 deg. | P | Partial | Planner hides targets below the mask; `goto` refuses only below 0 deg altitude. |
-| S5 | Heaters fail safe: off on lost host heartbeat (10 s), on a failed sensor reading, and on host shutdown. | P, A | Done (firmware Needs HW) | Firmware heartbeat; `dew.heater_percent` returns 0 for non-finite readings; `Mcu.close` joins workers then turns heaters off. |
+| S5 | Heaters fail safe: off on lost host heartbeat (10 s), on a failed sensor reading, and on host shutdown. | P, A | Done | Firmware part unverified on hardware. Firmware heartbeat; `dew.heater_percent` returns 0 for non-finite readings; `Mcu.close` joins workers then turns heaters off. |
 
 ## 4. Hardware
 
@@ -60,7 +60,7 @@ Status as of 2026-10-04 (`main` after PR #26):
 | HW6 | Two 5 V USB dew heaters via logic-level MOSFETs on PWM pins, powered from the power bank. | P | Needs HW | Firmware D9/D10 PWM. |
 | HW7 | Hardware abstraction: different computers differ only at the lowest driver level. | U | Done | `astro/devices/base.py` protocols; sim and real drivers behind them; `config/devices.toml` selects real drivers. |
 | HW8 | Each device has a simulator implementing the same interface; everything runs with no hardware. | P | Done | `astro/devices/sim/`: finder renders the real sky, main camera renders planets/Moon/stars, uncalibrated encoders, simulated user. |
-| HW9 | Real-hardware mode without encoders: pointing from continuous finder plate solves. | A | Done (laptop HW smoke test) | Mount driver `solve` (`astro/pointing/solve_tracker.py`); for the Phase 2 tripod test and as an encoder fallback. |
+| HW9 | Real-hardware mode without encoders: pointing from continuous finder plate solves. | A | Done | Smoke-tested on the laptop with the real finder. Mount driver `solve` (`astro/pointing/solve_tracker.py`); for the Phase 2 tripod test and as an encoder fallback. |
 | HW10 | Camera driver handles SDK quirks: settings changes and timeouts reopen; system libusb loaded first; the 2 blank frames after each start are discarded. | A | Done (HW) | Found during hardware checkout and the exposure sweep. |
 | HW11 | Camera temperature reported if available. | P | Not done | |
 
@@ -83,15 +83,15 @@ Status as of 2026-10-04 (`main` after PR #26):
 | PS3 | Show the camera rotation and the angle subtended per pixel, along with RA/Dec. | U | Done | `rotation` and `scale` ("/px) in `solve_sky.py` output. |
 | PS4 | Real-sky test from the developer's yard: solve rate, time, failure modes (clouds, trees, streetlights). | P | Partial | Exposure sweep done (solves at >= 0.8 s, gain >= 100); a full session across the sky is still to run. |
 | PS5 | Real test images of success and failure cases (lens cap, trees, positions/orientations, defocus both ways, etc.) kept as regression tests. | U, P | Partial | Capture tool, manifest and test exist (`scripts/hwcheck/capture_cases.py`, `tests/test_real_frames.py`); 3 real frames recorded; the 18-case shot list (`docs/test-frames.md`) is not yet recorded. |
-| PS6 | Robust on real frames: hot pixels removed, noise floor when the MAD is 0, single-pixel blobs ignored, saturated stars skipped for HFR; tetra3 binary opening disabled. | A | Done (HW frames) | Found on real SV905C frames. |
+| PS6 | Robust on real frames: hot pixels removed, noise floor when the MAD is 0, single-pixel blobs ignored, saturated stars skipped for HFR; tetra3 binary opening disabled. | A | Done (HW) | Found on, and tested with, real SV905C frames. |
 
 ## 7. Pre-flight checks
 
 | ID | Requirement | Src | Status | Evidence / gap |
 |---|---|---|---|---|
-| F1 | Finder focus gate before solving; voice-guided refocus; say why a solve failed (no stars, not the sky, few stars, out of focus, no match). | U | Done | `check_focus`, "focus the finder". Thresholds tuned on simulation + 3 real frames. |
-| F2 | Main-camera focus gate at session start and after a Barlow change, before any capture, using the focus coach. | U | Done | `Session.capture`. |
-| F3 | Collimation check: defocused-star ring evenness and secondary-shadow centering, spoken guidance for the primary's screws; at first light, periodically, and after transport. | U | Not done | Planned for Phase 3. |
+| F1 | Finder focus gate before solving; voice-guided refocus; say why a solve failed (no stars, not the sky, few stars, out of focus, no match). | U, P | Done | `check_focus`, "focus the finder". Thresholds tuned on simulation + 3 real frames. |
+| F2 | Main-camera focus gate at session start and after a Barlow change, before any capture, using the focus coach. | U, P | Done | `Session.capture`. |
+| F3 | Collimation check: defocused-star ring evenness and secondary-shadow centering, spoken guidance for the primary's screws; at first light, periodically, and after transport. | U, P | Not done | Planned for Phase 3. |
 
 ## 8. Guidance
 
@@ -117,12 +117,12 @@ Status as of 2026-10-04 (`main` after PR #26):
 | ID | Requirement | Src | Status | Evidence / gap |
 |---|---|---|---|---|
 | V1 | Tablet PWA: push-to-talk, arrows, live view panel, gallery, red night mode. | P | Partial | Live view only while live-stacking; no live planetary view. |
-| V2 | HTTPS on the LAN (self-signed + install instructions, or Tailscale certs), required for the mic. | P | Partial (Needs HW) | Tailscale certs scripted; no self-signed option. |
+| V2 | HTTPS on the LAN (self-signed + install instructions, or Tailscale certs), required for the mic. | P | Partial | Tailscale certs scripted (untested until the MiniPC); no self-signed option. |
 | V3 | STT whisper.cpp, TTS Piper, audio over WebSocket. | P | Done | Real round trip verified on the laptop. |
 | V4 | Speech fast enough for guidance: cues pre-rendered and cached; STT sized to the utterance. | A | Done | TTS 30-80 ms (0 ms cached), STT ~0.7 s on the laptop; N150 timing pending (P2-4). |
-| V5 | Claude agent tools: list_tonight, describe(target), goto, stop, where_am_i/what_am_i_looking_at, start/stop_capture, focus_assist, set_location, calibrate_horizon, session_status. Short, warm, plain replies. | P | Partial | All except `describe(target)`. Uses Claude Haiku 4.5. |
+| V5 | Claude agent tools: list_tonight, describe(target), goto, stop, where_am_i, what_am_i_looking_at, start_capture/stop_capture, focus_assist, set_location, calibrate_horizon, session_status. Short, warm, plain replies. | P | Partial | `describe(target)` missing. Named differently: `what_am_i_looking_at` is covered by `where_am_i`; `take_picture`/`stop_picture` (start/stop_capture); `focus` (focus_assist); `horizon_walk` (calibrate_horizon). Added: `next`, `sync`, `barlow`. Uses Claude Haiku 4.5. |
 | V6 | Offline intent fallback: goto, stop, next, capture, focus. | P | Done | Plus sync, Barlow, location, horizon, setup. |
-| V7 | Tablet GPS sets the site during setup; saved locally (never in the repo or sent to the LLM); a move > 1 km resets the mount model. | U | Done (Needs HW on tablet) | `astro/site_store.py`. |
+| V7 | Tablet GPS sets the site during setup; saved locally (never in the repo or sent to the LLM); a move > 1 km resets the mount model. | U | Done | Not yet tried on the Android tablet. `astro/site_store.py`. |
 | V8 | One guidance loop per session, broadcast to every connected tablet. | A | Done | `server.Hub`. |
 | V9 | Setup wizard: "set up the telescope" -> GPS -> 3 syncs with an alignment report -> horizon walk. | P, A | Done | `astro/wizard.py`. |
 
@@ -141,7 +141,7 @@ Status as of 2026-10-04 (`main` after PR #26):
 
 | ID | Requirement | Src | Status | Evidence / gap |
 |---|---|---|---|---|
-| P2-1 | Ubuntu on the MeLE; `scripts/setup.sh`; systemd services; auto-start; BIOS auto-power-on; Tailscale; WiFi + fallback hotspot; log rotation. | P | Partial (Needs HW) | setup.sh, systemd units, Tailscale script, app log retention (20 runs); no hotspot. |
+| P2-1 | Ubuntu on the MeLE; `scripts/setup.sh`; systemd services; auto-start; BIOS auto-power-on; Tailscale; WiFi + fallback hotspot; log rotation. | P | Partial | Needs the MiniPC to verify. setup.sh, systemd units, Tailscale script, app log retention (20 runs); no hotspot. |
 | P2-2 | Firmware: interrupt quadrature; line protocol `POS`, `ENV`, `HEAT`, `ZERO`, `VER`; checksum; watchdog; dew control from BME280 (Magnus) keeping optics >= 2-3 C above dew point; heater failsafe. | P | Needs HW | Dew control runs on the host (stepped power). Encoder test at 5x rate pending. |
 | P2-3 | Handset fallback driver with the same interface as the MCU encoder driver. | P | Needs HW | |
 | P2-4 | Performance on the N150: STT latency, solve time, live-stack frame rate, processing time. | P | Needs HW | Laptop numbers recorded in PRs. |
@@ -181,20 +181,21 @@ Status as of 2026-10-04 (`main` after PR #26):
 | CV4 | Hardware tools: browser viewer (`viewer.py`) and matplotlib viewer (`viewer_plot.py`) sharing common code; exposures in seconds (values > 10 rejected); display rotated 180 deg (lens inversion) with `--raw`; scripts run the project venv from their shebang. | U | Done (HW) | `scripts/hwcheck/`. |
 | CV5 | Hardware checkout results recorded. | P | Done | `docs/hardware-results.md`. |
 | CV6 | Docs: one-page large-print user guide and a developer runbook. | P | Done | `docs/user-guide.md`, `docs/dev-runbook.md`. |
+| CV7 | Store: SQLite for locations, horizon masks, sessions, images, calibration. | P | Partial | Persistence uses files instead: TOML (`data/site.toml`, `data/horizon.toml`), JSON logs, SER/PNG in `data/`. No SQLite; sessions and calibration (mount model, finder-main offset) are not persisted across restarts. |
 
 ## 16. Development process (`CLAUDE.md` and session requests)
 
 | ID | Requirement | Src | Status | Evidence / gap |
 |---|---|---|---|---|
-| D1 | Clean, concise, reviewable code; no overly complex designs. | U | Done (ongoing) | |
+| D1 | Clean, concise, reviewable code; no overly complex designs. | U | Done | Ongoing practice. |
 | D2 | Open-source libraries welcome; avoid binaries except closed drivers with no alternative. | U | Done | See H1. |
 | D3 | Commit often; modern CI/CD. | U | Done | GitHub Actions: lint, tests (sim, solver required), firmware compile. |
-| D4 | Good unit tests, not excessive. | U | Done (ongoing) | |
-| D5 | Prototype first, then productize. | U | Done (ongoing) | e.g. planet stacking prototype before PSS. |
-| D6 | Propose code-hygiene steps after long tangents. | U | Done (ongoing) | |
+| D4 | Good unit tests, not excessive. | U | Done | Ongoing practice. |
+| D5 | Prototype first, then productize. | U | Done | Ongoing practice. e.g. planet stacking prototype before PSS. |
+| D6 | Propose code-hygiene steps after long tangents. | U | Done | Ongoing practice. |
 | D7 | Every change through a PR with GitHub Copilot review; feedback addressed before merge. | U | Done | `main` protected (PR + passing `test` check, admins included); `scripts/dev/`. |
 | D8 | Annotated git tag when the developer confirms something works on real hardware ("ship it!"). | U | Not done | No confirmation given yet; no tags. |
-| D9 | Token-efficient work. | U | Done (ongoing) | |
+| D9 | Token-efficient work. | U | Done | Ongoing practice. |
 | D10 | American English in code, comments and docs. | U | Done | |
 | D11 | Parallel sessions use separate git worktrees; one session merges a branch. | A | Done | |
 | D12 | Phase 1 is done when, in sim mode, a full session works end to end via the tablet (voice -> plan -> guide -> simulated capture -> processed image), and the finder solves real sky. | P | Partial | Sim loop runs end to end through the server's WebSocket (tests and scripted sessions), and the finder solved real sky on 2026-10-03; not yet exercised from the user's Android tablet. |
@@ -205,4 +206,4 @@ Status as of 2026-10-04 (`main` after PR #26):
 
 Not done: HW11 camera temperature, F3 collimation check, C5 sample-data validation, R7/P3-6 log upload, D8 hardware tags (awaiting confirmation).
 
-Partial: D12 tablet end-to-end run, S4 horizon mask in goto, G3 left/right learning, G4 beeps, PL1 Moon phase, PL2 Moon features, V1 planetary live view, V2 self-signed HTTPS, V5 `describe(target)`, C3 PSS/wavelets, C4 GraXpert/Siril, PS4 full sky session, PS5 shot list, P2-1 hotspot, P3-3 focus reference positions, R6 Ubuntu, CV1 package layout, M1-M3.
+Partial: D12 tablet end-to-end run, CV7 SQLite store / persisted calibration, S4 horizon mask in goto, G3 left/right learning, G4 beeps, PL1 Moon phase, PL2 Moon features, V1 planetary live view, V2 self-signed HTTPS, V5 `describe(target)`, C3 PSS/wavelets, C4 GraXpert/Siril, PS4 full sky session, PS5 shot list, P2-1 hotspot, P3-3 focus reference positions, R6 Ubuntu, CV1 package layout, M1-M3.
