@@ -37,6 +37,7 @@ Clock = Callable[[], datetime]
 TARGET_REFRESH_S = 1.0  # targets drift ~15"/s, so re-resolve their alt/az once a second
 FOCUS_STEP_S = 1.0  # one finder focus measurement per second while coaching
 CENTER_STEP_S = 0.5  # main-camera centering cue rate
+ENCODER_STALE_S = 1.0  # encoder positions older than this mean the board or cable is gone
 MIN_HFR_PX = 0.5  # floor so a perfectly sharp (tiny) star can't blow up the focus score
 TOLERANCE_ARCMIN = {False: 4.0, True: 2.0}  # guidance tolerance without / with the 2x Barlow
 RECORD_SECONDS = 60  # planetary video length
@@ -349,6 +350,9 @@ class Session:
             return self._center_step(t)
         if self.guide is None or self.target is None:
             return []
+        if lost := self._pointing_lost():
+            self.guide = None  # keep the target: "go to" it again once things are back
+            return [say(lost)]
         if t - self._resolved_at >= TARGET_REFRESH_S:
             self._resolved_at = t
             alt, az = self.altaz_of(self.target)
@@ -365,6 +369,17 @@ class Session:
                 self.centerer.restart(self.altaz_of(self.target))  # true, uncorrected target
                 self._center_limiter = CueLimiter()
         return out
+
+    def _pointing_lost(self) -> str | None:
+        """Why guidance can't trust the pointing any more, or None."""
+        if self.finder is None:
+            return None
+        age = getattr(self.finder, "encoder_age", None)
+        if age is not None and age() > ENCODER_STALE_S:
+            return "I lost the telescope's position sensors, so I stopped guiding. Check the cable."
+        if not self.finder.synced:  # e.g. the encoder board restarted and was reset
+            return "I lost track of where the telescope points. Say 'sync' and let me look again."
+        return None
 
     def _aim(self, alt: float, az: float) -> tuple[float, float]:
         """Where the finder model should point so the target lands in the main camera."""

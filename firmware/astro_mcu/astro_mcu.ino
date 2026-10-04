@@ -198,6 +198,9 @@ void setup() {
   opticOk = optic.getDeviceCount() > 0;
   optic.setWaitForConversion(false);
   watchdogStart();
+  char buf[32];
+  snprintf(buf, sizeof buf, "BOOT %s %s", NAME, VERSION);
+  sendLine(buf);  // announce every boot: the host learns the counts were reset
 }
 
 void loop() {

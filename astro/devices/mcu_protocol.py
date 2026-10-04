@@ -5,7 +5,8 @@ Every line is ASCII `<BODY>*<CS>\n`, where CS is the XOR of BODY's bytes as two 
 
 MCU -> host:  POS <az_counts> <alt_counts>          (20 Hz)
               ENV <temp_c> <rh_pct> <optic_c|nan>   (1 Hz; optic from the DS18B20, if fitted)
-              VER <name> <version>
+              VER <name> <version>                  (reply to VER?)
+              BOOT <name> <version>                 (sent once at every start-up: counts are 0)
               ERR <text>
 Host -> MCU:  HEAT <channel 0|1> <percent 0-100>
               ZERO                                  (encoder counts to 0)
@@ -48,11 +49,17 @@ class Version:
 
 
 @dataclass(frozen=True)
+class Boot:
+    name: str
+    version: str
+
+
+@dataclass(frozen=True)
 class McuError:
     text: str
 
 
-Message = Position | Environment | Version | McuError
+Message = Position | Environment | Version | Boot | McuError
 
 
 def parse(line: bytes | str) -> Message | None:
@@ -72,6 +79,8 @@ def parse(line: bytes | str) -> Message | None:
             return Environment(float(args[0]), float(args[1]), float(args[2]))
         if kind == "VER" and len(args) == 2:
             return Version(*args)
+        if kind == "BOOT" and len(args) == 2:
+            return Boot(*args)
         if kind == "ERR":
             return McuError(" ".join(args))
     except ValueError:

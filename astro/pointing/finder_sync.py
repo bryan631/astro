@@ -113,6 +113,8 @@ class FinderSync:
         self.encoders, self.site, self.clock = encoders, site, clock
         self.synced = False
         self.last_rms: float | None = None  # arcmin, mount model fit after the latest sync
+        # Seconds since the encoders last reported (None if not tracked, e.g. simulators).
+        self.encoder_age: Callable[[], float] | None = None
         # Exposure gate (spoken reason or None); the session installs its exposure_safety.
         self.safety: Callable[[], str | None] | None = None
 

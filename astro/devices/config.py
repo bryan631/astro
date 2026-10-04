@@ -78,8 +78,12 @@ def build_pointing(cfg: dict, solver: FinderSolver, site: Site, clock: Callable[
         az_counts, alt_counts = mcu.counts()
         return alt.to_degrees(alt_counts), az.to_degrees(az_counts)
 
+    finder = FinderSync(finder_cam, solver, MountModel(), encoders, site, clock)
+    finder.encoder_age = mcu.position_age  # session stops guiding on frozen counts
+    mcu.on_reboot = lambda: finder.reset(finder.site)  # counts reset: the old model is wrong
+
     def close_mcu() -> None:
         mcu.close()
         finder_cam.close()
 
-    return FinderSync(finder_cam, solver, MountModel(), encoders, site, clock), close_mcu
+    return finder, close_mcu

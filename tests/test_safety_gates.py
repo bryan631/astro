@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 import numpy as np
 
+from astro.guidance.engine import Guide
 from astro.planner.horizon import HorizonMask
 from astro.pointing.coords import Site, body_altaz
 from astro.pointing.finder_sync import FinderSync
@@ -110,3 +111,20 @@ def test_fresh_solve_does_not_bypass_the_gate():
     tracker.safety = lambda: "it's daytime"
     ok, msg = tracker.sync()
     assert not ok and "daytime" in msg
+
+
+def test_guidance_stops_on_frozen_encoders_and_lost_alignment():
+    for broken in ("stale", "reset"):
+        cam = CountingCamera()
+        finder = FinderSync(cam, solver=None, model=MountModel(), encoders=lambda: (45.0, 0.0),
+                            site=WPB, clock=lambda: NIGHT)
+        finder.synced = True
+        s = Session(WPB, clock=lambda: NIGHT, finder=finder)
+        s.target, s.guide = "Saturn", Guide(40, 120)
+        if broken == "stale":
+            finder.encoder_age = lambda: 5.0
+        else:
+            finder.reset(WPB)
+        said = texts(s.tick(0.0))[0]
+        assert s.guide is None and s.target == "Saturn"
+        assert ("position sensors" if broken == "stale" else "lost track") in said
