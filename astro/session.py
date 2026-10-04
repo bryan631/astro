@@ -14,6 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
+from astro import calibration_store
 from astro.capture.focus import FocusCoach, laplacian_variance
 from astro.capture.live_stacker import LiveStacker
 from astro.capture.recorder import CaptureRefused, Recorder
@@ -28,6 +29,7 @@ from astro.planner.tonight import PLANET_NOTES, PLANETS, next_dark, plan
 from astro.pointing.coords import Site, body_altaz, radec_to_altaz
 from astro.pointing.finder_sync import FinderSync, check_focus
 from astro.pointing.geometry import separation_deg
+from astro.pointing.main_offset import MainOffset
 from astro.pointing.platesolve import finder_gray
 from astro.process.planet import StackResult, process_ser
 from astro.safety import DAYTIME_SUN_ALT_DEG, SafetyResult, check_target
@@ -64,7 +66,9 @@ class Session:
                  on_site_change: Callable[[Site], None] | None = None,
                  horizon: HorizonMask | None = None,
                  on_horizon_change: Callable[[HorizonMask], None] | None = None,
-                 weather: Callable[[float, float, datetime], float | None] | None = None):
+                 weather: Callable[[float, float, datetime], float | None] | None = None,
+                 calibration: dict | None = None,
+                 on_calibration_change: Callable[[dict], None] | None = None):
         """Pointing comes from `finder` (encoders + mount model + plate solving), or, for
         tests without a finder, from `position()` returning true (alt, az)."""
         self.site, self.clock, self.finder = site, clock, finder
@@ -119,6 +123,11 @@ class Session:
         self._direction_learner = DirectionLearner()
         self._direction_known = False
         self._direction_probe: tuple[str, float, float] | None = None  # (word, az, t)
+        self.on_calibration_change = None  # set after restoring, so restoring doesn't save
+        self._restore_calibration(calibration or {})
+        self.on_calibration_change = on_calibration_change
+        if finder is not None:
+            finder.on_change = self._save_calibration
         self._center_limiter = CueLimiter()  # centering cues obey the guide's pacing
         # Commands and the guidance tick run on worker threads (camera calls block), so
         # serialize them: one camera capture or state change at a time.
@@ -445,6 +454,49 @@ class Session:
             return "I lost track of where the telescope points. Say 'sync' and let me look again."
         return None
 
+    # --- calibration that survives a restart (CV7) ----------------------------------------
+    def calibration(self) -> dict:
+        """What's worth keeping: left/right, main-camera axes and offset, the mount model."""
+        axes, offset = self.centerer.axes, self.centerer.offset
+        data = {
+            "right_is_plus_az": self.right_is_plus_az if self._direction_known else None,
+            "camera_axes": axes.matrix.tolist() if axes.matrix is not None else None,
+            "main_offset": ({"d_az_sky_deg": offset.d_az_sky_deg, "d_alt_deg": offset.d_alt_deg,
+                             "observations": offset.observations}
+                            if offset.observations else None),
+            "mount": None,
+        }
+        model = getattr(self.finder, "model", None)
+        if model is not None and self.finder.synced:
+            data["mount"] = {"site": [self.site.lat_deg, self.site.lon_deg],
+                             **calibration_store.model_to_dict(model)}
+        return data
+
+    def _save_calibration(self) -> None:
+        if self.on_calibration_change:
+            self.on_calibration_change(self.calibration())
+
+    def _restore_calibration(self, data: dict) -> None:
+        if data.get("right_is_plus_az") is not None:
+            self.right_is_plus_az, self._direction_known = data["right_is_plus_az"], True
+        if data.get("camera_axes") is not None:
+            self.centerer.axes.matrix = np.array(data["camera_axes"])
+        if data.get("main_offset"):
+            o = data["main_offset"]
+            self.centerer.offset = MainOffset(o["d_az_sky_deg"], o["d_alt_deg"], o["observations"])
+        mount = data.get("mount")
+        if mount and self.finder is not None and hasattr(self.finder, "model"):
+            boots = getattr(self.finder, "encoder_boots", None)
+            if boots is not None and boots() > 0:
+                return  # the encoder board booted: its counts are 0, the saved model is stale
+            lat, lon = mount["site"]
+            km = np.radians(separation_deg(lat, lon, self.site.lat_deg, self.site.lon_deg)) \
+                * EARTH_RADIUS_KM
+            if km <= SITE_MOVE_KM:  # same place, same encoder counts: no re-sync needed
+                self.finder.model = calibration_store.model_from_dict(mount)
+                self.finder.synced = True
+                self._model_site = replace(self.site, lat_deg=lat, lon_deg=lon)  # its origin
+
     def _learn_direction(self, az: float, t: float) -> list[dict]:
         """G3: after the first left/right cue, the first clear azimuth move (within
         DIRECTION_PROBE_S) shows the user's sense of left and right; adopt it once."""
@@ -458,10 +510,12 @@ class Session:
             return []
         self._direction_known, self._direction_probe = True, None
         if learned == self.right_is_plus_az:
+            self._save_calibration()
             return []
         self.right_is_plus_az = learned
         if self.guide is not None:
             self.guide.right_is_plus_az = learned
+        self._save_calibration()
         return [say("Got it, I'll use your left and right from now on.")]
 
     def _start_direction_probe(self, spoken: str, az: float, t: float) -> None:
@@ -504,6 +558,7 @@ class Session:
                           right_is_plus_az=self.right_is_plus_az)
         elif step.done:
             self._centering = False
+            self._save_calibration()  # camera axes and finder-to-main offset are learned now
         urgent = step.done or step.lost or step.say == CALIBRATED
         spoken = self._center_limiter.speak(step.say, t, urgent) if step.say else None
         return [say(spoken)] if spoken else []

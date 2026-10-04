@@ -39,8 +39,8 @@ class Mcu:
         self.errors: list[str] = []
         self.heat = 0
         self._last_pos = self._last_env = time.monotonic()  # start the staleness clocks now
-        self._seen_position = False  # a BOOT after positions means the board restarted
         self.on_reboot: Callable[[], None] | None = None  # e.g. invalidate the mount model
+        self.boots = 0  # BOOT lines seen, latched: a boot before anyone listened still counts
         self._stop = threading.Event()
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._pinger = threading.Thread(target=self._ping_loop, daemon=True)
@@ -81,16 +81,16 @@ class Mcu:
         """Apply one parsed message (called by the reader thread; public for tests)."""
         if isinstance(msg, proto.Position):
             self.position, self._last_pos = msg, time.monotonic()
-            self._seen_position = True
         elif isinstance(msg, proto.Environment):
             self.environment, self._last_env = msg, time.monotonic()
             self._set_heat(heater_percent(msg))
         elif isinstance(msg, proto.Version):
             self.version = msg
         elif isinstance(msg, proto.Boot):
-            # Restarted mid-session (watchdog or power): the counts are back to 0, so any mount
-            # model built on the old counts is wrong. A BOOT before any POS is just start-up.
-            if self._seen_position and self.on_reboot:
+            self.boots += 1
+            # The board (re)started, so its counts are 0: any mount model built on earlier
+            # counts is wrong, including one restored from disk at start-up (CV7).
+            if self.on_reboot:
                 self.on_reboot()
         elif isinstance(msg, proto.McuError):
             self.errors = [*self.errors[-9:], msg.text]
