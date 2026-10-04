@@ -142,3 +142,20 @@ def test_unknown_main_driver_rejected_before_hardware():
     with pytest.raises(ValueError, match="main camera driver"):
         devices.validate({"finder": {"driver": "svbony"}, "main": {"driver": "webcam"},
                           "mount": {"driver": "solve"}})
+
+
+def test_failing_tick_does_not_end_guidance(monkeypatch):
+    session, _ = server.build_session()
+    calls = {"n": 0}
+
+    def flaky_tick(t):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("camera glitch")
+        return [{"type": "say", "text": "still guiding"}]
+
+    monkeypatch.setattr(session, "tick", flaky_tick)
+    monkeypatch.setattr(server, "build_session", lambda: (session, None))
+    with TestClient(server.app).websocket_connect("/ws") as ws:
+        assert "still guiding" in receive_until(ws, "say")
+    assert calls["n"] >= 2
