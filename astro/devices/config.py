@@ -83,6 +83,7 @@ def build_pointing(cfg: dict, solver: FinderSolver, site: Site, clock: Callable[
     finder.encoder_age = source.position_age  # session stops guiding on frozen counts
     if hasattr(source, "on_reboot"):
         source.on_reboot = lambda: finder.reset(finder.site)  # counts reset: model is wrong
+        finder.encoder_boots = lambda: source.boots  # restore no saved model after a boot
 
     def close_encoders() -> None:
         source.close()

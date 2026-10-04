@@ -40,6 +40,7 @@ class Mcu:
         self.heat = 0
         self._last_pos = self._last_env = time.monotonic()  # start the staleness clocks now
         self.on_reboot: Callable[[], None] | None = None  # e.g. invalidate the mount model
+        self.boots = 0  # BOOT lines seen, latched: a boot before anyone listened still counts
         self._stop = threading.Event()
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._pinger = threading.Thread(target=self._ping_loop, daemon=True)
@@ -86,6 +87,7 @@ class Mcu:
         elif isinstance(msg, proto.Version):
             self.version = msg
         elif isinstance(msg, proto.Boot):
+            self.boots += 1
             # The board (re)started, so its counts are 0: any mount model built on earlier
             # counts is wrong, including one restored from disk at start-up (CV7).
             if self.on_reboot:

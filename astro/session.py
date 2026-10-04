@@ -486,12 +486,16 @@ class Session:
             self.centerer.offset = MainOffset(o["d_az_sky_deg"], o["d_alt_deg"], o["observations"])
         mount = data.get("mount")
         if mount and self.finder is not None and hasattr(self.finder, "model"):
+            boots = getattr(self.finder, "encoder_boots", None)
+            if boots is not None and boots() > 0:
+                return  # the encoder board booted: its counts are 0, the saved model is stale
             lat, lon = mount["site"]
             km = np.radians(separation_deg(lat, lon, self.site.lat_deg, self.site.lon_deg)) \
                 * EARTH_RADIUS_KM
             if km <= SITE_MOVE_KM:  # same place, same encoder counts: no re-sync needed
                 self.finder.model = calibration_store.model_from_dict(mount)
                 self.finder.synced = True
+                self._model_site = replace(self.site, lat_deg=lat, lon_deg=lon)  # its origin
 
     def _learn_direction(self, az: float, t: float) -> list[dict]:
         """G3: after the first left/right cue, the first clear azimuth move (within

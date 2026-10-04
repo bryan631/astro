@@ -114,6 +114,8 @@ class FinderSync:
         self.synced = False
         self.last_rms: float | None = None  # arcmin, mount model fit after the latest sync
         self.on_change: Callable[[], None] | None = None  # model changed: persist calibration
+        # How many times the encoder board has booted since we connected (None: not tracked).
+        self.encoder_boots: Callable[[], int] | None = None
         # Seconds since the encoders last reported (None if not tracked, e.g. simulators).
         self.encoder_age: Callable[[], float] | None = None
         # Exposure gate (spoken reason or None); the session installs its exposure_safety.
