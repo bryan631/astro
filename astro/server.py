@@ -13,6 +13,7 @@ from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
+from astro.agent import Agent
 from astro.devices.sim.scope import SimScope, SimUser
 from astro.pointing.coords import Site
 from astro.session import Session
@@ -20,6 +21,18 @@ from astro.session import Session
 ROOT = Path(__file__).resolve().parents[1]
 SIM = os.environ.get("ASTRO_SIM") == "1"
 TICK_S = 0.1
+
+
+def load_env(path: Path = ROOT / ".env") -> None:
+    """Minimal .env loader (KEY=value lines) for secrets like ANTHROPIC_API_KEY."""
+    if path.exists():
+        for line in path.read_text().splitlines():
+            key, sep, value = line.partition("=")
+            if sep and not key.startswith("#"):
+                os.environ.setdefault(key.strip(), value.strip().strip('"'))
+
+
+load_env()
 
 
 def load_site() -> Site:
@@ -43,6 +56,7 @@ app = FastAPI()
 async def ws(socket: WebSocket) -> None:
     await socket.accept()
     session, scope = build_session()
+    agent = Agent(session)
     user = SimUser() if scope else None
     t0 = time.monotonic()
 
@@ -62,7 +76,7 @@ async def ws(socket: WebSocket) -> None:
         while True:
             msg = await socket.receive_json()
             if msg.get("type") == "text":
-                for out in await asyncio.to_thread(session.handle, msg["text"]):
+                for out in await asyncio.to_thread(agent.handle, msg["text"]):
                     await socket.send_json(out)
     except WebSocketDisconnect:
         pass
