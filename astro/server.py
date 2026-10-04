@@ -22,6 +22,7 @@ from astro.devices import config as devices
 from astro.devices.sim.finder import SimFinderCamera
 from astro.devices.sim.main_cam import SimMainCamera
 from astro.devices.sim.scope import SimEncoders, SimScope, SimUser
+from astro.guidance.centering import centering_phrases
 from astro.guidance.engine import cue_phrases
 from astro.planner import horizon_store
 from astro.planner.weather import cloud_cover_pct
@@ -123,7 +124,8 @@ stt, tts = Stt(), Tts()
 def warm_speech() -> None:
     """Load Piper and pre-render the guidance cues in the background: "stop" must be instant."""
     if tts.available():
-        threading.Thread(target=tts.warm, args=(cue_phrases(),), daemon=True).start()
+        phrases = cue_phrases() + centering_phrases()
+        threading.Thread(target=tts.warm, args=(phrases,), daemon=True).start()
 
 
 class Hub:

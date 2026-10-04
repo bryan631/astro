@@ -56,7 +56,8 @@ def build_pointing(cfg: dict, solver: FinderSolver, site: Site, clock: Callable[
     mount = cfg["mount"]
     finder_cam = open_camera(cfg["finder"])
     if mount["driver"] == "solve":
-        tracker = SolveTracker(finder_cam, solver, site, clock).start()
+        # Not started here: the session installs its exposure gate first, then starts it.
+        tracker = SolveTracker(finder_cam, solver, site, clock)
 
         def close_tracker() -> None:
             tracker.stop()
