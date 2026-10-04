@@ -6,6 +6,7 @@ messages for the tablet: {"type": "say", "text": ...} and {"type": "state", ...}
 
 import threading
 from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,6 +23,7 @@ from astro.pointing.coords import Site, body_altaz, radec_to_altaz
 from astro.pointing.finder_sync import FinderSync, check_focus
 from astro.pointing.geometry import separation_deg
 from astro.pointing.platesolve import finder_gray
+from astro.process.planet import StackResult, process_ser
 from astro.safety import DAYTIME_SUN_ALT_DEG, check_target
 
 Clock = Callable[[], datetime]
@@ -63,6 +65,9 @@ class Session:
         self.recorder = (Recorder(main_camera, main_sensor, data_dir / "captures",
                                   self.exposure_safety) if main_camera else None)
         self._announced_done = True
+        self.gallery_dir = data_dir / "gallery"
+        self._processor = ThreadPoolExecutor(max_workers=1)  # one stacking job at a time
+        self._processing: tuple[str, Future[StackResult]] | None = None
         self._focus_at = -1e9
         # Commands and the guidance tick run on worker threads (camera calls block), so
         # serialize them: one camera capture or state change at a time.
@@ -223,7 +228,11 @@ class Session:
             self._announced_done = True
             if rec.error:
                 return [say(f"{rec.error} I saved {rec.frames} frames.")]
-            return [say(f"Done. I saved {rec.frames} frames.")]
+            name = self.target or "your target"
+            self._processing = (name, self._processor.submit(process_ser, rec.path, self.gallery_dir))
+            return [say(f"Done. I saved {rec.frames} frames. I'm making your picture now.")]
+        if self._processing is not None and self._processing[1].done():
+            return self._announce_picture()
         if self._focus_coach is not None:
             if self._focus_mode == "main":
                 return self._main_focus_step(t)
@@ -285,6 +294,16 @@ class Session:
             score = 1 / max(report.hfr_px, MIN_HFR_PX)
         cue = self._focus_coach.update(score)
         return [say(cue)] if cue else []
+
+    def _announce_picture(self) -> list[dict]:
+        name, job = self._processing
+        self._processing = None
+        try:
+            result = job.result()
+        except (ValueError, OSError) as e:
+            return [say(f"I couldn't make the picture of {name}: {e}")]
+        return [say(f"Your picture of {name} is ready. Tap Pictures to see it."),
+                {"type": "picture", "file": result.path.name}]
 
     def _camera_failed(self, which: str, error: Exception) -> list[dict]:
         """A camera failed even after the driver's retry: stop focusing and say so."""

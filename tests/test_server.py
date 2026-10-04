@@ -56,3 +56,9 @@ def test_server_speech_roundtrip(monkeypatch):
         ws.send_bytes(b"AUDIO")
         assert "go to pizza" in receive_until(ws, "heard")
         assert receive_until(ws, "bytes") == b"WAV:I don't know pizza."
+
+
+def test_gallery_lists_pictures(monkeypatch, tmp_path):
+    (tmp_path / "a.png").write_bytes(b"png")
+    monkeypatch.setattr(server, "GALLERY", tmp_path)
+    assert TestClient(server.app).get("/gallery").json() == ["a.png"]

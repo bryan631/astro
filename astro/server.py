@@ -124,4 +124,16 @@ async def ws(socket: WebSocket) -> None:
         loop.cancel()
 
 
+GALLERY = ROOT / "data" / "gallery"
+
+
+@app.get("/gallery")
+def gallery() -> list[str]:
+    """Processed pictures, newest first."""
+    files = sorted(GALLERY.glob("*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return [p.name for p in files]
+
+
+GALLERY.mkdir(parents=True, exist_ok=True)
+app.mount("/pictures", StaticFiles(directory=GALLERY), name="pictures")
 app.mount("/", StaticFiles(directory=ROOT / "web", html=True), name="web")

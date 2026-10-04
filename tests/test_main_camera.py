@@ -247,3 +247,19 @@ def test_refocus_clears_gate_and_blocks_capture_until_done(tmp_path):
     assert not s.main_focus_ok
     assert texts(s.handle("take a picture")) == ["Let's finish focusing first. Say done when it's sharpest."]
     assert s.recorder.current is None
+
+
+def test_recording_becomes_a_gallery_picture(tmp_path):
+    s, _ = make_session(tmp_path)
+    s.main_focus_ok, s.record_seconds = True, 0.5
+    s.handle("take a picture")
+    s.recorder.current.done.wait(5)
+    assert "making your picture" in texts(s.tick(100.0))[0]
+    out = []
+    for i in range(100):
+        out = s.tick(101.0 + i)
+        if out:
+            break
+        time.sleep(0.05)
+    assert texts(out) == ["Your picture of Saturn is ready. Tap Pictures to see it."]
+    assert (tmp_path / "gallery" / out[1]["file"]).exists()
