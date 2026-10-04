@@ -66,9 +66,13 @@ def build_pointing(cfg: dict, solver: FinderSolver, site: Site, clock: Callable[
         return tracker, close_tracker
     from astro.devices.mcu import Mcu  # mcu
 
+    mcu = None
     try:
-        mcu = Mcu(mount.get("port") or None).start()
-    except Exception:
+        mcu = Mcu(mount.get("port") or None)
+        mcu.start()
+    except Exception:  # close whatever opened: the serial port and its workers, the camera
+        if mcu is not None:
+            mcu.close()
         finder_cam.close()
         raise
     az = EncoderAxis(mount.get("counts_per_rev", 9216), mount.get("az_sign", 1))

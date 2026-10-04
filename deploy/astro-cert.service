@@ -5,4 +5,3 @@ Description=Renew astro Tailscale HTTPS cert
 Type=oneshot
 WorkingDirectory=/home/astro/astro
 ExecStart=/home/astro/astro/scripts/tailscale-cert.sh
-ExecStartPost=+/bin/systemctl restart astro

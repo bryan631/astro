@@ -1,4 +1,5 @@
-from datetime import datetime, timedelta, timezone
+import re
+from datetime import UTC, datetime, timedelta, timezone
 
 from astro.devices.sim.scope import SimScope, SimUser
 from astro.pointing.coords import Site
@@ -20,7 +21,7 @@ def texts(msgs):
 
 def test_tonight_then_next():
     s, _ = make()
-    assert "best right now" in texts(s.handle("what's good tonight?"))[0]
+    assert "is the best" in texts(s.handle("what's good tonight?"))[0]
     assert texts(s.handle("next"))[0].startswith("Let's find")
 
 
@@ -59,3 +60,36 @@ def test_where_reports_nearest():
     s, scope = make()
     scope.alt, scope.az = s.altaz_of("Albireo")
     assert texts(s.where()) == ["You're on Albireo."]
+
+
+def test_tonight_asked_in_the_afternoon_plans_the_night_in_local_time():
+    """Review H9: asked at 4 PM it used to say "Nothing good is up right now"."""
+    afternoon = datetime(2026, 10, 3, 16, 0, tzinfo=timezone(timedelta(hours=-4)))
+    s, _ = make(afternoon)
+    said = texts(s.handle("what's good tonight?"))[0]
+    assert re.match(r"It's still light out\. Once it's dark, around [78]:\d\d PM: ", said)
+    assert "is the best" in said
+
+
+def test_agent_list_uses_local_times():
+    s, _ = make(datetime(2026, 10, 4, 0, 30, tzinfo=UTC))  # 8:30 PM EDT
+    lines = s.tonight_by_category().splitlines()
+    assert all("PM" in line or "AM" in line for line in lines if "best around" in line)
+
+
+def test_timezone_lookup_uses_exact_coordinates(monkeypatch):
+    """Rounding could move a site near a time-zone border into the neighboring zone."""
+    from astro.pointing import coords
+
+    seen = []
+
+    class Finder:
+        def timezone_at(self, lat, lng):
+            seen.append((lat, lng))
+            return "America/New_York"
+
+    monkeypatch.setattr(coords, "_timezone_finder", lambda: Finder())
+    coords._zone_at.cache_clear()
+    assert str(Site(26.712345, -80.054321).timezone) == "America/New_York"
+    assert seen == [(26.712345, -80.054321)]
+    coords._zone_at.cache_clear()

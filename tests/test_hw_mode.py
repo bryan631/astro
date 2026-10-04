@@ -67,3 +67,32 @@ def test_unknown_drivers_rejected(solver):
     with pytest.raises(ValueError, match="mount driver"):
         devices.build_pointing({"finder": {"driver": "svbony", "model": "X"},
                                 "mount": {"driver": "telepathy"}}, solver, WPB, lambda: NOW)
+
+
+def test_failed_mcu_start_closes_port_and_camera(monkeypatch):
+    from astro.devices import config as devices_config
+    from astro.devices import mcu as mcu_module
+
+    closed = []
+
+    class Cam:
+        def close(self):
+            closed.append("camera")
+
+    class BrokenMcu:
+        def __init__(self, port):
+            pass
+
+        def start(self):
+            raise OSError("serial write failed")
+
+        def close(self):
+            closed.append("mcu")
+
+    monkeypatch.setattr(devices_config, "open_camera", lambda cfg: Cam())
+    monkeypatch.setattr(mcu_module, "Mcu", BrokenMcu)
+    cfg = {"finder": {"driver": "svbony", "model": "X"}, "main": {"driver": "none"},
+           "mount": {"driver": "mcu"}}
+    with pytest.raises(OSError):
+        devices_config.build_pointing(cfg, None, WPB, lambda: NOW)
+    assert closed == ["mcu", "camera"]

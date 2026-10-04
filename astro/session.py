@@ -9,7 +9,7 @@ import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -24,7 +24,7 @@ from astro.guidance.engine import CueLimiter, Guide
 from astro.intents import Intent, match_name, parse
 from astro.planner.catalog import load_targets
 from astro.planner.horizon import HorizonMask
-from astro.planner.tonight import PLANETS, plan
+from astro.planner.tonight import PLANETS, next_dark, plan
 from astro.pointing.coords import Site, body_altaz, radec_to_altaz
 from astro.pointing.finder_sync import FinderSync, check_focus
 from astro.pointing.geometry import separation_deg
@@ -46,6 +46,7 @@ FOCUS_CROP_PX = 256  # sharpness measured on a crop around the planet
 MIN_HORIZON_MARKS = 3
 SITE_MOVE_KM = 1.0  # moving farther than this from the model's site invalidates the mount model
 CLOUD_CACHE_S = 15 * 60  # Open-Meteo is hourly; don't ask on every request
+LATER_MIN = 30  # "tonight" more than this far ahead: say when it gets dark
 CLOUDY_PCT = 50  # at or above this cloud cover, tonight's suggestions mention the clouds
 EARTH_RADIUS_KM = 6371.0
 
@@ -71,10 +72,12 @@ class Session:
         self.on_horizon_change = on_horizon_change
         self._horizon: list[tuple[float, float]] | None = None  # points during a horizon walk
         self.wizard: SetupWizard | None = None  # first-time setup at a location
+        self._location_request = 0  # id of the GPS request whose answer we'd accept
         self._model_site = site  # site the current mount model was built for
         self.weather = weather  # (lat, lon, when) -> cloud % or None offline; None = no forecast
         self._clouds: float | None = None
         self._clouds_at = -1e9
+        self._clouds_lock = threading.Lock()
         self._clouds_site: tuple[float, float] | None = None
         self.position = finder.position if finder else position
         if finder is not None:
@@ -127,6 +130,9 @@ class Session:
 
     # --- commands ------------------------------------------------------------------------
     def handle(self, text: str) -> list[dict]:
+        intent = parse(text)
+        if intent is not None and intent.name == "tonight":
+            return self.tonight()  # planning is slow and read-only: keep it off the lock
         with self._lock:
             return self._handle(text)
 
@@ -236,25 +242,33 @@ class Session:
             return [say("Let's make sure it's sharp first."), *self.start_main_focus()]
         if self._camera_busy():
             return [say("I'm already recording." if self.recorder.busy else "I'm already stacking.")]
-        self._centering = False  # the picture takes over the camera
         name = self.target or "capture"
         try:
             if self.target is None or self.target in self._extended_targets():
                 self.recorder.start(name, self.record_seconds)
+                self._picture_started()
                 self._announced_done = False
                 return [say(f"Recording for {self.record_seconds:g} seconds. "
                             "Try not to touch the telescope.")]
             self.stacker.start(name, self.stack_seconds)  # deep-sky: live stack short subs
         except CaptureRefused as e:
-            return [say(str(e))]
+            return [say(str(e))]  # nothing started: guidance carries on as before
+        self._picture_started()
         self._stack_done_announced, self._preview_seen = False, 0
         return [say(f"Stacking short pictures of {name}. Watch it build up on the screen. "
                     "Try not to touch the telescope.")]
+
+    def _picture_started(self) -> None:
+        """The picture has the camera: guidance goes quiet (no "right a little" while the user
+        was asked not to touch the telescope). The target is kept."""
+        self._centering, self.guide = False, None
 
     def _camera_busy(self) -> bool:
         return any(job is not None and job.busy for job in (self.recorder, self.stacker))
 
     def goto(self, name: str) -> list[dict]:
+        if self._camera_busy():
+            return [say("I'm taking a picture. Say stop first, then we can move.")]
         pre: list[dict] = []
         if self.finder is not None and not self.finder.synced:
             ok, msg = self.finder.sync()  # need to know where we point before guiding
@@ -270,37 +284,52 @@ class Session:
         self.target, self.guide, self._focus_coach = name, guide, None
         return [*pre, say(f"Let's find {name}.")]
 
-    def clouds(self) -> float | None:
-        """Cloud cover now (%), from Open-Meteo; None offline (cached for a while)."""
-        now, here = time.monotonic(), (self.site.lat_deg, self.site.lon_deg)
-        stale = now - self._clouds_at > CLOUD_CACHE_S or here != self._clouds_site
-        if self.weather is not None and stale:  # cache per place: a GPS move refetches
-            self._clouds_at, self._clouds_site = now, here
-            self._clouds = self.weather(*here, self.clock())
-        return self._clouds
+    def clouds(self, site: Site | None = None) -> float | None:
+        """Cloud cover now (%) at `site`, from Open-Meteo; None offline. Cached per place; its
+        own lock (not the session's) so a slow fetch never stalls guidance."""
+        site = site or self.site
+        here = (site.lat_deg, site.lon_deg)
+        with self._clouds_lock:
+            stale = time.monotonic() - self._clouds_at > CLOUD_CACHE_S or here != self._clouds_site
+            if self.weather is not None and stale:  # a GPS move refetches
+                self._clouds = self.weather(*here, self.clock())
+                self._clouds_at, self._clouds_site = time.monotonic(), here
+            return self._clouds
+
+    def _plan(self) -> tuple[dict, datetime | None, float | None]:
+        """Tonight's choices from the next dark time, in local time (asked at 4 PM, this plans
+        the coming night). Runs outside the session lock: planning takes ~0.5 s of astropy."""
+        with self._lock:  # one consistent snapshot; the slow work below runs unlocked
+            site, horizon = self.site, self.horizon
+        now = self.clock().astimezone(site.timezone)
+        start = next_dark(site, now)
+        clouds = self.clouds(site)
+        if start is None:
+            return {}, None, clouds
+        return plan(site, start, mask=horizon, cloud_cover=clouds), start, clouds
 
     def tonight(self) -> list[dict]:
-        clouds = self.clouds()
-        choices = plan(self.site, self.clock(), mask=self.horizon,
-                       cloud_cover=clouds)
+        choices, start, clouds = self._plan()
         flat = sorted((c for cs in choices.values() for c in cs), key=lambda c: -c.score)
         if not flat:
             return [say("Nothing good is up right now.")]
-        self._suggestions = [c.name for c in flat[1:6]]
+        with self._lock:
+            self._suggestions = [c.name for c in flat[1:6]]
         best = flat[0]
         others = ", ".join(c.name for c in flat[1:3])
+        when = ""
+        if start is not None and start - self.clock() > timedelta(minutes=LATER_MIN):
+            when = f"It's still light out. Once it's dark, around {_clock(start)}: "
         sky = ""
         if clouds is not None and clouds >= CLOUDY_PCT:
             sky = f"It looks about {clouds:.0f} percent cloudy, so it may come and go. "
-        return [say(f"{sky}{best.name} is the best right now. {best.note} "
+        return [say(f"{when}{sky}{best.name} is the best. {best.note} "
                     f"Other good ones: {others}. Say 'go to' a name, or 'next'.")]
 
     def tonight_by_category(self) -> str:
-        """Compact text for the agent: best target per category."""
-        clouds = self.clouds()
-        choices = plan(self.site, self.clock(), mask=self.horizon,
-                       cloud_cover=clouds)
-        lines = [f"{cat}: {cs[0].name} (best around {cs[0].best_time:%H:%M}). {cs[0].note}"
+        """Compact text for the agent: best target per category, local times."""
+        choices, _, clouds = self._plan()
+        lines = [f"{cat}: {cs[0].name} (best around {_clock(cs[0].best_time)}). {cs[0].note}"
                  for cat, cs in choices.items()]
         if clouds is not None:
             lines.append(f"cloud cover: about {clouds:.0f}%")
@@ -522,7 +551,8 @@ class Session:
             if self.finder is None:
                 return [say("There's no finder camera, so I can't run setup.")]
             self.wizard = SetupWizard(self.request_location, self.finder.sync,
-                                      self.finder.alignment, self.start_horizon)
+                                      self.finder.alignment, self.start_horizon,
+                                      self.cancel_location)
             self.target, self.guide, self._centering, self._focus_coach = None, None, False, None
             return self.wizard.start()
         return self.wizard.ready() if name == "ready" else self.wizard.skip()
@@ -546,19 +576,29 @@ class Session:
         facts.append(f"{len(pictures)} pictures in the gallery")
         facts.append("treeline recorded" if self.horizon.points != HorizonMask().points
                      else "treeline not recorded (default 20 degrees)")
-        clouds = self.clouds()
+        clouds = self._clouds  # cached only: never fetch the forecast under the lock
         facts.append(f"cloud cover about {clouds:.0f}%" if clouds is not None
                      else "no weather forecast (offline)")
         return "; ".join(facts)
 
     def request_location(self) -> list[dict]:
-        """Ask the tablet for a GPS fix; it answers with a `location` message (see set_location)."""
+        """Ask the tablet for a GPS fix; it answers with a `location` message carrying the
+        same id (see set_location). A newer request or cancel_location() voids older ones."""
+        self._location_request += 1
         return [say("Let me ask the tablet where we are. Please allow location access."),
-                {"type": "get_location"}]
+                {"type": "get_location", "id": self._location_request}]
+
+    def cancel_location(self) -> None:
+        """Ignore the answer to the outstanding request (setup skipped it)."""
+        self._location_request += 1
 
     def set_location(self, lat: float, lon: float, elevation_m: float | None,
-                     accuracy_m: float | None) -> list[dict]:
-        """Use a GPS fix from the tablet. Moving resets pointing, so the next goto re-syncs."""
+                     accuracy_m: float | None, request_id: int | None = None) -> list[dict]:
+        """Use a GPS fix from the tablet. Moving resets pointing, so the next goto re-syncs.
+
+        A fix answering a cancelled or superseded request (`request_id`) is ignored."""
+        if request_id is not None and request_id != self._location_request:
+            return []
         if not (-90 <= lat <= 90 and -180 <= lon <= 180):
             return [say("That location doesn't look right, so I kept the old one.")]
         new = replace(self.site, lat_deg=lat, lon_deg=lon,
@@ -580,7 +620,19 @@ class Session:
         if self.on_site_change:
             self.on_site_change(new)
         near = f", accurate to about {accuracy_m:.0f} meters" if accuracy_m else ""
-        return [say(f"Got it, I know where we are{near}.")]
+        out = [say(f"Got it, I know where we are{near}.")]
+        if self.wizard_active:  # setup was waiting for this before the first sync
+            out += self.wizard.location_done()
+        return out
+
+    def location_failed(self, message: str, request_id: int | None = None) -> list[dict]:
+        """The tablet couldn't give a GPS fix: keep the saved site (setup moves on with it)."""
+        if request_id is not None and request_id != self._location_request:
+            return []  # answer to a request that was cancelled or superseded
+        out = [say(f"I couldn't get the tablet's location. {message} Using the saved location.")]
+        if self.wizard_active:
+            out += self.wizard.location_done()
+        return out
 
     def target_safety(self, alt: float, az: float) -> SafetyResult:
         """Sun, daytime and below-horizon checks, plus the local treeline (horizon mask)."""
@@ -608,6 +660,11 @@ class Session:
 
     def _extended_targets(self) -> set[str]:
         return {p.capitalize() for p in PLANETS} | {"Moon"}
+
+
+def _clock(t: datetime) -> str:
+    """Local wall-clock time as spoken: '9:15 PM'."""
+    return t.strftime("%I:%M %p").lstrip("0")
 
 
 def say(text: str) -> dict:
