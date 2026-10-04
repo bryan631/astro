@@ -103,3 +103,13 @@ def test_stop_nudge_back_on_target_says_stop_again():
             [(0, (44.0, 100.0)), (1.0, (44.99, 100.0)), (1.2, (44.99, 100.3)),
              (1.6, (44.99, 100.02))]]
     assert said[1].text == "stop" and said[3].text == "stop"
+
+
+def test_calibration_prompt_repeats_in_full():
+    from astro.guidance.engine import CueLimiter
+
+    limiter = CueLimiter()
+    assert limiter.speak("push left a tiny bit, then stop", 0.0) == "push left a tiny bit, then stop"
+    assert limiter.speak("push left a tiny bit, then stop", 5.0) == "push left a tiny bit, then stop"
+    assert limiter.speak("push left", 10.0) == "push left"
+    assert limiter.speak("push left", 15.0) == "keep going"

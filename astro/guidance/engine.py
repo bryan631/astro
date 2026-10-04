@@ -17,8 +17,9 @@ SLOW_DOWN_TIME_S = 1.0  # say "slower" if we'd reach the target within this time
 
 def _directional(text: str) -> bool:
     """Movement instructions, which may repeat as "keep going" (never "stop", "slower", ...)."""
-    return text.startswith("push ") or text.endswith((", getting closer", " a little")) \
-        and not text.startswith("passed it")
+    if text.startswith("passed it") or text.endswith("then stop"):  # must be heard in full
+        return False
+    return text.startswith("push ") or text.endswith((", getting closer", " a little"))
 
 
 def cue_phrases() -> list[str]:
