@@ -9,6 +9,7 @@ if not os.environ.get("ASTRO_REQUIRE_SOLVER"):
 from astro.devices.sim.sky import render
 from astro.pointing.geometry import separation_deg
 from astro.pointing.platesolve import FinderSolver, bin2x2
+from tests import frames
 
 
 @pytest.fixture(scope="module")
@@ -71,7 +72,7 @@ def test_solve_rate_on_finder_format_frames(solver):
 
 def test_real_finder_frame_solves(solver):
     """SV905C, 0.8 s gain 100, 2026-10-03 22:36 PDT; Saturn ~0.94 deg from center."""
-    raw = np.load(__import__("pathlib").Path(__file__).parent / "data" / "finder_saturn.npy")
+    raw = frames.load("saturn_field")
     sol = solver.solve(raw)
     assert sol is not None and sol.matches >= 8
     assert separation_deg(sol.dec_deg, sol.ra_deg, 2.112, 10.014) < 0.02
@@ -85,6 +86,6 @@ def test_confidence_is_minus_log10_false_prob():
 
 
 def test_real_frame_reports_pixel_scale(solver):
-    raw = np.load(__import__("pathlib").Path(__file__).parent / "data" / "finder_saturn.npy")
+    raw = frames.load("saturn_field")
     sol = solver.solve(raw)
     assert sol.scale_arcsec_px == pytest.approx(10.39 * 3600 / 1280, rel=0.01)  # ~29.2"/px
