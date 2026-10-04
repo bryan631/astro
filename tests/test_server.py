@@ -192,3 +192,20 @@ def test_failed_session_build_rolls_back_everything(monkeypatch, tmp_path):
         server.build_real_session()
     assert closed == ["pointing"] and server._hardware_closers == []
     server.build_real_session.cache_clear()
+
+
+def test_slow_answer_says_let_me_think(monkeypatch):
+    import time as _time
+
+    monkeypatch.setattr(server, "THINKING_AFTER_S", 0.1)
+    session, _ = server.build_session()
+    monkeypatch.setattr(server, "build_session", lambda: (session, None))
+    def slow(self, text):
+        _time.sleep(0.4)
+        return [{"type": "say", "text": "here you go"}]
+
+    monkeypatch.setattr(server.Agent, "handle", slow)
+    with TestClient(server.app).websocket_connect("/ws") as ws:
+        ws.send_json({"type": "text", "text": "tell me something"})
+        assert "Let me think." in receive_until(ws, "say")
+        assert "here you go" in receive_until(ws, "say")
