@@ -31,7 +31,7 @@ class Rig:
         return tuple(np.array(SIZE) / 2 + self.A @ local_delta(*self.aim(), *self.target))
 
     def obey(self, cue):
-        if not cue or "push" not in cue:
+        if not cue or not any(d in cue for d in ("left", "right", "up", "down")):
             return
         # Calibration "tiny bit" pushes are ~1-2 encoder counts; centering nudges are gentler.
         step = 0.05 if "tiny bit" in cue or "more" in cue else 0.02
@@ -73,7 +73,7 @@ def test_second_target_needs_no_calibration():
     centerer.restart(rig.target)
     rig.alt, rig.az = rig.target
     first = centerer.update((rig.alt, rig.az), rig.target_px())
-    assert first.say.startswith("push") and "tiny bit" not in first.say
+    assert first.say.endswith("a little") and "tiny bit" not in first.say  # no recalibration
 
 
 def test_lost_target_is_spoken():
@@ -98,3 +98,21 @@ def test_offset_exact_despite_finder_residual_and_wraparound():
         rig.obey(step.say)
     learned = (centerer.offset.d_az_sky_deg, centerer.offset.d_alt_deg)
     assert learned == (pytest.approx(0.07, abs=0.003), pytest.approx(-0.05, abs=0.003))
+
+
+def test_centering_phrases_cover_what_centering_says():
+    from astro.guidance.centering import centering_phrases
+    from astro.guidance.engine import cue_phrases
+
+    rig = Rig(73, False, aim_offset=(0.06, -0.04))
+    centerer = Centerer(SIZE)
+    centerer.restart(rig.target)
+    said = set()
+    for _ in range(200):
+        step = centerer.update((rig.alt, rig.az), rig.target_px())
+        said.add(step.say)
+        if step.done:
+            break
+        rig.obey(step.say)
+    said.add(centerer.update((40, 100), None).say)
+    assert said - {None} <= set(cue_phrases()) | set(centering_phrases())

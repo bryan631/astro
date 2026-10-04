@@ -115,3 +115,17 @@ def test_tonight_is_answered_offline_even_with_a_key():
     client = FakeClient([])
     out = Agent(session(), client=client).handle("what's good tonight")
     assert client.requests == [] and "is the best" in out[0]["text"]
+
+
+def test_goto_tool_matches_names_without_reparsing():
+    """Review M15: the tool's target is matched as a name, never re-parsed as a sentence."""
+    _, result = run_tool("goto", {"target": "what's good tonight"})
+    assert result == "I don't know what's good tonight."  # not the tonight listing
+    s, _ = run_tool("goto", {"target": "Messier 57"})
+    assert s.target == "M57" or s.target is None  # matched by name (may be refused if set)
+
+
+def test_next_step_stays_offline_with_a_key():
+    client = FakeClient([])
+    out = Agent(session(), client=client).handle("next step")
+    assert client.requests == [] and out[0]["text"] == "Ask me what's good tonight first."

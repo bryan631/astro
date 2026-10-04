@@ -19,20 +19,32 @@ def say(text: str) -> dict:
 class SetupWizard:
     def __init__(self, request_location: Callable[[], Reply], sync: Callable[[], tuple[bool, str]],
                  alignment: Callable[[], tuple[int, float | None]],
-                 start_horizon: Callable[[], Reply]):
+                 start_horizon: Callable[[], Reply], cancel_location: Callable[[], None]):
         self.request_location, self.sync = request_location, sync
         self.alignment, self.start_horizon = alignment, start_horizon
+        self.cancel_location = cancel_location
         self.syncs_done = 0
         self.step = "location"
         self.active = True
 
     def start(self) -> Reply:
-        """Ask for the location right away (the tablet answers by itself), then the first sync."""
-        self.step = "sync"
+        """Ask the tablet for the location; the first sync waits until it answers, because a
+        new location resets the mount model (and would wipe a sync made in the meantime)."""
+        self.step = "location"
         return [say("Let's set up the telescope here. First, the location."),
-                *self.request_location(), say(self._sync_prompt())]
+                *self.request_location()]
+
+    def location_done(self) -> Reply:
+        """The GPS fix (or a failure, keeping the saved site) arrived: on to the first sync."""
+        if self.step != "location":
+            return []
+        self.step = "sync"
+        return [say(self._sync_prompt())]
 
     def ready(self) -> Reply:
+        if self.step == "location":
+            return [say("I'm still waiting for the tablet's location. Say skip to use the "
+                        "saved one.")]
         if self.step == "sync":
             ok, msg = self.sync()
             if not ok:
@@ -45,6 +57,9 @@ class SetupWizard:
         return []
 
     def skip(self) -> Reply:
+        if self.step == "location":  # use the saved site; a late GPS answer must not reset syncs
+            self.cancel_location()
+            return self.location_done()
         if self.step == "sync":
             self.step = "horizon"
             return [say(self._horizon_prompt())]

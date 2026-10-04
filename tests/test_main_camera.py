@@ -329,3 +329,45 @@ def test_on_target_hands_over_to_main_camera_centering(tmp_path):
     assert "stop" in said and s._centering
     assert texts(s.tick(1.0)) == ["stop, it's centered"]  # sim main camera aims true
     assert not s._centering
+
+
+def test_centering_cues_are_paced_and_lost_target_returns_to_finder(tmp_path):
+    from astro.guidance.centering import Step
+    from astro.guidance.engine import Guide
+
+    s, _ = make_session(tmp_path)
+    alt, az = body_altaz("saturn", WPB, EVENING)
+    s.guide = Guide(alt + 0.2, az)
+    s.tick(0.0)  # finder says stop -> centering
+    s.centerer.update = lambda pos, px: Step("left a little")
+    said = [texts(s.tick(1.0 + 0.5 * i)) for i in range(6)]  # 3 s of 0.5 s centering steps
+    assert sum(1 for x in said if x) <= 2  # not every 0.5 s
+    s.centerer.update = lambda pos, px: Step("lost", lost=True)
+    s.tick(10.0)
+    assert not s._centering and s.guide is not None  # back to finder guidance
+
+
+def test_picture_silences_guidance_and_blocks_goto(tmp_path):
+    """Review H5: no guidance cues during a picture; goto refused while the camera is busy."""
+    from astro.guidance.engine import Guide
+
+    s, _ = make_session(tmp_path)
+    alt, az = body_altaz("saturn", WPB, EVENING)
+    s.guide = Guide(alt, az)
+    s.main_focus_ok, s.record_seconds = True, 2
+    s.handle("take a picture")
+    assert s.guide is None and s.target == "Saturn"
+    assert texts(s.handle("go to jupiter"))[0].startswith("I'm taking a picture")
+    s.recorder.stop()
+    s.recorder.current.done.wait(5)
+
+
+def test_refused_capture_keeps_guidance(tmp_path):
+    from astro.guidance.engine import Guide
+
+    s, cam = make_session(tmp_path)
+    s.guide, s.main_focus_ok = Guide(45, 100), True
+    cam.true_altaz = lambda: (80.0, 10.0)  # nothing bright: the recorder refuses
+    cam._stars = lambda alt, az, roi: 0.0
+    assert "don't see anything bright" in texts(s.handle("take a picture"))[0]
+    assert s.guide is not None

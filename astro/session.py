@@ -19,9 +19,9 @@ from astro.capture.live_stacker import LiveStacker
 from astro.capture.recorder import CaptureRefused, Recorder
 from astro.capture.roi import brightest_blob, roi_around
 from astro.devices.base import Camera
-from astro.guidance.centering import Centerer
-from astro.guidance.engine import Guide
-from astro.intents import match_name, parse
+from astro.guidance.centering import CALIBRATED, Centerer
+from astro.guidance.engine import CueLimiter, Guide
+from astro.intents import Intent, match_name, parse
 from astro.planner.catalog import load_targets
 from astro.planner.horizon import HorizonMask
 from astro.planner.tonight import PLANETS, next_dark, plan
@@ -30,7 +30,7 @@ from astro.pointing.finder_sync import FinderSync, check_focus
 from astro.pointing.geometry import separation_deg
 from astro.pointing.platesolve import finder_gray
 from astro.process.planet import StackResult, process_ser
-from astro.safety import DAYTIME_SUN_ALT_DEG, check_target
+from astro.safety import DAYTIME_SUN_ALT_DEG, SafetyResult, check_target
 from astro.wizard import SetupWizard
 
 Clock = Callable[[], datetime]
@@ -71,6 +71,7 @@ class Session:
         self.on_horizon_change = on_horizon_change
         self._horizon: list[tuple[float, float]] | None = None  # points during a horizon walk
         self.wizard: SetupWizard | None = None  # first-time setup at a location
+        self._location_request = 0  # id of the GPS request whose answer we'd accept
         self._model_site = site  # site the current mount model was built for
         self.weather = weather  # (lat, lon, when) -> cloud % or None offline; None = no forecast
         self._clouds: float | None = None
@@ -78,6 +79,10 @@ class Session:
         self._clouds_lock = threading.Lock()
         self._clouds_site: tuple[float, float] | None = None
         self.position = finder.position if finder else position
+        if finder is not None:
+            finder.safety = self.exposure_safety  # no finder exposure skips the Sun/daytime gate
+            if hasattr(finder, "start"):  # a background solver may only run once gated
+                finder.start()
         self.override = developer_override
         self.catalog = {t.name: t for t in load_targets()}
         for t in list(self.catalog.values()):
@@ -107,6 +112,7 @@ class Session:
         self.centerer = Centerer((main_sensor[0], main_sensor[1]))  # learns finder->main offset
         self._centering = False
         self._center_at = -1e9
+        self._center_limiter = CueLimiter()  # centering cues obey the guide's pacing
         # Commands and the guidance tick run on worker threads (camera calls block), so
         # serialize them: one camera capture or state change at a time.
         self._lock = threading.Lock()
@@ -129,10 +135,17 @@ class Session:
         with self._lock:
             return self._handle(text)
 
+    def goto_spoken(self, target: str) -> list[dict]:
+        """Go to a target named in free text (agent tool): matched by name, never re-parsed."""
+        with self._lock:
+            name = match_name(target, self.names())
+            return self.goto(name) if name else [say(f"I don't know {target}.")]
+
     def _handle(self, text: str) -> list[dict]:
         intent = parse(text)
         if intent is not None and intent.name in ("ready", "skip") and not self.wizard_active:
-            intent = None  # "okay" outside setup is just conversation
+            # Outside setup, "okay" is conversation, and "next step" just means "next".
+            intent = Intent("next") if "next" in text.lower() else None
         if intent is not None and intent.name in ("setup", "ready", "skip"):
             return self._wizard_command(intent.name)
         if intent is None:
@@ -228,25 +241,33 @@ class Session:
             return [say("Let's make sure it's sharp first."), *self.start_main_focus()]
         if self._camera_busy():
             return [say("I'm already recording." if self.recorder.busy else "I'm already stacking.")]
-        self._centering = False  # the picture takes over the camera
         name = self.target or "capture"
         try:
             if self.target is None or self.target in self._extended_targets():
                 self.recorder.start(name, self.record_seconds)
+                self._picture_started()
                 self._announced_done = False
                 return [say(f"Recording for {self.record_seconds:g} seconds. "
                             "Try not to touch the telescope.")]
             self.stacker.start(name, self.stack_seconds)  # deep-sky: live stack short subs
         except CaptureRefused as e:
-            return [say(str(e))]
+            return [say(str(e))]  # nothing started: guidance carries on as before
+        self._picture_started()
         self._stack_done_announced, self._preview_seen = False, 0
         return [say(f"Stacking short pictures of {name}. Watch it build up on the screen. "
                     "Try not to touch the telescope.")]
+
+    def _picture_started(self) -> None:
+        """The picture has the camera: guidance goes quiet (no "right a little" while the user
+        was asked not to touch the telescope). The target is kept."""
+        self._centering, self.guide = False, None
 
     def _camera_busy(self) -> bool:
         return any(job is not None and job.busy for job in (self.recorder, self.stacker))
 
     def goto(self, name: str) -> list[dict]:
+        if self._camera_busy():
+            return [say("I'm taking a picture. Say stop first, then we can move.")]
         pre: list[dict] = []
         if self.finder is not None and not self.finder.synced:
             ok, msg = self.finder.sync()  # need to know where we point before guiding
@@ -254,7 +275,7 @@ class Session:
                 return [say(f"Before we go, I need to see the stars. {msg}")]
             pre = [say(msg)]
         alt, az = self.altaz_of(name)
-        safe = check_target(alt, az, self.site, self.clock(), self.override)
+        safe = self.target_safety(alt, az)
         if not safe.ok:
             return [say(f"I can't go to {name}: it's {safe.reason}.")]
         guide = Guide(*self._aim(alt, az), tolerance_arcmin=TOLERANCE_ARCMIN[self.barlow])
@@ -360,7 +381,7 @@ class Session:
         if t - self._resolved_at >= TARGET_REFRESH_S:
             self._resolved_at = t
             alt, az = self.altaz_of(self.target)
-            if not check_target(alt, az, self.site, self.clock(), self.override).ok:
+            if not self.target_safety(alt, az).ok:
                 self.target, self.guide = None, None
                 return [say("Stopping: the target is no longer safe to point at.")]
             self.guide.target = self._aim(alt, az)
@@ -371,6 +392,7 @@ class Session:
             if cue.text == "stop" and state.on_target and self._should_center():
                 self._centering, self.guide = True, None  # finish with the main camera
                 self.centerer.restart(self.altaz_of(self.target))  # true, uncorrected target
+                self._center_limiter = CueLimiter()
         return out
 
     def _aim(self, alt: float, az: float) -> tuple[float, float]:
@@ -399,9 +421,15 @@ class Session:
             self._centering = False
             return [say(f"The main camera stopped responding. ({e})")]
         step = self.centerer.update(self.position(), brightest_blob(frame))
-        if step.done or step.say and step.say.startswith("I can't see it"):
+        if step.lost:  # back to finder guidance, as the words promise
             self._centering = False
-        return [say(step.say)] if step.say else []
+            alt, az = self.altaz_of(self.target)
+            self.guide = Guide(*self._aim(alt, az), tolerance_arcmin=TOLERANCE_ARCMIN[self.barlow])
+        elif step.done:
+            self._centering = False
+        urgent = step.done or step.lost or step.say == CALIBRATED
+        spoken = self._center_limiter.speak(step.say, t, urgent) if step.say else None
+        return [say(spoken)] if spoken else []
 
 
     def _finder_focus_step(self, t: float) -> list[dict]:
@@ -508,7 +536,8 @@ class Session:
             if self.finder is None:
                 return [say("There's no finder camera, so I can't run setup.")]
             self.wizard = SetupWizard(self.request_location, self.finder.sync,
-                                      self.finder.alignment, self.start_horizon)
+                                      self.finder.alignment, self.start_horizon,
+                                      self.cancel_location)
             self.target, self.guide, self._centering, self._focus_coach = None, None, False, None
             return self.wizard.start()
         return self.wizard.ready() if name == "ready" else self.wizard.skip()
@@ -538,13 +567,23 @@ class Session:
         return "; ".join(facts)
 
     def request_location(self) -> list[dict]:
-        """Ask the tablet for a GPS fix; it answers with a `location` message (see set_location)."""
+        """Ask the tablet for a GPS fix; it answers with a `location` message carrying the
+        same id (see set_location). A newer request or cancel_location() voids older ones."""
+        self._location_request += 1
         return [say("Let me ask the tablet where we are. Please allow location access."),
-                {"type": "get_location"}]
+                {"type": "get_location", "id": self._location_request}]
+
+    def cancel_location(self) -> None:
+        """Ignore the answer to the outstanding request (setup skipped it)."""
+        self._location_request += 1
 
     def set_location(self, lat: float, lon: float, elevation_m: float | None,
-                     accuracy_m: float | None) -> list[dict]:
-        """Use a GPS fix from the tablet. Moving resets pointing, so the next goto re-syncs."""
+                     accuracy_m: float | None, request_id: int | None = None) -> list[dict]:
+        """Use a GPS fix from the tablet. Moving resets pointing, so the next goto re-syncs.
+
+        A fix answering a cancelled or superseded request (`request_id`) is ignored."""
+        if request_id is not None and request_id != self._location_request:
+            return []
         if not (-90 <= lat <= 90 and -180 <= lon <= 180):
             return [say("That location doesn't look right, so I kept the old one.")]
         new = replace(self.site, lat_deg=lat, lon_deg=lon,
@@ -554,15 +593,38 @@ class Session:
         ref = self._model_site
         moved_km = np.radians(separation_deg(ref.lat_deg, ref.lon_deg, lat, lon)) * EARTH_RADIUS_KM
         self.site = new
-        if moved_km > SITE_MOVE_KM:
+        if moved_km > SITE_MOVE_KM:  # a new place: its pointing, treeline and plans don't apply
             self._model_site = new
             if self.finder is not None:
                 self.finder.reset(new)
-            self.target, self.guide = None, None
+            self.target, self.guide, self._centering, self._focus_coach = None, None, False, None
+            self._horizon, self._suggestions = None, []
+            self.horizon = HorizonMask()
+            if self.on_horizon_change:
+                self.on_horizon_change(self.horizon)
         if self.on_site_change:
             self.on_site_change(new)
         near = f", accurate to about {accuracy_m:.0f} meters" if accuracy_m else ""
-        return [say(f"Got it, I know where we are{near}.")]
+        out = [say(f"Got it, I know where we are{near}.")]
+        if self.wizard_active:  # setup was waiting for this before the first sync
+            out += self.wizard.location_done()
+        return out
+
+    def location_failed(self, message: str, request_id: int | None = None) -> list[dict]:
+        """The tablet couldn't give a GPS fix: keep the saved site (setup moves on with it)."""
+        if request_id is not None and request_id != self._location_request:
+            return []  # answer to a request that was cancelled or superseded
+        out = [say(f"I couldn't get the tablet's location. {message} Using the saved location.")]
+        if self.wizard_active:
+            out += self.wizard.location_done()
+        return out
+
+    def target_safety(self, alt: float, az: float) -> SafetyResult:
+        """Sun, daytime and below-horizon checks, plus the local treeline (horizon mask)."""
+        result = check_target(alt, az, self.site, self.clock(), self.override)
+        if result.ok and alt < float(self.horizon.min_alt(az)):
+            return SafetyResult(False, "behind the trees right now")
+        return result
 
     def exposure_safety(self) -> str | None:
         """Spoken reason why taking an exposure now is unsafe, else None (astro/safety.py)."""

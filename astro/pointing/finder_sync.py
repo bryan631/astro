@@ -113,6 +113,8 @@ class FinderSync:
         self.encoders, self.site, self.clock = encoders, site, clock
         self.synced = False
         self.last_rms: float | None = None  # arcmin, mount model fit after the latest sync
+        # Exposure gate (spoken reason or None); the session installs its exposure_safety.
+        self.safety: Callable[[], str | None] | None = None
 
     def alignment(self) -> tuple[int, float | None]:
         """(number of syncs, model RMS in arcmin or None) for the setup wizard."""
@@ -131,6 +133,8 @@ class FinderSync:
 
     def sync(self) -> tuple[bool, str]:
         """Solve the current finder view and refine the mount model. Returns (ok, message)."""
+        if self.safety and (reason := self.safety()):  # every finder exposure is gated (S2/S3)
+            return False, f"I can't look at the sky right now: {reason}."
         enc = self.encoders()  # read encoders at exposure time, not after the solve
         gray = finder_gray(self.camera.capture())
         focus = check_focus(gray)
