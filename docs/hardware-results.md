@@ -18,3 +18,9 @@ Scripts: `scripts/hwcheck/` (`enumerate.py`, `checklist.py`). SDK lives in `~/sd
 - **Stop/start on one open handle is flaky.** Re-starting video capture on the same open camera intermittently returned `SVB_ERROR_TIMEOUT` (11), once leading to a libusb assert crash at exit. Closing and reopening the camera between runs was reliable. Exposure must be set before `SVBStartVideoCapture`.
 - **The SDK's bundled `libusb-1.0.so*` files are empty.** Load the system `libusb-1.0.so.0` with `RTLD_GLOBAL` first.
 - Needs udev rule `90-ckusb.rules` (mode 0666) for non-root access.
+
+## Still open
+- **Finder focus:** peak not yet found; do a distant-object test with `scripts/hwcheck/viewer.py`.
+- **USB3 speed:** retest frame rates on the MeLE (container links at USB2).
+- **Restart timeout / viewer recovery:** retest on the MeLE; confirm the viewer reopens cleanly after a real SDK timeout.
+- **Arduino Nano Every:** not arrived; serial passthrough and blink test pending.
