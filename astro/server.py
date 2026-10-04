@@ -18,7 +18,7 @@ from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
-from astro import logs, site_store
+from astro import calibration_store, logs, site_store
 from astro.agent import Agent
 from astro.devices import config as devices
 from astro.devices.sim.finder import SimFinderCamera
@@ -76,7 +76,9 @@ def build_session() -> tuple[Session, SimScope | None]:
                       on_site_change=lambda s: on_site_change(s, camera, main),
                       horizon=horizon_store.load(ROOT),
                       on_horizon_change=lambda m: horizon_store.save(ROOT, m),
-                      weather=None if OFFLINE else cloud_cover_pct)
+                      weather=None if OFFLINE else cloud_cover_pct,
+                      calibration=calibration_store.load(ROOT),
+                      on_calibration_change=lambda d: calibration_store.save(ROOT, d))
     return session, scope
 
 
@@ -101,7 +103,9 @@ def build_real_session() -> Session:
                        data_dir=ROOT / "data", on_site_change=lambda s: site_store.save(ROOT, s),
                        horizon=horizon_store.load(ROOT),
                        on_horizon_change=lambda m: horizon_store.save(ROOT, m),
-                       weather=None if OFFLINE else cloud_cover_pct)
+                       weather=None if OFFLINE else cloud_cover_pct,
+                       calibration=calibration_store.load(ROOT),
+                       on_calibration_change=lambda d: calibration_store.save(ROOT, d))
     except Exception:
         close_hardware()  # roll back, so the next attempt doesn't find devices still owned
         raise
