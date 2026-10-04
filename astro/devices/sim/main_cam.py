@@ -11,7 +11,7 @@ import numpy as np
 from scipy import ndimage
 
 from astro.devices.base import Roi
-from astro.pointing.coords import Site, body_altaz
+from astro.pointing.coords import Site, altaz_to_radec, body_altaz, radec_to_altaz
 
 # Apparent diameter, arcsec (typical). Every body the planner can suggest must be here.
 BODIES = {"moon": 1870, "mercury": 7, "venus": 25, "mars": 12, "jupiter": 45, "saturn": 18,
@@ -20,6 +20,13 @@ MIN_RADIUS_PX = 3  # draw tiny disks (Uranus, Neptune) big enough to find and fo
 POSITION_REFRESH_S = 1.0  # bodies move slowly; look up positions once a second, not per frame
 SENSOR = (1928, 1090)  # SV705C 3856x2180 binned 2x2
 NOISE = 4.0
+# Synthetic deep-sky stars (the real camera sees mag ~12+, far deeper than any catalog here):
+# a random field fixed to the sky, regenerated per 2-degree patch, so frames drift and
+# rotate exactly as the sky does.
+STAR_PATCH_DEG = 2.0
+STARS_PER_SQ_ARCMIN = 0.5
+STAR_FLUX = (100.0, 1500.0)  # summed ADU before blur; far fainter than any planet
+STAR_SEEING_PX = 1.5
 
 
 class SimMainCamera:
@@ -62,9 +69,43 @@ class SimMainCamera:
         visible = (-r < cx) & (cx < roi.width + r) & (-r < cy) & (cy < roi.height + r)
         for i in np.flatnonzero(visible):  # usually zero or one body
             img += _disk(roi.width, roi.height, cx[i], cy[i], r[i])
+        img += self._stars(alt, az, roi)
         if self.blur_px > 0:
             img = ndimage.gaussian_filter(img, self.blur_px)
         return np.clip(img, 0, 255).astype(np.uint8)
+
+    def _stars(self, alt: float, az: float, roi: Roi) -> np.ndarray:
+        """Point stars from the sky-fixed random field, placed in the current alt/az frame."""
+        when = self.clock()
+        ra0, dec0 = altaz_to_radec(alt, az, self.site, when)
+        # Which way is celestial north on the sensor (gives field rotation for free): the
+        # alt/az of a point just north of the boresight.
+        n_alt, n_az = radec_to_altaz(ra0, min(dec0 + 0.05, 89.99), self.site, when)
+        north = np.arctan2(-(n_alt - alt), ((n_az - az + 180) % 360 - 180) * np.cos(np.radians(alt)))
+        ra, dec, flux = self._field(ra0, dec0)
+        # Offsets east/north in arcsec, then rotate into sensor x (right) / y (down).
+        east = (ra - ra0) * np.cos(np.radians(dec0)) * 3600
+        up = (dec - dec0) * 3600
+        ang = north - np.pi / 2
+        x = (east * np.cos(ang) - up * np.sin(ang)) / self.scale + SENSOR[0] / 2 - roi.x
+        y = (east * np.sin(ang) + up * np.cos(ang)) / self.scale + SENSOR[1] / 2 - roi.y
+        ok = (x >= 0) & (x < roi.width) & (y >= 0) & (y < roi.height)
+        img = np.zeros((roi.height, roi.width))
+        np.add.at(img, (y[ok].astype(int), x[ok].astype(int)), flux[ok])
+        return ndimage.gaussian_filter(img, STAR_SEEING_PX)
+
+    def _field(self, ra0: float, dec0: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        key = (round(ra0 / STAR_PATCH_DEG), round(dec0 / STAR_PATCH_DEG))
+        if getattr(self, "_field_key", None) != key:
+            rng = np.random.default_rng(abs(hash(key)) % 2**32)
+            side = 2 * STAR_PATCH_DEG  # cover the patch plus a margin
+            n = rng.poisson(STARS_PER_SQ_ARCMIN * (side * 60) ** 2)
+            cra, cdec = key[0] * STAR_PATCH_DEG, key[1] * STAR_PATCH_DEG
+            dec = cdec + rng.uniform(-side / 2, side / 2, n)
+            ra = cra + rng.uniform(-side / 2, side / 2, n) / np.cos(np.radians(dec))
+            flux = np.exp(rng.uniform(*np.log(STAR_FLUX), n))  # many faint, few bright
+            self._field_key, self._field_stars = key, (ra, dec, flux)
+        return self._field_stars
 
 
     def _body_positions(self) -> tuple[np.ndarray, np.ndarray]:
