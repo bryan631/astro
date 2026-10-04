@@ -7,6 +7,7 @@ In sim mode a simulated user follows the spoken cues so the whole loop can be wa
 import asyncio
 import functools
 import json
+import logging
 import os
 import time
 from pathlib import Path
@@ -14,7 +15,7 @@ from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
-from astro import site_store
+from astro import logs, site_store
 from astro.agent import Agent
 from astro.devices import config as devices
 from astro.devices.sim.finder import SimFinderCamera
@@ -43,6 +44,8 @@ def load_env(path: Path = ROOT / ".env") -> None:
 
 
 load_env()
+log = logging.getLogger("astro.server")
+LOGGED = {"say", "picture", "get_location"}  # not the 10 Hz "state" or "live" updates
 
 
 def load_site() -> Site:
@@ -101,6 +104,13 @@ def solver() -> FinderSolver:
 
 
 app = FastAPI()
+
+
+@app.on_event("startup")
+def start_logging() -> None:
+    if os.environ.get("ASTRO_NO_LOG_FILE"):  # tests
+        return
+    log.info("server start", extra={"data": {"log": str(logs.setup(ROOT)), "sim": SIM}})
 stt, tts = Stt(), Tts()
 
 
@@ -126,6 +136,8 @@ class Hub:
             self._loop.cancel()
 
     async def broadcast(self, msg: dict) -> None:
+        if msg["type"] in LOGGED:
+            log.info(msg["type"], extra={"data": {k: v for k, v in msg.items() if k != "type"}})
         audio = None
         if msg["type"] == "say" and tts.available():
             audio = await asyncio.to_thread(tts.synthesize, msg["text"])
@@ -138,6 +150,7 @@ class Hub:
                 self.clients.discard(client)
 
     async def handle_text(self, socket: WebSocket, text: str) -> None:
+        log.info("heard", extra={"data": {"text": text}})
         await socket.send_json({"type": "heard", "text": text})
         for out in await asyncio.to_thread(self.agent.handle, text):
             await self.broadcast(out)
@@ -145,7 +158,12 @@ class Hub:
     async def _guidance_loop(self) -> None:
         while True:
             t = time.monotonic() - self._t0
-            for msg in await asyncio.to_thread(self.session.tick, t):  # camera calls block
+            try:
+                msgs = await asyncio.to_thread(self.session.tick, t)  # camera calls block
+            except Exception:  # never let one bad tick end guidance for the night
+                log.exception("tick failed")
+                msgs = []
+            for msg in msgs:
                 if self.user and msg["type"] == "say":
                     self.user.hear(msg["text"], t)
                 await self.broadcast(msg)
@@ -194,6 +212,7 @@ async def ws(socket: WebSocket) -> None:
                 if data.get("type") == "text":
                     await hub.handle_text(socket, data["text"])
                 elif data.get("type") == "location":
+                    log.info("location", extra={"data": {"accuracy_m": data.get("accuracy")}})
                     for out in session.set_location(float(data["lat"]), float(data["lon"]),
                                                     data.get("alt"), data.get("accuracy")):
                         await hub.broadcast(out)
