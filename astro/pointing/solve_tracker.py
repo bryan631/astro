@@ -34,7 +34,9 @@ class SolveTracker:
         self._thread = threading.Thread(target=self._loop, daemon=True)
 
     def start(self) -> "SolveTracker":
-        self._thread.start()
+        """Start solving in the background. Idempotent; install `safety` before calling."""
+        if not self._thread.is_alive():
+            self._thread.start()
         return self
 
     def stop(self) -> None:
@@ -52,10 +54,10 @@ class SolveTracker:
         return self._altaz
 
     def sync(self) -> tuple[bool, str]:
+        if self.safety and (reason := self.safety()):  # checked first: a recent solve doesn't
+            return False, f"I can't look at the sky right now: {reason}."  # make it safe now
         if self.synced and time.monotonic() - self._solved_at < FRESH_S:
             return True, "Got it, I know where we're pointing."
-        if self.safety and (reason := self.safety()):  # every finder exposure is gated (S2/S3)
-            return False, f"I can't look at the sky right now: {reason}."
         ok, reason = self._solve_once()
         return (True, "Got it, I know where we're pointing.") if ok else (False, reason)
 

@@ -78,6 +78,8 @@ class Session:
         self.position = finder.position if finder else position
         if finder is not None:
             finder.safety = self.exposure_safety  # no finder exposure skips the Sun/daytime gate
+            if hasattr(finder, "start"):  # a background solver may only run once gated
+                finder.start()
         self.override = developer_override
         self.catalog = {t.name: t for t in load_targets()}
         for t in list(self.catalog.values()):
