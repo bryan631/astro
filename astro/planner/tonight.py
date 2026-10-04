@@ -94,8 +94,13 @@ def plan(site: Site, start: datetime, mask: HorizonMask | None = None,
     return {c: sorted(v, key=lambda x: -x.score)[:per_category] for c, v in out.items()}
 
 
-def start_of_evening(now: datetime) -> datetime:
-    """Plan from now if it is evening/night, else from 6 pm local today."""
-    if now.hour >= 17 or now.hour < 6:
-        return now
-    return now.replace(hour=18, minute=0, second=0, microsecond=0)
+def next_dark(site: Site, now: datetime, within_hours: float = 24) -> datetime | None:
+    """Now if it's dark enough, else the next time the Sun is below DARK_SUN_ALT (so "tonight"
+    asked in the afternoon plans the coming night). None if it won't get dark (polar summer)."""
+    times = Time(now) + np.arange(int(within_hours * 60 / STEP_MIN)) * STEP_MIN * u.min
+    frame = site.frame(now).replicate_without_data(obstime=times)
+    sun_alt = get_body("sun", times, frame.location).transform_to(frame).alt.deg
+    dark = np.flatnonzero(sun_alt < DARK_SUN_ALT)
+    if len(dark) == 0:
+        return None
+    return now if dark[0] == 0 else times[dark[0]].to_datetime(timezone=now.tzinfo)

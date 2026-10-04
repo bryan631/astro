@@ -5,6 +5,7 @@ Falls back to the offline grammar when there's no API key or no network.
 """
 
 import os
+import time
 
 import anthropic
 
@@ -13,6 +14,7 @@ from astro.session import Session
 
 MODEL = "claude-haiku-4-5"
 MAX_TOOL_ROUNDS = 4
+OFFLINE_RETRY_S = 60.0  # after a connection failure, try Claude again this much later
 HISTORY_TURNS = 10
 
 SYSTEM = """You help a 77-year-old amateur astronomer use his telescope by voice.
@@ -71,21 +73,26 @@ class Agent:
         self.session = session
         self.client = client if client is not None else _default_client()
         self.history: list[dict] = []
+        self._offline_until = 0.0  # after a connection failure, answer offline until then
 
     def handle(self, text: str) -> list[dict]:
         """Return messages for the tablet. Core commands never need the network."""
-        if self.client is None or self._offline_understands(text):
+        offline = time.monotonic() < self._offline_until  # recently unreachable: don't wait again
+        if self.client is None or offline or self._offline_understands(text):
             return self.session.handle(text)
         try:
             return self._run(text)
+        except (anthropic.APIConnectionError, anthropic.APITimeoutError):
+            self._offline_until = time.monotonic() + OFFLINE_RETRY_S
+            return self.session.handle(text)
         except anthropic.APIError:
             return self.session.handle(text)
 
     def _offline_understands(self, text: str) -> bool:
         """Fast path for exact commands; anything vague goes to Claude for context."""
         intent = parse(text)
-        if intent is None or intent.name == "tonight":
-            return False  # Claude gives a nicer, conversational overview
+        if intent is None:
+            return False
         if intent.name in ("ready", "skip") and not self.session.wizard_active:
             return False  # "okay" outside setup is conversation, not a command
         if intent.name == "goto":
@@ -135,4 +142,5 @@ class Agent:
 def _default_client() -> anthropic.Anthropic | None:
     if not os.environ.get("ANTHROPIC_API_KEY"):
         return None
-    return anthropic.Anthropic(timeout=15.0, max_retries=1)
+    # Fail fast on a field hotspot with no internet: 2 s to connect, no retries (they double it).
+    return anthropic.Anthropic(timeout=anthropic.Timeout(10.0, connect=2.0), max_retries=0)

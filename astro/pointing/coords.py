@@ -4,8 +4,10 @@ Works offline: astropy's IERS auto-download is disabled. Accuracy without fresh 
 data is a few arcseconds at worst, far below what push-to guidance needs.
 """
 
+import functools
 from dataclasses import dataclass
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import astropy.units as u
 from astropy.coordinates import AltAz, EarthLocation, SkyCoord, get_body
@@ -16,6 +18,14 @@ iers.conf.auto_download = False
 iers.conf.auto_max_age = None
 
 
+@functools.cache
+def _zone_at(lat: float, lon: float) -> ZoneInfo:
+    from timezonefinder import TimezoneFinder  # offline lookup; ~10 ms after the first call
+
+    name = TimezoneFinder().timezone_at(lat=lat, lng=lon)
+    return ZoneInfo(name) if name else ZoneInfo("UTC")
+
+
 @dataclass(frozen=True)
 class Site:
     lat_deg: float
@@ -24,6 +34,11 @@ class Site:
     pressure_hpa: float = 1013.0  # 0 disables refraction
     temperature_c: float = 15.0
     humidity: float = 0.7  # 0-1
+
+    @property
+    def timezone(self) -> ZoneInfo:
+        """Local time zone, from the coordinates (no network needed)."""
+        return _zone_at(round(self.lat_deg, 2), round(self.lon_deg, 2))
 
     def frame(self, when: datetime) -> AltAz:
         return AltAz(

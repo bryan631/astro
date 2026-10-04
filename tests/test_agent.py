@@ -87,3 +87,31 @@ def test_every_tool_is_handled():
 
     handled = set(_COMMANDS) | {"goto", "focus", "barlow", "session_status"}
     assert {t["name"] for t in TOOLS} <= handled
+
+
+class Unreachable:
+    """Client whose every call fails like a hotspot with no internet."""
+
+    def __init__(self):
+        self.calls = 0
+        self.messages = self
+
+    def create(self, **kw):
+        import httpx
+
+        self.calls += 1
+        raise __import__("anthropic").APIConnectionError(request=httpx.Request("POST", "https://x"))
+
+
+def test_offline_falls_back_once_then_skips_the_llm():
+    client = Unreachable()
+    a = Agent(session(), client=client)
+    a.handle("I'd love to see that smoke ring thing")
+    a.handle("anything fun up there?")
+    assert client.calls == 1  # second request didn't wait on the network again
+
+
+def test_tonight_is_answered_offline_even_with_a_key():
+    client = FakeClient([])
+    out = Agent(session(), client=client).handle("what's good tonight")
+    assert client.requests == [] and "is the best" in out[0]["text"]

@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from astro.planner.catalog import load_targets
 from astro.planner.horizon import HorizonMask
-from astro.planner.tonight import night_times, plan, start_of_evening
+from astro.planner.tonight import next_dark, night_times, plan
 from astro.pointing.coords import Site
 
 WPB = Site(lat_deg=26.7, lon_deg=-80.1)
@@ -41,7 +41,8 @@ def test_horizon_mask_interpolates_and_wraps():
     assert m.to_stellarium().splitlines()[1] == "90.0 30.0"
 
 
-def test_start_of_evening():
-    noon = datetime(2026, 10, 3, 12, tzinfo=EDT)
-    assert start_of_evening(noon).hour == 18
-    assert start_of_evening(EVENING) == EVENING
+def test_next_dark_plans_the_coming_night_when_asked_by_day():
+    afternoon = datetime(2026, 10, 3, 16, 0, tzinfo=EDT)
+    start = next_dark(WPB, afternoon)
+    assert start.date() == afternoon.date() and 19 <= start.hour <= 20  # nautical dusk
+    assert next_dark(WPB, EVENING.replace(hour=22)) == EVENING.replace(hour=22)  # already dark
