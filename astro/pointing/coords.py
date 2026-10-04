@@ -19,10 +19,16 @@ iers.conf.auto_max_age = None
 
 
 @functools.cache
-def _zone_at(lat: float, lon: float) -> ZoneInfo:
-    from timezonefinder import TimezoneFinder  # offline lookup; ~10 ms after the first call
+def _timezone_finder():
+    from timezonefinder import TimezoneFinder  # offline lookup; loaded once
 
-    name = TimezoneFinder().timezone_at(lat=lat, lng=lon)
+    return TimezoneFinder()
+
+
+@functools.cache
+def _zone_at(lat: float, lon: float) -> ZoneInfo:
+    """Exact coordinates: rounding could cross a nearby time-zone border."""
+    name = _timezone_finder().timezone_at(lat=lat, lng=lon)
     return ZoneInfo(name) if name else ZoneInfo("UTC")
 
 
@@ -38,7 +44,7 @@ class Site:
     @property
     def timezone(self) -> ZoneInfo:
         """Local time zone, from the coordinates (no network needed)."""
-        return _zone_at(round(self.lat_deg, 2), round(self.lon_deg, 2))
+        return _zone_at(self.lat_deg, self.lon_deg)
 
     def frame(self, when: datetime) -> AltAz:
         return AltAz(

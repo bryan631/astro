@@ -75,6 +75,7 @@ class Session:
         self.weather = weather  # (lat, lon, when) -> cloud % or None offline; None = no forecast
         self._clouds: float | None = None
         self._clouds_at = -1e9
+        self._clouds_lock = threading.Lock()
         self._clouds_site: tuple[float, float] | None = None
         self.position = finder.position if finder else position
         self.override = developer_override
@@ -261,24 +262,29 @@ class Session:
         self.target, self.guide, self._focus_coach = name, guide, None
         return [*pre, say(f"Let's find {name}.")]
 
-    def clouds(self) -> float | None:
-        """Cloud cover now (%), from Open-Meteo; None offline (cached for a while)."""
-        now, here = time.monotonic(), (self.site.lat_deg, self.site.lon_deg)
-        stale = now - self._clouds_at > CLOUD_CACHE_S or here != self._clouds_site
-        if self.weather is not None and stale:  # cache per place: a GPS move refetches
-            self._clouds_at, self._clouds_site = now, here
-            self._clouds = self.weather(*here, self.clock())
-        return self._clouds
+    def clouds(self, site: Site | None = None) -> float | None:
+        """Cloud cover now (%) at `site`, from Open-Meteo; None offline. Cached per place; its
+        own lock (not the session's) so a slow fetch never stalls guidance."""
+        site = site or self.site
+        here = (site.lat_deg, site.lon_deg)
+        with self._clouds_lock:
+            stale = time.monotonic() - self._clouds_at > CLOUD_CACHE_S or here != self._clouds_site
+            if self.weather is not None and stale:  # a GPS move refetches
+                self._clouds = self.weather(*here, self.clock())
+                self._clouds_at, self._clouds_site = time.monotonic(), here
+            return self._clouds
 
     def _plan(self) -> tuple[dict, datetime | None, float | None]:
         """Tonight's choices from the next dark time, in local time (asked at 4 PM, this plans
         the coming night). Runs outside the session lock: planning takes ~0.5 s of astropy."""
-        now = self.clock().astimezone(self.site.timezone)
-        start = next_dark(self.site, now)
-        clouds = self.clouds()
+        with self._lock:  # one consistent snapshot; the slow work below runs unlocked
+            site, horizon = self.site, self.horizon
+        now = self.clock().astimezone(site.timezone)
+        start = next_dark(site, now)
+        clouds = self.clouds(site)
         if start is None:
             return {}, None, clouds
-        return plan(self.site, start, mask=self.horizon, cloud_cover=clouds), start, clouds
+        return plan(site, start, mask=horizon, cloud_cover=clouds), start, clouds
 
     def tonight(self) -> list[dict]:
         choices, start, clouds = self._plan()

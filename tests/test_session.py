@@ -75,3 +75,21 @@ def test_agent_list_uses_local_times():
     s, _ = make(datetime(2026, 10, 4, 0, 30, tzinfo=UTC))  # 8:30 PM EDT
     lines = s.tonight_by_category().splitlines()
     assert all("PM" in line or "AM" in line for line in lines if "best around" in line)
+
+
+def test_timezone_lookup_uses_exact_coordinates(monkeypatch):
+    """Rounding could move a site near a time-zone border into the neighboring zone."""
+    from astro.pointing import coords
+
+    seen = []
+
+    class Finder:
+        def timezone_at(self, lat, lng):
+            seen.append((lat, lng))
+            return "America/New_York"
+
+    monkeypatch.setattr(coords, "_timezone_finder", lambda: Finder())
+    coords._zone_at.cache_clear()
+    assert str(Site(26.712345, -80.054321).timezone) == "America/New_York"
+    assert seen == [(26.712345, -80.054321)]
+    coords._zone_at.cache_clear()
