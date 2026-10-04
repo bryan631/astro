@@ -47,7 +47,8 @@ def on_key(event):
 
 
 fig.canvas.mpl_connect("key_press_event", on_key)
-anim = FuncAnimation(fig, update, interval=REFRESH_MS, blit=True, cache_frame_data=False)
+# No blitting: the image fills the figure anyway, and blit crashes when Tk swaps the canvas.
+anim = FuncAnimation(fig, update, interval=REFRESH_MS, blit=False, cache_frame_data=False)
 try:
     plt.show()
 finally:
