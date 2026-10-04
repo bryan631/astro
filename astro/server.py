@@ -22,6 +22,7 @@ from astro.devices.sim.finder import SimFinderCamera
 from astro.devices.sim.main_cam import SimMainCamera
 from astro.devices.sim.scope import SimEncoders, SimScope, SimUser
 from astro.planner import horizon_store
+from astro.planner.weather import cloud_cover_pct
 from astro.pointing.coords import Site
 from astro.pointing.finder_sync import FinderSync
 from astro.pointing.mount_model import MountModel
@@ -67,7 +68,8 @@ def build_session() -> tuple[Session, SimScope | None]:
                       main_camera=main, main_sensor=main.sensor_size, data_dir=ROOT / "data",
                       on_site_change=lambda s: on_site_change(s, camera, main),
                       horizon=horizon_store.load(ROOT),
-                      on_horizon_change=lambda m: horizon_store.save(ROOT, m))
+                      on_horizon_change=lambda m: horizon_store.save(ROOT, m),
+                      weather=cloud_cover_pct)
     return session, scope
 
 
@@ -88,7 +90,8 @@ def build_real_session() -> Session:
                    main_camera=main, main_sensor=main.sensor_size if main else (3856, 2180),
                    data_dir=ROOT / "data", on_site_change=lambda s: site_store.save(ROOT, s),
                    horizon=horizon_store.load(ROOT),
-                   on_horizon_change=lambda m: horizon_store.save(ROOT, m))
+                   on_horizon_change=lambda m: horizon_store.save(ROOT, m),
+                   weather=cloud_cover_pct)
 
 
 def on_site_change(site: Site, finder_cam: SimFinderCamera, main_cam: SimMainCamera) -> None:
