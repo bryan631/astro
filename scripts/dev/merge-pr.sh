@@ -19,16 +19,21 @@ merge_one() {
       MERGED*) echo "#$n merged"; return ;;
       *UNKNOWN*) sleep 10; continue ;;  # GitHub recomputing after another merge
       *BEHIND*)  # update, then wait until the PR head really is the new merge commit
-        old=$(gh pr view "$n" --json headRefOid -q .headRefOid)
-        gh api -X PUT "repos/$REPO/pulls/$n/update-branch" >/dev/null
+        old=$(gh pr view "$n" --json headRefOid -q .headRefOid) || return 1
+        gh api -X PUT "repos/$REPO/pulls/$n/update-branch" >/dev/null || return 1
+        updated=
         for _ in $(seq 30); do
-          [ "$(gh pr view "$n" --json headRefOid -q .headRefOid)" != "$old" ] && break; sleep 5
-        done ;;
+          [ "$(gh pr view "$n" --json headRefOid -q .headRefOid)" != "$old" ] && { updated=1; break; }
+          sleep 5
+        done
+        [ -n "$updated" ] || { echo "#$n: branch update never appeared"; return 1; } ;;
     esac
-    sha=$(gh pr view "$n" --json headRefOid -q .headRefOid)
-    for _ in $(seq 60); do ci=$(ci_state "$sha"); [ "$ci" != pending ] && break; sleep 10; done
-    [ "$ci" = failure ] && { echo "#$n CI failed on $sha"; return 1; }
-    gh pr merge "$n" --squash --delete-branch >/dev/null 2>&1
+    sha=$(gh pr view "$n" --json headRefOid -q .headRefOid) || return 1
+    ci=
+    for _ in $(seq 60); do ci=$(ci_state "$sha"); [ "$ci" = success ] || [ "$ci" = failure ] && break; sleep 10; done
+    [ "$ci" = success ] || { echo "#$n CI ${ci:-unknown} on $sha"; return 1; }
+    # Only merge the commit whose CI we checked; a push meanwhile makes this fail and retry.
+    gh pr merge "$n" --squash --delete-branch --match-head-commit "$sha" >/dev/null 2>&1
     [ "$(gh pr view "$n" --json state -q .state)" = MERGED ] && { echo "#$n merged"; return; }
   done
   echo "#$n not merged: $(gh pr view "$n" --json mergeStateStatus -q .mergeStateStatus)"
