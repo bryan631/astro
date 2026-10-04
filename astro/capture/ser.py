@@ -53,9 +53,11 @@ class SerWriter:
 
 
 def read_ser(path: Path) -> tuple[dict, np.ndarray]:
-    """Minimal reader (8-bit) used by tests and quick checks."""
-    data = Path(path).read_bytes()
-    f = _HEADER.unpack(data[: _HEADER.size])
-    w, h, n = f[4], f[5], f[7]
-    frames = np.frombuffer(data, np.uint8, n * w * h, _HEADER.size).reshape(n, h, w)
-    return {"color_id": f[2], "width": w, "height": h, "frames": n, "instrument": f[9].rstrip(b"\0").decode()}, frames
+    """8-bit SER reader. Frames are memory-mapped, so long recordings aren't loaded at once."""
+    with Path(path).open("rb") as f:
+        head = _HEADER.unpack(f.read(_HEADER.size))
+    w, h, n = head[4], head[5], head[7]
+    frames = np.memmap(path, np.uint8, "r", offset=_HEADER.size, shape=(n, h, w))
+    meta = {"color_id": head[2], "width": w, "height": h, "frames": n,
+            "instrument": head[9].rstrip(b"\0").decode()}
+    return meta, frames
