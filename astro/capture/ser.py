@@ -20,7 +20,7 @@ def _ticks(t: datetime) -> int:
 
 
 class SerWriter:
-    def __init__(self, path: Path, width: int, height: int, bayer: str = "RGGB",
+    def __init__(self, path: Path, width: int, height: int, bayer: str = "GRBG",  # SV705C, per hardware checkout
                  instrument: str = "SV705C", telescope: str = "XT8i"):
         self.path, self.size = Path(path), (height, width)
         self._color = COLOR_IDS[bayer]

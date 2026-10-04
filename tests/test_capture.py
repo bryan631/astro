@@ -21,7 +21,7 @@ def test_ser_roundtrip(tmp_path):
         for f in frames:
             w.write(f, datetime(2026, 10, 3, tzinfo=UTC))
     meta, back = read_ser(tmp_path / "a.ser")
-    assert meta == {"color_id": 8, "width": 6, "height": 4, "frames": 3, "instrument": "SV705C"}
+    assert meta == {"color_id": 9, "width": 6, "height": 4, "frames": 3, "instrument": "SV705C"}
     assert (back == frames).all()
     assert (tmp_path / "a.ser").stat().st_size == 178 + 3 * 24 + 3 * 8
 
