@@ -425,10 +425,14 @@ class Session:
         if (self._centering or self.guide is not None) and (lost := self._pointing_lost()):
             self.guide, self._centering = None, False  # keep the target: "go to" it again later
             return [say(lost)]
+        if self._centering or self.guide is not None:
+            hold = self._hold_for_fix()
+            if hold is not None:
+                return hold
         if self._centering:
             return self._center_step(t)
         if self.guide is None or self.target is None:
-            self._direction_probe = None  # don't classify unrelated motion later
+            self._direction_probe, self._holding = None, False  # forget unrelated motion
             return []
         if t - self._resolved_at >= TARGET_REFRESH_S:
             self._resolved_at = t
@@ -437,13 +441,6 @@ class Session:
                 self.target, self.guide = None, None
                 return [say("Stopping: the target is no longer safe to point at.")]
             self.guide.target = self._aim(alt, az)
-        fix_age = getattr(self.finder, "fix_age", None)
-        if fix_age is not None and fix_age() > FIX_STALE_S:  # solving only, scope moving
-            if self._holding:
-                return []
-            self._holding = True
-            return [say("Hold still for a second so I can see where we are.")]
-        self._holding = False
         alt_now, az_now = self.position()
         learned = self._learn_direction(az_now, t)  # before the cue: a flip must apply to it
         state, cue = self.guide.update(alt_now, az_now, t)
@@ -459,6 +456,19 @@ class Session:
                 self.centerer.restart(self.altaz_of(self.target))  # true, uncorrected target
                 self._center_limiter = CueLimiter()
         return out
+
+    def _hold_for_fix(self) -> list[dict] | None:
+        """Plate solving only: while the fix is stale (the scope is moving), don't steer by it.
+        Returns the messages for this tick, or None when the fix is fresh."""
+        fix_age = getattr(self.finder, "fix_age", None)
+        if fix_age is None or fix_age() <= FIX_STALE_S:
+            self._holding = False
+            return None
+        self._direction_probe = None  # motion during the pause says nothing about left/right
+        if self._holding:
+            return []
+        self._holding = True
+        return [{"type": "hold"}, say("Hold still for a second so I can see where we are.")]
 
     def _pointing_lost(self) -> str | None:
         """Why guidance can't trust the pointing any more, or None."""

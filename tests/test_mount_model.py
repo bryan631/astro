@@ -68,3 +68,13 @@ def test_history_is_capped():
     for i in range(MAX_SYNCS + 5):
         m.add_sync(make_sync(20 + i * 3, i * 25))
     assert len(m.syncs) == MAX_SYNCS
+
+
+def test_base_moved_starts_over_from_new_syncs():
+    m = MountModel()
+    for p in POINTS[:4]:
+        m.add_sync(make_sync(*p))
+    bumped = MountModel(az_offset_deg=TRUE.az_offset_deg + 20)  # base turned 20 degrees
+    for a, z in [(50, 150), (35, 250)]:
+        m.add_sync(Sync(a, z, *bumped.to_sky(a, z)))
+    assert len(m.syncs) == 2 and separation_deg(*m.to_sky(40, 60), *bumped.to_sky(40, 60)) < 0.1

@@ -14,6 +14,7 @@ from scipy.optimize import least_squares
 MAX_SYNCS = 12  # newest kept: an old sync can't outvote a bumped base forever
 OUTLIER_X = 3.0  # a sync this many times worse than the median (and over 30') is dropped
 OUTLIER_MIN_ARCMIN = 30.0
+SHIFT_SYNCS = 2  # this many new syncs rejected in a row: the base moved, start over from them
 
 
 def _vec(alt_deg: float, az_deg: float) -> np.ndarray:
@@ -50,6 +51,7 @@ class MountModel:
     tilt_n_deg: float = 0.0
     tilt_e_deg: float = 0.0
     syncs: list[Sync] = field(default_factory=list)
+    rejected: list[Sync] = field(default_factory=list, repr=False)  # newest syncs dropped
 
     def to_sky(self, enc_alt_deg: float, enc_az_deg: float) -> tuple[float, float]:
         """Encoder angles -> true (alt, az) in degrees."""
@@ -64,8 +66,12 @@ class MountModel:
             errs = self.residuals_arcmin()
             worst = int(np.argmax(errs))
             if errs[worst] > max(OUTLIER_MIN_ARCMIN, OUTLIER_X * float(np.median(errs))):
-                del self.syncs[worst]  # a false solve or a bump: forget it
-                rms = self.fit()
+                dropped = self.syncs.pop(worst)  # a false solve, or the base moved
+                self.rejected = [*self.rejected, dropped] if dropped is sync else []
+                if len(self.rejected) >= SHIFT_SYNCS:  # newest keep disagreeing: base moved
+                    self.syncs, self.rejected = self.rejected, []
+                return self.fit()
+        self.rejected = []
         return rms
 
     def residuals_arcmin(self) -> np.ndarray:
