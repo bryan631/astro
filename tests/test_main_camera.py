@@ -247,3 +247,39 @@ def test_refocus_clears_gate_and_blocks_capture_until_done(tmp_path):
     assert not s.main_focus_ok
     assert texts(s.handle("take a picture")) == ["Let's finish focusing first. Say done when it's sharpest."]
     assert s.recorder.current is None
+
+
+def test_recording_becomes_a_gallery_picture(tmp_path):
+    s, _ = make_session(tmp_path)
+    s.main_focus_ok, s.record_seconds = True, 0.5
+    s.handle("take a picture")
+    s.recorder.current.done.wait(5)
+    assert "making your picture" in texts(s.tick(100.0))[0]
+    out = []
+    for i in range(100):
+        out = s.tick(101.0 + i)
+        if out:
+            break
+        time.sleep(0.05)
+    assert texts(out) == ["Your picture of Saturn is ready. Tap Pictures to see it."]
+    assert (tmp_path / "gallery" / out[1]["file"]).exists()
+
+
+def test_picture_keeps_capture_time_name_and_every_job_is_announced(tmp_path):
+    s, _ = make_session(tmp_path)
+    s.main_focus_ok, s.record_seconds = True, 0.3
+    said = []
+    for target in ("Saturn", "Jupiter"):
+        s.target = target
+        s.handle("take a picture")
+        s.target = "Mars"  # user moved on before the recording finished
+        s.recorder.current.done.wait(5)
+        said += texts(s.tick(0.0))
+    for _ in range(200):
+        said += texts(s.tick(1.0))
+        if sum("is ready" in x for x in said) == 2:
+            break
+        time.sleep(0.05)
+    ready = [x for x in said if "is ready" in x]
+    assert ready == ["Your picture of Saturn is ready. Tap Pictures to see it.",
+                     "Your picture of Jupiter is ready. Tap Pictures to see it."]

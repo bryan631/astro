@@ -94,3 +94,9 @@ def test_site_change_moves_simulated_sky(monkeypatch):
     session.set_location(40.0, -105.0, None, None)
     assert finder_cam.site.lat_deg == 40.0 and main_cam.site.lat_deg == 40.0
     assert main_cam._positions is None and saved[-1].lon_deg == -105.0
+
+
+def test_gallery_lists_pictures(monkeypatch, tmp_path):
+    (tmp_path / "a.png").write_bytes(b"png")
+    monkeypatch.setattr(server, "GALLERY", tmp_path)
+    assert TestClient(server.app).get("/gallery").json() == ["a.png"]
