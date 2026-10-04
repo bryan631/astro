@@ -93,3 +93,12 @@ def test_timezone_lookup_uses_exact_coordinates(monkeypatch):
     assert str(Site(26.712345, -80.054321).timezone) == "America/New_York"
     assert seen == [(26.712345, -80.054321)]
     coords._zone_at.cache_clear()
+
+
+def test_describe_target():
+    s, _ = make()
+    said = texts(s.handle("tell me about Albireo"))[0]
+    assert said.startswith("Albireo is a double star (Beta Cygni). Gold and blue pair")
+    assert "degrees up, toward the" in said
+    assert "below the horizon" in texts(s.handle("what is M41"))[0]  # October evening
+    assert texts(s.handle("tell me about pizza")) == ["I don't know pizza."]

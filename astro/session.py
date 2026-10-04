@@ -24,7 +24,7 @@ from astro.guidance.engine import CueLimiter, Guide
 from astro.intents import Intent, match_name, parse
 from astro.planner.catalog import load_targets
 from astro.planner.horizon import HorizonMask
-from astro.planner.tonight import PLANETS, next_dark, plan
+from astro.planner.tonight import PLANET_NOTES, PLANETS, next_dark, plan
 from astro.pointing.coords import Site, body_altaz, radec_to_altaz
 from astro.pointing.finder_sync import FinderSync, check_focus
 from astro.pointing.geometry import separation_deg
@@ -119,6 +119,25 @@ class Session:
         self._lock = threading.Lock()
 
     # --- target resolution -------------------------------------------------------------
+    def describe(self, spoken: str) -> list[dict]:
+        """What a target is and where it is right now (agent tool and "tell me about ...")."""
+        name = match_name(spoken, self.names())
+        if name is None:
+            return [say(f"I don't know {spoken}.")]
+        if name.lower() in PLANETS:
+            kind, note = "a planet", PLANET_NOTES[name.lower()]
+        elif name == "Moon":
+            kind, note = "our Moon", "Craters and mountains show best along the shadow line."
+        else:
+            target = self.catalog[name]
+            kind, note = f"a {target.category} ({target.id})", target.note
+        alt, az = self.altaz_of(name)
+        where = (f"Right now it's about {alt:.0f} degrees up, toward the {_compass(az)}."
+                 if alt > 0 else "It's below the horizon right now.")
+        if 0 < alt < float(self.horizon.min_alt(az)):
+            where += " That's behind the trees from here."
+        return [say(f"{name} is {kind}. {note} {where}")]
+
     def names(self) -> list[str]:
         return [p.capitalize() for p in PLANETS] + ["Moon", *self.catalog]
 
@@ -205,6 +224,8 @@ class Session:
             return self.mark_horizon()
         if intent.name == "location":
             return self.request_location()
+        if intent.name == "describe":
+            return self.describe(intent.target or "")
         if intent.name == "where":
             return self.where()
         return [say(f"{intent.name.replace('_', ' ').capitalize()} isn't ready yet.")]
@@ -660,6 +681,12 @@ class Session:
 
     def _extended_targets(self) -> set[str]:
         return {p.capitalize() for p in PLANETS} | {"Moon"}
+
+
+def _compass(az: float) -> str:
+    """Azimuth in degrees -> 'northeast' etc. (8 points)."""
+    points = ("north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest")
+    return points[round(az % 360 / 45) % 8]
 
 
 def _clock(t: datetime) -> str:

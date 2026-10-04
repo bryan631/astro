@@ -85,7 +85,7 @@ def test_session_status_tool_reports_facts():
 def test_every_tool_is_handled():
     from astro.agent import _COMMANDS, TOOLS
 
-    handled = set(_COMMANDS) | {"goto", "focus", "barlow", "session_status"}
+    handled = set(_COMMANDS) | {"goto", "describe", "focus", "barlow", "session_status"}
     assert {t["name"] for t in TOOLS} <= handled
 
 

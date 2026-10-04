@@ -28,6 +28,10 @@ TOOLS = [
     {"name": "list_tonight", "description": "Targets visible tonight: the best one in each "
      "category (planet, moon, nebula, cluster, galaxy, double star) with a short note.",
      "input_schema": {"type": "object", "properties": {}}},
+    {"name": "describe", "description": "What a named target is (planet, nebula, cluster, ...), "
+     "its note, and where it is in the sky right now (or that it's down or behind the trees).",
+     "input_schema": {"type": "object", "properties": {"target": {"type": "string"}},
+                      "required": ["target"]}},
     {"name": "goto", "description": "Start guiding the telescope to a named target "
      "(planet, Moon, or catalog object like 'Ring Nebula' or 'M57').",
      "input_schema": {"type": "object", "properties": {"target": {"type": "string"}},
@@ -136,6 +140,8 @@ class Agent:
             return [{"type": "say", "text": self.session.tonight_by_category()}]
         if name == "goto":  # by name, not re-parsed as a sentence ("Andromeda (M31)")
             return self.session.goto_spoken(args.get("target", ""))
+        if name == "describe":
+            return self.session.describe(args.get("target", ""))
         if name in _COMMANDS:
             return self.session.handle(_COMMANDS[name])
         return [{"type": "say", "text": f"Unknown tool {name}."}]

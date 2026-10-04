@@ -54,3 +54,13 @@ def test_review_misparses(text, expected):
 @pytest.mark.parametrize("spoken", ["messier 57", "Messier 57", "M-57", "m 57"])
 def test_messier_spellings(spoken):
     assert match_name(spoken, ["M57", "Saturn"]) == "M57"
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("tell me about the ring nebula", Intent("describe", "ring nebula")),
+    ("what is albireo", Intent("describe", "albireo")),
+    ("what's good tonight", Intent("tonight")),
+    ("what is up tonight", Intent("tonight")),
+])
+def test_describe_intent(text, expected):
+    assert parse(text) == expected
