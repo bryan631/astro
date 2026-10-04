@@ -28,14 +28,21 @@ info = next((c for c in cams if key and key in c.name.decode()), None) if key el
 if info is None:
     raise SystemExit(f"no {args.cam} camera; found {[c.name.decode() for c in cams]}")
 
-cam = svb.Camera(info)
-p = cam.prop
-cam.set_control(svb.EXPOSURE, int(args.exp * 1000))
-if args.gain is not None:
-    cam.set_control(svb.GAIN, args.gain)
+p = svb.Camera(info).prop
 w, h = map(int, args.roi.split("x")) if args.roi else (p.max_w, p.max_h)
 w, h = min(w, p.max_w) // 8 * 8, min(h, p.max_h) // 2 * 2
-cam.start((p.max_w - w) // 2 // 2 * 2, (p.max_h - h) // 2 // 2 * 2, w, h)
+
+
+def open_cam():
+    cam = svb.Camera(info)
+    cam.set_control(svb.EXPOSURE, int(args.exp * 1000))
+    if args.gain is not None:
+        cam.set_control(svb.GAIN, args.gain)
+    cam.start((p.max_w - w) // 2 // 2 * 2, (p.max_h - h) // 2 // 2 * 2, w, h)
+    return cam
+
+
+cam = open_cam()
 print(f"{info.name.decode()} {w}x{h} exp={args.exp}ms; http://localhost:{args.port}", flush=True)
 
 jpeg, fps = b"", 0.0
@@ -43,10 +50,17 @@ code = getattr(cv2, f"COLOR_Bayer{svb.BAYER[p.bayer]}2BGR")
 
 
 def grab():
-    global jpeg, fps
+    global jpeg, fps, cam
     t = time.time()
     while True:
-        raw = cam.frame(wait_ms=int(args.exp) * 3 + 2000)
+        try:
+            raw = cam.frame(wait_ms=int(args.exp) * 3 + 2000)
+        except RuntimeError as e:  # SDK intermittently times out; reopen the camera (see docs/hardware-results.md)
+            print(f"{e}; reopening camera", flush=True)
+            cam.stop()
+            cam.close()
+            cam = open_cam()
+            continue
         img = cv2.cvtColor(raw, code)
         if w > args.width:
             img = cv2.resize(img, (args.width, h * args.width // w), interpolation=cv2.INTER_AREA)
