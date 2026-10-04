@@ -21,7 +21,7 @@ from astro.capture.roi import brightest_blob, roi_around
 from astro.devices.base import Camera
 from astro.guidance.centering import CALIBRATED, Centerer
 from astro.guidance.engine import CueLimiter, Guide
-from astro.intents import match_name, parse
+from astro.intents import Intent, match_name, parse
 from astro.planner.catalog import load_targets
 from astro.planner.horizon import HorizonMask
 from astro.planner.tonight import PLANETS, plan
@@ -129,10 +129,17 @@ class Session:
         with self._lock:
             return self._handle(text)
 
+    def goto_spoken(self, target: str) -> list[dict]:
+        """Go to a target named in free text (agent tool): matched by name, never re-parsed."""
+        with self._lock:
+            name = match_name(target, self.names())
+            return self.goto(name) if name else [say(f"I don't know {target}.")]
+
     def _handle(self, text: str) -> list[dict]:
         intent = parse(text)
         if intent is not None and intent.name in ("ready", "skip") and not self.wizard_active:
-            intent = None  # "okay" outside setup is just conversation
+            # Outside setup, "okay" is conversation, and "next step" just means "next".
+            intent = Intent("next") if "next" in text.lower() else None
         if intent is not None and intent.name in ("setup", "ready", "skip"):
             return self._wizard_command(intent.name)
         if intent is None:
