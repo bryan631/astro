@@ -53,7 +53,8 @@ def grab():
         now = time.time()
         fps = 0.9 * fps + 0.1 / max(now - t, 1e-6)
         t = now
-        text = f"{fps:.1f} fps  max={raw.max()}"
+        focus = cv2.Laplacian(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var()  # higher = sharper
+        text = f"{fps:.1f} fps  max={raw.max()}  focus={focus:.0f}"
         cv2.putText(img, text, (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])[1].tobytes()
 
