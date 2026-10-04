@@ -72,24 +72,29 @@ _COMMANDS = {"list_tonight": "what's good tonight", "stop": "stop", "where_am_i"
              "horizon_walk": "start the horizon walk"}
 
 
+PARTIAL = "I lost my connection partway through, but I did what I could. Ask again if needed."
+
 class Agent:
     def __init__(self, session: Session, client: anthropic.Anthropic | None = None):
         self.session = session
         self.client = client if client is not None else _default_client()
         self.history: list[dict] = []
         self._offline_until = 0.0  # after a connection failure, answer offline until then
+        self._acted: list[dict] | None = None  # this request's tool side effects, once any ran
 
     def handle(self, text: str) -> list[dict]:
         """Return messages for the tablet. Core commands never need the network."""
         offline = time.monotonic() < self._offline_until  # recently unreachable: don't wait again
         if self.client is None or offline or self._offline_understands(text):
             return self.session.handle(text)
+        self._acted = None
         try:
             return self._run(text)
-        except (anthropic.APIConnectionError, anthropic.APITimeoutError):
-            self._offline_until = time.monotonic() + OFFLINE_RETRY_S
-            return self.session.handle(text)
-        except anthropic.APIError:
+        except anthropic.APIError as e:
+            if isinstance(e, (anthropic.APIConnectionError, anthropic.APITimeoutError)):
+                self._offline_until = time.monotonic() + OFFLINE_RETRY_S
+            if self._acted is not None:  # tools already ran: don't do it all again offline
+                return [*self._acted, {"type": "say", "text": PARTIAL}]
             return self.session.handle(text)
 
     def _offline_understands(self, text: str) -> bool:
@@ -119,6 +124,7 @@ class Agent:
                 if block.type == "tool_use":
                     out = self._call(block.name, block.input)
                     side_effects += [m for m in out if m["type"] != "say"]
+                    self._acted = side_effects
                     said = " ".join(m["text"] for m in out if m["type"] == "say")
                     results.append({"type": "tool_result", "tool_use_id": block.id,
                                     "content": said or "done"})
