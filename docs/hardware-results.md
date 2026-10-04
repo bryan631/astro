@@ -9,9 +9,9 @@ Scripts: `scripts/hwcheck/` (`enumerate.py`, `checklist.py`). SDK lives in `~/sd
 |---|---|---|
 | Appears in `lsusb` (f266:9a0a) | pass | pass |
 | Connect x10 in a row | 10/10 | 10/10 |
-| Exposure 0.2 / 0.5 / 1 / 2 s | pass (frame interval matches exposure; scene saturated) | pass |
+| Exposure 0.2 / 0.5 / 1 / 2 s | pass (frame interval matches exposure; scene saturated) | pass (saturates at >=0.2 s in a moderately lit room, f/1.4 wide open) |
 | ROI fps, RAW8, 2 ms exposure | 640x480: 139, 1280x720: 47, full 3856x2180: 5.4 | 640x480: 75, 1280x720: 46, full 1280x960: 34 |
-| Debayer (GR pattern) | plausible, bare sensor sees blue light | not verified yet (lens capped / dark) |
+| Debayer (GR pattern) | plausible, bare sensor sees blue light (SV705C is now capped, no lens) | plausible: smooth, no mosaic artifacts; blue/purple cast because no white balance is applied. Out of focus, so color accuracy not judged |
 
 ## Quirks
 - **USB2 link.** Both cameras enumerate at 480M inside the container, even the USB3 SV705C. Full-frame rate (5.4 fps) and the 47 fps at 1280x720 look bus-limited. Retest on the MeLE miniPC for real USB3 numbers.
