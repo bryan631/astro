@@ -30,7 +30,7 @@ from astro.pointing.finder_sync import FinderSync, check_focus
 from astro.pointing.geometry import separation_deg
 from astro.pointing.platesolve import finder_gray
 from astro.process.planet import StackResult, process_ser
-from astro.safety import DAYTIME_SUN_ALT_DEG, check_target
+from astro.safety import DAYTIME_SUN_ALT_DEG, SafetyResult, check_target
 from astro.wizard import SetupWizard
 
 Clock = Callable[[], datetime]
@@ -76,6 +76,10 @@ class Session:
         self._clouds_at = -1e9
         self._clouds_site: tuple[float, float] | None = None
         self.position = finder.position if finder else position
+        if finder is not None:
+            finder.safety = self.exposure_safety  # no finder exposure skips the Sun/daytime gate
+            if hasattr(finder, "start"):  # a background solver may only run once gated
+                finder.start()
         self.override = developer_override
         self.catalog = {t.name: t for t in load_targets()}
         for t in list(self.catalog.values()):
@@ -250,7 +254,7 @@ class Session:
                 return [say(f"Before we go, I need to see the stars. {msg}")]
             pre = [say(msg)]
         alt, az = self.altaz_of(name)
-        safe = check_target(alt, az, self.site, self.clock(), self.override)
+        safe = self.target_safety(alt, az)
         if not safe.ok:
             return [say(f"I can't go to {name}: it's {safe.reason}.")]
         guide = Guide(*self._aim(alt, az), tolerance_arcmin=TOLERANCE_ARCMIN[self.barlow])
@@ -341,7 +345,7 @@ class Session:
         if t - self._resolved_at >= TARGET_REFRESH_S:
             self._resolved_at = t
             alt, az = self.altaz_of(self.target)
-            if not check_target(alt, az, self.site, self.clock(), self.override).ok:
+            if not self.target_safety(alt, az).ok:
                 self.target, self.guide = None, None
                 return [say("Stopping: the target is no longer safe to point at.")]
             self.guide.target = self._aim(alt, az)
@@ -542,15 +546,26 @@ class Session:
         ref = self._model_site
         moved_km = np.radians(separation_deg(ref.lat_deg, ref.lon_deg, lat, lon)) * EARTH_RADIUS_KM
         self.site = new
-        if moved_km > SITE_MOVE_KM:
+        if moved_km > SITE_MOVE_KM:  # a new place: its pointing, treeline and plans don't apply
             self._model_site = new
             if self.finder is not None:
                 self.finder.reset(new)
-            self.target, self.guide = None, None
+            self.target, self.guide, self._centering, self._focus_coach = None, None, False, None
+            self._horizon, self._suggestions = None, []
+            self.horizon = HorizonMask()
+            if self.on_horizon_change:
+                self.on_horizon_change(self.horizon)
         if self.on_site_change:
             self.on_site_change(new)
         near = f", accurate to about {accuracy_m:.0f} meters" if accuracy_m else ""
         return [say(f"Got it, I know where we are{near}.")]
+
+    def target_safety(self, alt: float, az: float) -> SafetyResult:
+        """Sun, daytime and below-horizon checks, plus the local treeline (horizon mask)."""
+        result = check_target(alt, az, self.site, self.clock(), self.override)
+        if result.ok and alt < float(self.horizon.min_alt(az)):
+            return SafetyResult(False, "behind the trees right now")
+        return result
 
     def exposure_safety(self) -> str | None:
         """Spoken reason why taking an exposure now is unsafe, else None (astro/safety.py)."""
