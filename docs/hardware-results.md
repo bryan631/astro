@@ -20,7 +20,7 @@ Scripts: `scripts/hwcheck/` (`enumerate.py`, `checklist.py`). SDK lives in `~/sd
 - Needs udev rule `90-ckusb.rules` (mode 0666) for non-root access.
 
 ## Still open
-- **Finder focus:** peak not yet found; do a distant-object test with `scripts/hwcheck/viewer.py`.
+- ~~**Finder focus**~~ done 2026-10-03 (distant object, `viewer.py`).
 - **USB3 speed:** retest frame rates on the MeLE (container links at USB2).
 - **Restart timeout / viewer recovery:** retest on the MeLE; confirm the viewer reopens cleanly after a real SDK timeout.
 - **Arduino Nano Every:** not arrived; serial passthrough and blink test pending.

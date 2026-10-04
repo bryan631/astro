@@ -6,6 +6,8 @@ from astro.devices.base import Roi
 
 
 class SimCamera:
+    bayer = "GRBG"
+
     def __init__(self, width: int = 1280, height: int = 960, seed: int = 0):
         self._size = (height, width)
         self._rng = np.random.default_rng(seed)
