@@ -388,6 +388,7 @@ class Session:
         if self._centering:
             return self._center_step(t)
         if self.guide is None or self.target is None:
+            self._direction_probe = None  # don't classify unrelated motion later
             return []
         if t - self._resolved_at >= TARGET_REFRESH_S:
             self._resolved_at = t
@@ -397,11 +398,14 @@ class Session:
                 return [say("Stopping: the target is no longer safe to point at.")]
             self.guide.target = self._aim(alt, az)
         alt_now, az_now = self.position()
+        learned = self._learn_direction(az_now, t)  # before the cue: a flip must apply to it
         state, cue = self.guide.update(alt_now, az_now, t)
         out = [{"type": "state", "target": self.target, "right_is_plus_az": self.right_is_plus_az,
-                **asdict(state)}]
-        out += self._learn_direction(az_now, t, cue.text if cue else None)
+                **asdict(state)}, *learned]
+        if cue and learned:
+            cue = None  # let "Got it…" be heard; the next tick brings the (corrected) cue
         if cue:
+            self._start_direction_probe(cue.text, az_now, t)
             out.append(say(cue.text))
             if cue.text == "stop" and state.on_target and self._should_center():
                 self._centering, self.guide = True, None  # finish with the main camera
@@ -420,27 +424,31 @@ class Session:
             return "I lost track of where the telescope points. Say 'sync' and let me look again."
         return None
 
-    def _learn_direction(self, az: float, t: float, spoken: str | None) -> list[dict]:
-        """G3: after the first left/right cue, see which way the azimuth moved and adopt the
-        user's sense of left and right (once per session)."""
-        if self._direction_known:
+    def _learn_direction(self, az: float, t: float) -> list[dict]:
+        """G3: after the first left/right cue, the first clear azimuth move (within
+        DIRECTION_PROBE_S) shows the user's sense of left and right; adopt it once."""
+        if self._direction_known or self._direction_probe is None:
             return []
-        if self._direction_probe is not None and t - self._direction_probe[2] >= DIRECTION_PROBE_S:
-            word, az0, _ = self._direction_probe
-            self._direction_probe = None
-            learned = self._direction_learner.observe(word, wrap180(az - az0))
-            if learned is not None:
-                self._direction_known = True
-                if learned != self.right_is_plus_az:
-                    self.right_is_plus_az = learned
-                    if self.guide is not None:
-                        self.guide.right_is_plus_az = learned
-                    return [say("Got it, I'll use your left and right from now on.")]
-        if spoken and self._direction_probe is None:
-            word = next((w for w in ("left", "right") if w in spoken.split(", ")[0].split()), None)
-            if word:
-                self._direction_probe = (word, az, t)
-        return []
+        word, az0, t0 = self._direction_probe
+        learned = self._direction_learner.observe(word, wrap180(az - az0))
+        if learned is None:
+            if t - t0 >= DIRECTION_PROBE_S:
+                self._direction_probe = None  # no clear move in time: try the next cue
+            return []
+        self._direction_known, self._direction_probe = True, None
+        if learned == self.right_is_plus_az:
+            return []
+        self.right_is_plus_az = learned
+        if self.guide is not None:
+            self.guide.right_is_plus_az = learned
+        return [say("Got it, I'll use your left and right from now on.")]
+
+    def _start_direction_probe(self, spoken: str, az: float, t: float) -> None:
+        if self._direction_known or self._direction_probe is not None:
+            return
+        word = next((w for w in ("left", "right") if w in spoken.split(", ")[0].split()), None)
+        if word:
+            self._direction_probe = (word, az, t)
 
     def _aim(self, alt: float, az: float) -> tuple[float, float]:
         """Where the finder model should point so the target lands in the main camera."""

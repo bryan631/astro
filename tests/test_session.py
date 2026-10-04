@@ -114,3 +114,44 @@ def test_learns_the_users_left_and_right():
     assert "Got it, I'll use your left and right from now on." in said
     assert s.right_is_plus_az is False and state["on_target"]
     assert state["right_is_plus_az"] is False  # the tablet arrow follows the user's sense
+
+
+def _guiding_session(az):
+    from astro.guidance.engine import Guide
+
+    pos = {"alt": 45.0, "az": az}
+    s = Session(WPB, lambda: (pos["alt"], pos["az"]), clock=lambda: EVENING)
+    s.target = "Albireo"
+    s.guide = Guide(45.0, az + 10.0)
+    s._resolved_at = 1e9  # keep the test's target (no catalog refresh)
+    return s, pos
+
+
+def test_direction_flip_is_heard_without_a_stale_cue():
+    s, pos = _guiding_session(100.0)
+    s._direction_probe = ("right", 100.0, 0.0)  # we said "right"...
+    pos["az"] = 99.0  # ...and the user pushed toward smaller azimuth
+    said = texts(s.tick(0.2))
+    assert said == ["Got it, I'll use your left and right from now on."]
+    assert s.right_is_plus_az is False and s.guide.right_is_plus_az is False
+
+
+def test_direction_settles_on_the_first_clear_move_and_expires():
+    s, pos = _guiding_session(100.0)
+    s._direction_probe = ("right", 100.0, 0.0)
+    pos["az"] = 100.6  # clear move well inside the window
+    s.tick(0.3)
+    assert s._direction_known and s.right_is_plus_az is True
+    s2, _ = _guiding_session(100.0)
+    s2._direction_probe = ("right", 100.0, 0.0)
+    s2.tick(2.0)  # no movement within the window: discarded, not learned
+    assert not s2._direction_known
+    assert s2._direction_probe is None or s2._direction_probe[2] == 2.0  # only a fresh probe
+
+
+def test_probe_is_dropped_when_guidance_stops():
+    s, _ = _guiding_session(100.0)
+    s._direction_probe = ("right", 100.0, 0.0)
+    s.handle("stop")
+    s.tick(0.5)
+    assert s._direction_probe is None
