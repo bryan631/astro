@@ -261,7 +261,7 @@ def get_hub() -> Hub:
     lasts while any tablet is connected, then starts fresh."""
     global _sim_hub, _real_hub
     if SIM:
-        if _sim_hub is None or not _sim_hub.clients:
+        if _sim_hub is None:  # dropped when its last tablet leaves (see ws)
             _sim_hub = Hub(*build_session())
         return _sim_hub
     if _real_hub is None:
@@ -275,6 +275,7 @@ _sim_hub: Hub | None = None
 
 @app.websocket("/ws")
 async def ws(socket: WebSocket) -> None:
+    global _sim_hub
     await socket.accept()
     try:
         hub = get_hub()
@@ -303,6 +304,8 @@ async def ws(socket: WebSocket) -> None:
         pass
     finally:
         hub.leave(socket)
+        if hub is _sim_hub and not hub.clients:
+            _sim_hub = None  # the next tablet starts a fresh simulated world
 
 
 async def handle_message(hub: Hub, socket: WebSocket, msg: dict) -> None:

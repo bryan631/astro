@@ -68,7 +68,7 @@ function handle(m) {
   if (m.type === "picture") document.getElementById("live").hidden = true;
   if (m.type === "say") { said.textContent = m.text; speak(m.text); }
   if (m.type === "state") {
-    beepHz = m.on_target ? 0 : m.beep_hz;
+    beepHz = m.on_target ? 0 : m.beep_hz; stateAt = performance.now();
     arrow.hidden = false;
     document.body.classList.toggle("on-target", m.on_target);
     if (m.on_target) { arrow.innerHTML = "&#x25CF;"; arrow.style.transform = ""; dist.textContent = "On target"; return; }
@@ -111,7 +111,8 @@ document.getElementById("pics").onclick = () => {
 document.getElementById("mode").onclick = () => document.body.classList.toggle("day");
 
 // Optional proximity beeps (G4): faster as the target gets closer.
-let beepHz = 0, beepsOn = false, audio = null, lastBeep = 0;
+// States stream at 10 Hz while guiding; when they stop (stop, disconnect), so do the beeps.
+let beepHz = 0, beepsOn = false, audio = null, lastBeep = 0, stateAt = 0;
 document.getElementById("beeps").onclick = e => {
   beepsOn = !beepsOn;
   e.target.textContent = beepsOn ? "Beeps on" : "Beeps off";
@@ -119,6 +120,7 @@ document.getElementById("beeps").onclick = e => {
 };
 setInterval(() => {
   const now = performance.now();
+  if (now - stateAt > 1000) beepHz = 0;
   if (!beepsOn || !audio || beepHz <= 0 || now - lastBeep < 1000 / beepHz) return;
   lastBeep = now;
   const osc = audio.createOscillator(), gain = audio.createGain();
