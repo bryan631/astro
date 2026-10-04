@@ -229,9 +229,8 @@ async def ws(socket: WebSocket) -> None:
                                                     data.get("alt"), data.get("accuracy")):
                         await hub.broadcast(out)
                 elif data.get("type") == "location_error":
-                    await hub.broadcast({"type": "say", "text": "I couldn't get the tablet's "
-                                         f"location. {data.get('message', '')} Using the saved "
-                                         "location for now."})
+                    for out in session.location_failed(str(data.get("message", ""))):
+                        await hub.broadcast(out)
     except WebSocketDisconnect:
         pass
     finally:

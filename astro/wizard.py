@@ -27,12 +27,23 @@ class SetupWizard:
         self.active = True
 
     def start(self) -> Reply:
-        """Ask for the location right away (the tablet answers by itself), then the first sync."""
-        self.step = "sync"
+        """Ask the tablet for the location; the first sync waits until it answers, because a
+        new location resets the mount model (and would wipe a sync made in the meantime)."""
+        self.step = "location"
         return [say("Let's set up the telescope here. First, the location."),
-                *self.request_location(), say(self._sync_prompt())]
+                *self.request_location()]
+
+    def location_done(self) -> Reply:
+        """The GPS fix (or a failure, keeping the saved site) arrived: on to the first sync."""
+        if self.step != "location":
+            return []
+        self.step = "sync"
+        return [say(self._sync_prompt())]
 
     def ready(self) -> Reply:
+        if self.step == "location":
+            return [say("I'm still waiting for the tablet's location. Say skip to use the "
+                        "saved one.")]
         if self.step == "sync":
             ok, msg = self.sync()
             if not ok:
@@ -45,6 +56,8 @@ class SetupWizard:
         return []
 
     def skip(self) -> Reply:
+        if self.step == "location":
+            return self.location_done()
         if self.step == "sync":
             self.step = "horizon"
             return [say(self._horizon_prompt())]

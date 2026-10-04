@@ -223,7 +223,9 @@ class Session:
             return [say("Let's make sure it's sharp first."), *self.start_main_focus()]
         if self._camera_busy():
             return [say("I'm already recording." if self.recorder.busy else "I'm already stacking.")]
-        self._centering = False  # the picture takes over the camera
+        # The picture takes over the camera, and guidance goes quiet: no "right a little" while
+        # the user was asked not to touch the telescope. The target is kept.
+        self._centering, self.guide = False, None
         name = self.target or "capture"
         try:
             if self.target is None or self.target in self._extended_targets():
@@ -242,6 +244,8 @@ class Session:
         return any(job is not None and job.busy for job in (self.recorder, self.stacker))
 
     def goto(self, name: str) -> list[dict]:
+        if self._camera_busy():
+            return [say("I'm taking a picture. Say stop first, then we can move.")]
         pre: list[dict] = []
         if self.finder is not None and not self.finder.synced:
             ok, msg = self.finder.sync()  # need to know where we point before guiding
@@ -542,7 +546,17 @@ class Session:
         if self.on_site_change:
             self.on_site_change(new)
         near = f", accurate to about {accuracy_m:.0f} meters" if accuracy_m else ""
-        return [say(f"Got it, I know where we are{near}.")]
+        out = [say(f"Got it, I know where we are{near}.")]
+        if self.wizard_active:  # setup was waiting for this before the first sync
+            out += self.wizard.location_done()
+        return out
+
+    def location_failed(self, message: str) -> list[dict]:
+        """The tablet couldn't give a GPS fix: keep the saved site (setup moves on with it)."""
+        out = [say(f"I couldn't get the tablet's location. {message} Using the saved location.")]
+        if self.wizard_active:
+            out += self.wizard.location_done()
+        return out
 
     def exposure_safety(self) -> str | None:
         """Spoken reason why taking an exposure now is unsafe, else None (astro/safety.py)."""
