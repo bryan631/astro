@@ -259,16 +259,20 @@ class Hub:
 
 
 def get_hub() -> Hub:
-    """Sim: a fresh simulated world per connection. Real: one shared hub for the hardware."""
+    """One shared hub, so every tablet sees the same session (V8). Sim: the simulated world
+    lasts while any tablet is connected, then starts fresh."""
+    global _sim_hub, _real_hub
     if SIM:
-        return Hub(*build_session())
-    global _real_hub
+        if _sim_hub is None:  # dropped when its last tablet leaves (see ws)
+            _sim_hub = Hub(*build_session())
+        return _sim_hub
     if _real_hub is None:
         _real_hub = Hub(build_real_session(), None)
     return _real_hub
 
 
 _real_hub: Hub | None = None
+_sim_hub: Hub | None = None
 
 
 def _allowed(conn: Request | WebSocket) -> bool:
@@ -295,6 +299,7 @@ async def require_token(request: Request, call_next):
 
 @app.websocket("/ws")
 async def ws(socket: WebSocket) -> None:
+    global _sim_hub
     if not _allowed(socket):
         await socket.close(code=1008)  # policy violation
         return
@@ -326,6 +331,8 @@ async def ws(socket: WebSocket) -> None:
         pass
     finally:
         hub.leave(socket)
+        if hub is _sim_hub and not hub.clients:
+            _sim_hub = None  # the next tablet starts a fresh simulated world
 
 
 async def handle_message(hub: Hub, socket: WebSocket, msg: dict) -> None:

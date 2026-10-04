@@ -35,7 +35,7 @@
   <img id="live" hidden alt="live stack">
   <button id="talk">Hold to talk</button>
   <form id="typed"><input id="text" placeholder="or type here" autocomplete="off"><button class="small">Send</button></form>
-  <div><button class="small" id="mode">Day mode</button> <button class="small" id="pics">Pictures</button></div>
+  <div><button class="small" id="mode">Day mode</button> <button class="small" id="pics">Pictures</button> <button class="small" id="beeps">Beeps off</button></div>
   <div id="gallery" hidden></div>
 <script>
 const said = document.getElementById("said"), arrow = document.getElementById("arrow"),
@@ -69,6 +69,7 @@ function handle(m) {
   if (m.type === "hold") { arrow.hidden = true; dist.textContent = "Hold still"; }
   if (m.type === "say") { said.textContent = m.text; speak(m.text); }
   if (m.type === "state") {
+    beepHz = m.on_target ? 0 : m.beep_hz; stateAt = performance.now();
     arrow.hidden = false;
     document.body.classList.toggle("on-target", m.on_target);
     if (m.on_target) { arrow.innerHTML = "&#x25CF;"; arrow.style.transform = ""; dist.textContent = "On target"; return; }
@@ -109,6 +110,25 @@ document.getElementById("pics").onclick = () => {
   box.hidden ? showPictures() : (box.hidden = true);
 };
 document.getElementById("mode").onclick = () => document.body.classList.toggle("day");
+
+// Optional proximity beeps (G4): faster as the target gets closer.
+// States stream at 10 Hz while guiding; when they stop (stop, disconnect), so do the beeps.
+let beepHz = 0, beepsOn = false, audio = null, lastBeep = 0, stateAt = 0;
+document.getElementById("beeps").onclick = e => {
+  beepsOn = !beepsOn;
+  e.target.textContent = beepsOn ? "Beeps on" : "Beeps off";
+  audio = audio || new AudioContext();  // needs a tap before it may play
+};
+setInterval(() => {
+  const now = performance.now();
+  if (now - stateAt > 1000) beepHz = 0;
+  if (!beepsOn || !audio || beepHz <= 0 || now - lastBeep < 1000 / beepHz) return;
+  lastBeep = now;
+  const osc = audio.createOscillator(), gain = audio.createGain();
+  osc.frequency.value = 880; gain.gain.value = 0.1;
+  osc.connect(gain).connect(audio.destination);
+  osc.start(); osc.stop(audio.currentTime + 0.05);
+}, 25);
 
 // Speech input: record and send to the server (whisper.cpp) when available, which works
 // offline; otherwise use the browser's recognizer (on Android this may need internet).
