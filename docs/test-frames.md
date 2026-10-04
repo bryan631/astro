@@ -25,6 +25,6 @@ about it, since those are the most useful cases.
 | 15 | Twilight, sky still bright | `twilight` | not_sky |
 | 16 | Short exposure 0.2 s (`--exp 0.2`) on clear sky | `short_exp` | few_stars |
 | 17 | Long exposure 2 s (`--exp 2`) on clear sky | `long_exp` | solves |
-| 18 | Moon in view (`--exp 0.2`) | `moon` | not sure: record it |
+| 18 | Moon in view (`--exp 0.2`) | `moon` | auto (records what it gets) |
 
 Remember to put the focus back where it was after 11-13 (tape a mark on the ring first).
