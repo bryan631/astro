@@ -2,7 +2,7 @@
 
 ## Run locally (simulators, no hardware)
 
-    python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+    python3 -m venv .venv && .venv/bin/pip install -e ".[dev]" && scripts/install-solver.sh
     ASTRO_SIM=1 .venv/bin/pytest -q
     ASTRO_SIM=1 .venv/bin/uvicorn astro.server:app --host 0.0.0.0 --port 8000
 
