@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S sh -c 'exec "$(dirname "$0")/../../.venv/bin/python" "$0" "$@"'
+# Runs with the project .venv (relative to this file), from any directory.
 """List SVBony cameras, grab one RAW8 frame from each, save a debayered PNG."""
 import sys
 

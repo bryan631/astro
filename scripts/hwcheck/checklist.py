@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S sh -c 'exec "$(dirname "$0")/../../.venv/bin/python" "$0" "$@"'
+# Runs with the project .venv (relative to this file), from any directory.
 """Plan checklist per camera: 10x connect, ROI fps (RAW8), exposure sweep, debayer sample."""
 import sys
 import time

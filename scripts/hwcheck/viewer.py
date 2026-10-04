@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S sh -c 'exec "$(dirname "$0")/../../.venv/bin/python" "$0" "$@"'
+# Runs with the project .venv (relative to this file), from any directory.
 """Live camera window for focusing and hardware checks (matplotlib).
 
     .venv/bin/python scripts/hwcheck/viewer.py finder --exp 0.5 --gain 100
@@ -6,14 +7,6 @@ Keys: up/down exposure x2 / /2, right/left gain +/-20, s save raw frame (.npy), 
 Title shows fps, max pixel, sharpness (higher = sharper) and star count / HFR (lower = sharper).
 """
 
-import os
-import sys
-from pathlib import Path
-
-# Re-run under the project's .venv when started directly (./script.py uses the system python).
-_VENV = Path(__file__).resolve().parents[2] / ".venv" / "bin" / "python"
-if sys.prefix == sys.base_prefix and _VENV.exists():
-    os.execv(_VENV, [str(_VENV), *sys.argv])
 import argparse
 import time
 
