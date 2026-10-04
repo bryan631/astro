@@ -95,6 +95,15 @@ def test_timezone_lookup_uses_exact_coordinates(monkeypatch):
     coords._zone_at.cache_clear()
 
 
+def test_describe_target():
+    s, _ = make()
+    said = texts(s.handle("tell me about Albireo"))[0]
+    assert said.startswith("Albireo is a double star (Beta Cygni). Gold and blue pair")
+    assert "degrees up, toward the" in said
+    assert "below the horizon" in texts(s.handle("what is M41"))[0]  # October evening
+    assert texts(s.handle("tell me about pizza")) == ["I don't know pizza."]
+
+
 def test_learns_the_users_left_and_right():
     """Review G3: a user whose 'right' turns the scope toward smaller azimuth still arrives."""
     s, scope = make(scope=SimScope(45, 300))

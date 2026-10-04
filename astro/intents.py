@@ -11,7 +11,8 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class Intent:
     name: str  # goto, stop, next, tonight, capture, stop_capture, focus, finder_focus, sync,
-    # where, barlow_on, barlow_off, location, horizon_start, horizon_mark, setup, ready, skip
+    # where, barlow_on, barlow_off, location, horizon_start, horizon_mark, setup, ready, skip,
+    # describe
     target: str | None = None
 
 
@@ -36,6 +37,7 @@ _PATTERNS = [
     # Before "tonight": "show me Saturn tonight" is a goto (but see _goto_target).
     ("goto", r"\b(?:go ?to|find|show me|point (?:at|to)|take me to|look at)\s+(?:the\s+)?(.+)"),
     ("tonight", r"\b(what('s| is) (good|up|out|visible)|what can i see|tonight)\b"),
+    ("describe", r"\b(?:tell me about|what is|what's|describe)\s+(?:the\s+)?(.+)"),
     ("capture", r"\b(capture|take (a )?(picture|photo|image)s?|record)\b"),
 ]
 _NOT_A_TARGET = ("what", "something", "anything", "good")  # "show me what's good tonight"
@@ -58,7 +60,7 @@ def parse(text: str) -> Intent | None:
         m = re.search(pattern, t)
         if not m:
             continue
-        if name == "goto":
+        if name in ("goto", "describe"):
             target = _goto_target(m.group(1))
             if target is None:
                 continue  # e.g. "show me what's good tonight" -> tonight
