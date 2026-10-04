@@ -96,3 +96,34 @@ def test_failed_mcu_start_closes_port_and_camera(monkeypatch):
     with pytest.raises(OSError):
         devices_config.build_pointing(cfg, None, WPB, lambda: NOW)
     assert closed == ["mcu", "camera"]
+
+
+def test_handset_mount_driver_reads_encoders(monkeypatch):
+    from astro.devices import config as devices_config
+    from astro.devices import handset as handset_module
+
+    class Cam:
+        def close(self):
+            pass
+
+    class FakeHandset:
+        def __init__(self, port):
+            self.port = port
+
+        def counts(self):
+            return (2304, 1152)  # 90 deg az, 45 deg alt
+
+        def position_age(self):
+            return 0.2
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(devices_config, "open_camera", lambda cfg: Cam())
+    monkeypatch.setattr(handset_module, "Handset", FakeHandset)
+    cfg = {"finder": {"driver": "svbony", "model": "X"}, "main": {"driver": "none"},
+           "mount": {"driver": "handset", "port": "/dev/ttyUSB1"}}
+    finder, close = devices_config.build_pointing(cfg, None, WPB, lambda: NOW)
+    assert finder.encoders() == (pytest.approx(45.0), pytest.approx(90.0))
+    assert finder.encoder_age() == 0.2
+    close()

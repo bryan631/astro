@@ -72,8 +72,9 @@ function handle(m) {
     document.body.classList.toggle("on-target", m.on_target);
     if (m.on_target) { arrow.innerHTML = "&#x25CF;"; arrow.style.transform = ""; dist.textContent = "On target"; return; }
     arrow.innerHTML = "&#x2191;";
-    // Screen up = push up; screen right = push right (az sign handled server-side later).
-    const angle = Math.atan2(m.d_az_sky_deg, m.d_alt_deg) * 180 / Math.PI;
+    // Screen up = push up; screen right = the user's right (learned server-side, G3).
+    const right = m.right_is_plus_az === false ? -m.d_az_sky_deg : m.d_az_sky_deg;
+    const angle = Math.atan2(right, m.d_alt_deg) * 180 / Math.PI;
     arrow.style.transform = `rotate(${angle}deg)`;
     const d = m.distance_deg;
     dist.textContent = d >= 1 ? `${d.toFixed(0)}°` : `${(d * 60).toFixed(0)}′`;

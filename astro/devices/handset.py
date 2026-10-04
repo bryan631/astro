@@ -7,6 +7,7 @@ USB-RS232 adapter; 9600 baud 8N1. Implements `MountEncoders`.
 """
 
 import re
+import time
 
 import serial
 
@@ -26,7 +27,12 @@ class Handset:
     def __init__(self, port: str, serial_factory=serial.Serial):
         self._ser = serial_factory(port, BAUD, timeout=0.3)
         self._last = (0, 0)
+        self._last_ok = time.monotonic()
         self.failures = 0  # consecutive unanswered queries (cable out, handset off)
+
+    def position_age(self) -> float:
+        """Seconds since the handset last answered (the session stops guiding when stale)."""
+        return time.monotonic() - self._last_ok
 
     def counts(self) -> tuple[int, int]:
         """MountEncoders: query the handset; keep the last good reading if it doesn't answer."""
@@ -39,7 +45,7 @@ class Handset:
         if reply is None:
             self.failures += 1
             return self._last
-        self.failures, self._last = 0, reply
+        self.failures, self._last, self._last_ok = 0, reply, time.monotonic()
         return reply
 
     def close(self) -> None:
