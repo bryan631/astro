@@ -39,6 +39,8 @@ class SimUser:
     def _interpret(self, text: str) -> tuple[float, float]:
         if text == "stop":
             return (0.0, 0.0)
+        if text == "keep going":
+            return self.v
         if text == "slower":
             return (self.v[0] / 3, self.v[1] / 3)
         speed = next((s for k, s in self.SPEEDS.items() if k in text), 1.0)
