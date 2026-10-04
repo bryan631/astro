@@ -3,7 +3,9 @@
 Description=Monthly astro cert renewal
 
 [Timer]
-OnCalendar=monthly
+# Midday on the 1st, never during an observing night. A run missed while the MiniPC was off
+# happens at the next boot, before a session starts, so a restart then costs nothing.
+OnCalendar=*-*-01 12:00:00
 Persistent=true
 
 [Install]

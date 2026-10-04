@@ -5,12 +5,14 @@ In sim mode a simulated user follows the spoken cues so the whole loop can be wa
 """
 
 import asyncio
+import contextlib
 import functools
 import json
 import logging
 import os
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -35,6 +37,7 @@ from astro.voice.speech import Stt, Tts
 
 ROOT = Path(__file__).resolve().parents[1]
 SIM = os.environ.get("ASTRO_SIM") == "1"
+OFFLINE = os.environ.get("ASTRO_OFFLINE") == "1"  # no forecast fetches (tests, field hotspot)
 TICK_S = 0.1
 THINKING_AFTER_S = 1.0  # say "Let me think." if an answer takes longer than this
 
@@ -48,7 +51,6 @@ def load_env(path: Path = ROOT / ".env") -> None:
                 os.environ.setdefault(key.strip(), value.strip().strip('"'))
 
 
-load_env()
 log = logging.getLogger("astro.server")
 LOGGED = {"say", "picture", "get_location"}  # not the 10 Hz "state" or "live" updates
 
@@ -73,29 +75,48 @@ def build_session() -> tuple[Session, SimScope | None]:
                       on_site_change=lambda s: on_site_change(s, camera, main),
                       horizon=horizon_store.load(ROOT),
                       on_horizon_change=lambda m: horizon_store.save(ROOT, m),
-                      weather=cloud_cover_pct)
+                      weather=None if OFFLINE else cloud_cover_pct)
     return session, scope
 
 
 @functools.cache
 def build_real_session() -> Session:
-    """Real hardware is opened once per process; every tablet shares this session (one Hub)."""
+    """Real hardware is opened once per process; every tablet shares this session (one Hub).
+
+    Everything opened is recorded in `_hardware_closers`: a failure part-way closes it all
+    again, and shutdown closes it (heaters off, cameras and solver released)."""
     site, clock = load_site(), utcnow
     cfg = devices.load(Path(os.environ.get("ASTRO_DEVICES", ROOT / "config" / "devices.toml")))
     devices.validate(cfg)  # all drivers known before any hardware opens
-    finder, close_pointing = devices.build_pointing(cfg, solver(), site, clock)
     try:
+        finder, close_pointing = devices.build_pointing(cfg, solver(), site, clock)
+        _hardware_closers.append(close_pointing)
         main = devices.open_camera(cfg["main"]) if cfg["main"]["driver"] != "none" else None
+        if main is not None:
+            _hardware_closers.append(main.close)
+        override = os.environ.get("ASTRO_DEV_OVERRIDE") == "1"
+        return Session(site, clock=clock, developer_override=override, finder=finder,
+                       main_camera=main, main_sensor=main.sensor_size if main else (3856, 2180),
+                       data_dir=ROOT / "data", on_site_change=lambda s: site_store.save(ROOT, s),
+                       horizon=horizon_store.load(ROOT),
+                       on_horizon_change=lambda m: horizon_store.save(ROOT, m),
+                       weather=None if OFFLINE else cloud_cover_pct)
     except Exception:
-        close_pointing()  # roll back, so the next attempt doesn't find the finder still owned
+        close_hardware()  # roll back, so the next attempt doesn't find devices still owned
         raise
-    override = os.environ.get("ASTRO_DEV_OVERRIDE") == "1"
-    return Session(site, clock=clock, developer_override=override, finder=finder,
-                   main_camera=main, main_sensor=main.sensor_size if main else (3856, 2180),
-                   data_dir=ROOT / "data", on_site_change=lambda s: site_store.save(ROOT, s),
-                   horizon=horizon_store.load(ROOT),
-                   on_horizon_change=lambda m: horizon_store.save(ROOT, m),
-                   weather=cloud_cover_pct)
+
+
+_hardware_closers: list[Callable[[], None]] = []
+
+
+def close_hardware() -> None:
+    """Close every real device opened, newest first; keep going if one fails."""
+    while _hardware_closers:
+        closer = _hardware_closers.pop()
+        try:
+            closer()
+        except Exception:
+            log.exception("closing hardware failed")
 
 
 def on_site_change(site: Site, finder_cam: SimFinderCamera, main_cam: SimMainCamera) -> None:
@@ -110,18 +131,25 @@ def solver() -> FinderSolver:
     return FinderSolver()  # loads the star database once per process
 
 
-app = FastAPI()
+@contextlib.asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup work lives here, not at import (importing must not touch .env, data/ or the
+    network); shutdown releases the hardware (S5: heaters off on host shutdown)."""
+    load_env()
+    GALLERY.mkdir(parents=True, exist_ok=True)
+    if not os.environ.get("ASTRO_NO_LOG_FILE"):  # tests
+        log.info("server start", extra={"data": {"log": str(logs.setup(ROOT)), "sim": SIM}})
+    warm_speech()
+    try:
+        yield
+    finally:  # also on errors/cancellation: never leave heaters, cameras or the solver running
+        close_hardware()
 
 
-@app.on_event("startup")
-def start_logging() -> None:
-    if os.environ.get("ASTRO_NO_LOG_FILE"):  # tests
-        return
-    log.info("server start", extra={"data": {"log": str(logs.setup(ROOT)), "sim": SIM}})
+app = FastAPI(lifespan=lifespan)
 stt, tts = Stt(), Tts()
 
 
-@app.on_event("startup")
 def warm_speech() -> None:
     """Load Piper and pre-render the guidance cues in the background: "stop" must be instant."""
     if tts.available():
@@ -260,6 +288,5 @@ def gallery() -> list[str]:
     return [p.name for p in files]
 
 
-GALLERY.mkdir(parents=True, exist_ok=True)
-app.mount("/pictures", StaticFiles(directory=GALLERY), name="pictures")
+app.mount("/pictures", StaticFiles(directory=GALLERY, check_dir=False), name="pictures")
 app.mount("/", StaticFiles(directory=ROOT / "web", html=True), name="web")

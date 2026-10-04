@@ -3,6 +3,7 @@ import os
 os.environ["ASTRO_SIM"] = "1"
 os.environ["ANTHROPIC_API_KEY"] = ""  # tests never call the real API
 os.environ["ASTRO_NO_LOG_FILE"] = "1"  # don't write data/logs from tests
+os.environ["ASTRO_OFFLINE"] = "1"  # no forecast fetches from tests
 
 import pytest
 from fastapi.testclient import TestClient
@@ -162,6 +163,35 @@ def test_failing_tick_does_not_end_guidance(monkeypatch):
     with TestClient(server.app).websocket_connect("/ws") as ws:
         assert "still guiding" in receive_until(ws, "say")
     assert calls["n"] >= 2
+
+
+def test_shutdown_closes_the_hardware(monkeypatch):
+    closed = []
+    monkeypatch.setattr(server, "_hardware_closers", [lambda: closed.append("finder"),
+                                                       lambda: closed.append("main")])
+    with TestClient(server.app):
+        pass  # startup, then shutdown
+    assert closed == ["main", "finder"]  # newest first
+
+
+def test_failed_session_build_rolls_back_everything(monkeypatch, tmp_path):
+    cfg = tmp_path / "devices.toml"
+    cfg.write_text('[finder]\ndriver = "svbony"\nmodel = "SV905C"\n'
+                   '[main]\ndriver = "none"\n[mount]\ndriver = "solve"\n')
+    closed = []
+    monkeypatch.setenv("ASTRO_DEVICES", str(cfg))
+    monkeypatch.setattr(server.devices, "build_pointing",
+                        lambda *a: (object(), lambda: closed.append("pointing")))
+
+    def corrupt(root):
+        raise ValueError("bad data/horizon.toml")
+
+    monkeypatch.setattr(server.horizon_store, "load", corrupt)
+    server.build_real_session.cache_clear()
+    with pytest.raises(ValueError):
+        server.build_real_session()
+    assert closed == ["pointing"] and server._hardware_closers == []
+    server.build_real_session.cache_clear()
 
 
 def test_slow_answer_says_let_me_think(monkeypatch):
