@@ -2,6 +2,7 @@ import os
 
 os.environ["ASTRO_SIM"] = "1"
 os.environ["ANTHROPIC_API_KEY"] = ""  # tests never call the real API
+os.environ["ASTRO_NO_LOG_FILE"] = "1"  # don't write data/logs from tests
 
 import pytest
 from fastapi.testclient import TestClient
