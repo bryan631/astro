@@ -7,6 +7,7 @@ The finder (SV905C + 25 mm lens) sees ~11 x 8 deg, inside the bundled database's
 range. Raw Bayer frames are 2x2-binned to grayscale first: faster, and color is not needed.
 """
 
+import math
 import time
 from dataclasses import dataclass
 
@@ -35,6 +36,11 @@ class Solution:
     matches: int
     false_prob: float  # probability the match is a coincidence; lower is better
     ms: float
+
+    @property
+    def confidence(self) -> float:
+        """-log10(false_prob): 12 means a 1e-12 chance of a coincidental match. Higher is better."""
+        return -math.log10(max(self.false_prob, 1e-300))
 
 
 def bin2x2(raw: np.ndarray) -> np.ndarray:

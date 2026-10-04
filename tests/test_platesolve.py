@@ -76,3 +76,9 @@ def test_real_finder_frame_solves(solver):
     assert sol is not None and sol.matches >= 8
     assert separation_deg(sol.dec_deg, sol.ra_deg, 2.112, 10.014) < 0.02
     assert sol.fov_deg == pytest.approx(10.39, abs=0.05)
+
+
+def test_confidence_is_minus_log10_false_prob():
+    from astro.pointing.platesolve import Solution
+
+    assert Solution(0, 0, 0, 10, 0, 10, 1e-12, 5).confidence == pytest.approx(12)
