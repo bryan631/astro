@@ -20,5 +20,6 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -e ".[dev]"
+      - run: pip install --no-deps "git+https://github.com/smroid/cedar-solve@607e3f8da7db0743bb6a26037e21c40b6befe49a"
       - run: ruff check .
       - run: pytest -q
