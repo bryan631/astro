@@ -14,6 +14,7 @@ from pathlib import Path
 import numpy as np
 
 from astro.capture.focus import FocusCoach, laplacian_variance
+from astro.capture.live_stacker import LiveStacker
 from astro.capture.recorder import CaptureRefused, Recorder
 from astro.capture.roi import brightest_blob, roi_around
 from astro.devices.base import Camera
@@ -34,6 +35,7 @@ FOCUS_STEP_S = 1.0  # one finder focus measurement per second while coaching
 MIN_HFR_PX = 0.5  # floor so a perfectly sharp (tiny) star can't blow up the focus score
 TOLERANCE_ARCMIN = {False: 4.0, True: 2.0}  # guidance tolerance without / with the 2x Barlow
 RECORD_SECONDS = 60  # planetary video length
+STACK_SECONDS = 90  # deep-sky live stack; the target drifts out of the field in ~2 min
 FOCUS_CROP_PX = 256  # sharpness measured on a crop around the planet
 SITE_MOVE_KM = 1.0  # moving farther than this from the model's site invalidates the mount model
 EARTH_RADIUS_KM = 6371.0
@@ -73,6 +75,11 @@ class Session:
                                   self.exposure_safety) if main_camera else None)
         self._announced_done = True
         self.gallery_dir = data_dir / "gallery"
+        self.stack_seconds = STACK_SECONDS
+        self.stacker = (LiveStacker(main_camera, self.gallery_dir, self.exposure_safety)
+                        if main_camera else None)
+        self._stack_done_announced = True
+        self._preview_seen = 0
         self._processor = ThreadPoolExecutor(max_workers=1)  # one stacking job at a time
         self._jobs: list[tuple[str, Future[StackResult]]] = []  # pictures being made, in order
         self._focus_at = -1e9
@@ -108,6 +115,8 @@ class Session:
                     self.main_focus_ok = True
                 self._focus_coach = None
                 return [say("OK, focus is set.")]
+            if self._camera_busy():  # "stop" while taking a picture ends the picture
+                return self._handle("stop recording")
             self.target, self.guide = None, None
             return [say("Stopped.")]
         if intent.name in ("barlow_on", "barlow_off"):
@@ -123,6 +132,9 @@ class Session:
         if intent.name == "capture":
             return self.capture()
         if intent.name == "stop_capture":
+            if self.stacker is not None and self.stacker.busy:
+                self.stacker.stop()
+                return [say("Stopping. I'll keep what's stacked so far.")]
             if self.recorder is None or not self.recorder.busy:
                 return [say("We're not recording.")]
             self.recorder.stop()
@@ -159,7 +171,7 @@ class Session:
     def start_main_focus(self) -> list[dict]:
         if self.main_camera is None:
             return [say("There's no main camera connected.")]
-        if self.recorder is not None and self.recorder.busy:  # one user of the camera at a time
+        if self._camera_busy():  # one user of the camera at a time
             return [say("I'm recording right now. Say 'stop recording' first.")]
         self.guide = None  # keep the target; we're on it
         self.main_focus_ok = False  # a new focus pass must finish before capture
@@ -174,12 +186,24 @@ class Session:
             return [say("Let's finish focusing first. Say done when it's sharpest.")]
         if not self.main_focus_ok:  # pre-flight gate (plan Phase 1 step 8)
             return [say("Let's make sure it's sharp first."), *self.start_main_focus()]
+        if self._camera_busy():
+            return [say("I'm already recording." if self.recorder.busy else "I'm already stacking.")]
+        name = self.target or "capture"
         try:
-            self.recorder.start(self.target or "capture", self.record_seconds)
+            if self.target is None or self.target in self._extended_targets():
+                self.recorder.start(name, self.record_seconds)
+                self._announced_done = False
+                return [say(f"Recording for {self.record_seconds:g} seconds. "
+                            "Try not to touch the telescope.")]
+            self.stacker.start(name, self.stack_seconds)  # deep-sky: live stack short subs
         except CaptureRefused as e:
             return [say(str(e))]
-        self._announced_done = False
-        return [say(f"Recording for {self.record_seconds:g} seconds. Try not to touch the telescope.")]
+        self._stack_done_announced, self._preview_seen = False, 0
+        return [say(f"Stacking short pictures of {name}. Watch it build up on the screen. "
+                    "Try not to touch the telescope.")]
+
+    def _camera_busy(self) -> bool:
+        return any(job is not None and job.busy for job in (self.recorder, self.stacker))
 
     def goto(self, name: str) -> list[dict]:
         pre: list[dict] = []
@@ -242,6 +266,14 @@ class Session:
             return [say(f"Done. I saved {rec.frames} frames. I'm making your picture now.")]
         if self._jobs and self._jobs[0][1].done():
             return self._announce_picture()
+        if (live := self.stacker.current if self.stacker else None) is not None:
+            if live.preview_version > self._preview_seen:  # tablet refreshes the live view
+                self._preview_seen = live.preview_version
+                if not live.done.is_set():
+                    return [{"type": "live", "file": live.preview.name, "frames": live.frames}]
+            if live.done.is_set() and not self._stack_done_announced:
+                self._stack_done_announced = True
+                return self._announce_stack(live)
         if self._focus_coach is not None:
             if self._focus_mode == "main":
                 return self._main_focus_step(t)
@@ -312,6 +344,14 @@ class Session:
             return [say(f"I couldn't make the picture of {name}: {e}")]
         return [say(f"Your picture of {name} is ready. Tap Pictures to see it."),
                 {"type": "picture", "file": result.path.name}]
+
+    def _announce_stack(self, live) -> list[dict]:
+        if not live.frames:
+            return [say(live.error or f"I couldn't stack any pictures of {live.name}.")]
+        why = f"{live.error} " if live.error else ""
+        return [say(f"{why}Your picture of {live.name} is ready, from {live.frames} short "
+                    "pictures. Tap Pictures to see it."),
+                {"type": "picture", "file": live.preview.name}]
 
     def _camera_failed(self, which: str, error: Exception) -> list[dict]:
         """A camera failed even after the driver's retry: stop focusing and say so."""
