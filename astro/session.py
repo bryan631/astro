@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from astro.capture.focus import FocusCoach, laplacian_variance
-from astro.capture.recorder import Recorder
+from astro.capture.recorder import CaptureRefused, Recorder
 from astro.capture.roi import brightest_blob, roi_around
 from astro.devices.base import Camera
 from astro.guidance.engine import Guide
@@ -21,7 +21,7 @@ from astro.planner.tonight import PLANETS, plan
 from astro.pointing.coords import Site, body_altaz, radec_to_altaz
 from astro.pointing.finder_sync import FinderSync, check_focus
 from astro.pointing.geometry import separation_deg
-from astro.safety import check_target
+from astro.safety import DAYTIME_SUN_ALT_DEG, check_target
 
 Clock = Callable[[], datetime]
 TARGET_REFRESH_S = 1.0  # targets drift ~15"/s, so re-resolve their alt/az once a second
@@ -59,7 +59,8 @@ class Session:
         self.barlow = False
         self.main_focus_ok = False  # pre-flight gate: reset per session and on Barlow change
         self.record_seconds = RECORD_SECONDS
-        self.recorder = Recorder(main_camera, main_sensor, data_dir / "captures") if main_camera else None
+        self.recorder = (Recorder(main_camera, main_sensor, data_dir / "captures",
+                                  self.exposure_safety) if main_camera else None)
         self._announced_done = True
         self._focus_at = -1e9
         # Commands and the guidance tick run on worker threads (camera calls block), so
@@ -99,6 +100,8 @@ class Session:
         if intent.name in ("barlow_on", "barlow_off"):
             self.barlow = intent.name == "barlow_on"
             self.main_focus_ok = False
+            if self.guide is not None:  # an active guide switches tolerance too
+                self.guide.tol_deg = TOLERANCE_ARCMIN[self.barlow] / 60
             return [say("Got it. The Barlow changes focus, so we'll refocus before taking pictures.")]
         if intent.name == "focus":
             return self.start_main_focus()
@@ -149,9 +152,10 @@ class Session:
             return [say("There's no main camera connected.")]
         if not self.main_focus_ok:  # pre-flight gate (plan Phase 1 step 8)
             return [say("Let's make sure it's sharp first."), *self.start_main_focus()]
-        rec = self.recorder.start(self.target or "capture", self.record_seconds)
-        if rec is None:
-            return [say("I don't see anything bright in the main camera. Let's center it first.")]
+        try:
+            self.recorder.start(self.target or "capture", self.record_seconds)
+        except CaptureRefused as e:
+            return [say(str(e))]
         self._announced_done = False
         return [say(f"Recording for {self.record_seconds:g} seconds. Try not to touch the telescope.")]
 
@@ -209,8 +213,9 @@ class Session:
         rec = self.recorder.current if self.recorder else None
         if rec is not None and rec.done.is_set() and not self._announced_done:
             self._announced_done = True
-            why = " The planet drifted out of view, so I stopped early." if rec.lost else ""
-            return [say(f"Done. I saved {rec.frames} frames.{why}")]
+            if rec.error:
+                return [say(f"{rec.error} I saved {rec.frames} frames.")]
+            return [say(f"Done. I saved {rec.frames} frames.")]
         if self._focus_coach is not None:
             if self._focus_mode == "main":
                 return self._main_focus_step(t)
@@ -235,6 +240,8 @@ class Session:
         if t - self._focus_at < FOCUS_STEP_S or self.finder is None or self._focus_coach is None:
             return []
         self._focus_at = t
+        if stop := self._stop_focus_if_unsafe():
+            return stop
         report = self.finder.focus_report()
         if report.stars == 0:
             return [say("I can't see any stars yet.")]
@@ -247,6 +254,8 @@ class Session:
         if t - self._focus_at < FOCUS_STEP_S or self.main_camera is None or self._focus_coach is None:
             return []
         self._focus_at = t
+        if stop := self._stop_focus_if_unsafe():
+            return stop
         frame = self.main_camera.capture()
         if self.target is None or self.target in self._extended_targets():
             center = brightest_blob(frame)
@@ -262,6 +271,23 @@ class Session:
             score = 1 / max(report.hfr_px, MIN_HFR_PX)
         cue = self._focus_coach.update(score)
         return [say(cue)] if cue else []
+
+    def exposure_safety(self) -> str | None:
+        """Spoken reason why taking an exposure now is unsafe, else None (astro/safety.py)."""
+        when = self.clock()
+        if self.finder is not None and not self.finder.synced:
+            # Pointing unknown: we can't rule out the Sun, so allow only when it is down.
+            if body_altaz("sun", self.site, when)[0] > DAYTIME_SUN_ALT_DEG:
+                return "it's daytime and I don't know where the telescope is pointing"
+            return None
+        result = check_target(*self.position(), self.site, when, self.override)
+        return None if result.ok else f"the telescope is pointing {result.reason}"
+
+    def _stop_focus_if_unsafe(self) -> list[dict]:
+        if reason := self.exposure_safety():
+            self._focus_coach = None
+            return [say(f"I stopped focusing: {reason}.")]
+        return []
 
     def _extended_targets(self) -> set[str]:
         return {p.capitalize() for p in PLANETS} | {"Moon"}

@@ -31,15 +31,15 @@ def update(_):
 
 
 def on_key(event):
-    cam = live.cam
+    cam = live.cam  # read only here; changes go through live.request (capture thread applies)
     if event.key == "up":
-        cam.set_exposure(cam.exposure_s * 2)
+        live.request(exposure_s=cam.exposure_s * 2)
     elif event.key == "down":
-        cam.set_exposure(cam.exposure_s / 2)
+        live.request(exposure_s=cam.exposure_s / 2)
     elif event.key == "right":
-        cam.set_gain(cam.gain + 20)
+        live.request(gain=cam.gain + 20)
     elif event.key == "left":
-        cam.set_gain(max(cam.gain - 20, 0))
+        live.request(gain=max(cam.gain - 20, 0))
     elif event.key == "s" and live.raw is not None:
         name = f"{args.cam}_{int(time.time())}.npy"
         np.save(name, live.raw)

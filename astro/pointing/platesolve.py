@@ -4,7 +4,7 @@ Angles are degrees at the interface (astronomy convention, matching astropy and 
 roll follows tetra3's convention. Install the solver with scripts/install-solver.sh.
 
 The finder (SV905C + 25 mm lens) sees ~11 x 8 deg, inside the bundled database's 10-30 deg
-range. Raw Bayer frames are 2x2-binned to grayscale first: faster, and colour is not needed.
+range. Raw Bayer frames are 2x2-binned to grayscale first: faster, and color is not needed.
 """
 
 import time
@@ -12,12 +12,13 @@ from dataclasses import dataclass
 
 import numpy as np
 import tetra3
+from numpy.lib.stride_tricks import sliding_window_view
 from PIL import Image
 from scipy import ndimage
 
 FINDER_FOV_DEG = 11.0
-# A hot pixel stands this far (ADU) above all 8 neighbours while those neighbours stay near the
-# local background; starlight always lifts the neighbours. 20 ADU flags 15 pixels on a capped
+# A hot pixel stands this far (ADU) above all 8 neighbors while those neighbors stay near the
+# local background; starlight always lifts the neighbors. 20 ADU flags 15 pixels on a capped
 # SV905C frame at gain 1000 and spares stars.
 HOT_PIXEL_ADU = 20
 _RING = np.ones((3, 3), bool)
@@ -43,16 +44,18 @@ def bin2x2(raw: np.ndarray) -> np.ndarray:
 
 
 def remove_hot_pixels(raw: np.ndarray) -> np.ndarray:
-    """Replace isolated hot pixels with their neighbourhood median (float32 result)."""
+    """Replace isolated hot pixels with the median of their 8 neighbors (float32 result)."""
     img = raw.astype(np.float32)
-    neighbours = ndimage.maximum_filter(img, footprint=_RING, mode="nearest")
-    h, w = img.shape
-    # Few pixels pass the first test, so check the background only around those.
-    for y, x in np.argwhere(img - neighbours > HOT_PIXEL_ADU):
-        patch = img[max(y - 2, 0):y + 3, max(x - 2, 0):x + 3]
-        if neighbours[y, x] - np.median(patch) < HOT_PIXEL_ADU:
-            ring = img[max(y - 1, 0):min(y + 2, h), max(x - 1, 0):min(x + 2, w)].ravel()
-            img[y, x] = np.median(np.delete(ring, ring.argmax()))  # drop the hot pixel itself
+    neighbors = ndimage.maximum_filter(img, footprint=_RING, mode="nearest")
+    ys, xs = np.nonzero(img - neighbors > HOT_PIXEL_ADU)  # few candidates: check only those
+    if len(ys) == 0:
+        return img
+    # 5x5 patch around each candidate, all at once (edge-padded so borders work too).
+    patches = sliding_window_view(np.pad(img, 2, mode="edge"), (5, 5))[ys, xs]
+    background = np.median(patches.reshape(len(ys), 25), axis=1)
+    hot = neighbors[ys, xs] - background < HOT_PIXEL_ADU  # neighbors dark: not a star
+    ring = patches[:, 1:4, 1:4].reshape(len(ys), 9)[:, _RING.ravel()]
+    img[ys[hot], xs[hot]] = np.median(ring[hot], axis=1)
     return img
 
 

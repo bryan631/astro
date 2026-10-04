@@ -20,9 +20,9 @@ def test_remove_hot_pixels_keeps_stars():
     from astro.pointing.platesolve import remove_hot_pixels
 
     img = np.full((9, 9), 10, np.uint8)
-    img[2, 2] = 200  # hot pixel: neighbours dark
+    img[2, 2] = 200  # hot pixel: neighbors dark
     img[5:8, 5:8] = 60
-    img[6, 6] = 200  # star: light spills into neighbours
+    img[6, 6] = 200  # star: light spills into neighbors
     out = remove_hot_pixels(img)
     assert out[2, 2] == 10 and out[6, 6] == 200
 

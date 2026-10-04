@@ -56,6 +56,7 @@ class LiveCamera:
         self.latest: np.ndarray | None = None  # BGR, display-sized, with overlay
         self.raw: np.ndarray | None = None
         self._stop = threading.Event()
+        self._pending: dict[str, float] = {}  # setting changes, applied by the capture thread
         self._thread = threading.Thread(target=self._grab)
 
     def start(self) -> "LiveCamera":
@@ -67,6 +68,14 @@ class LiveCamera:
         self._thread.join()  # never close the SDK while a capture is in flight
         self.cam.close()
 
+    def request(self, exposure_s: float | None = None, gain: int | None = None) -> None:
+        """Change settings from any thread. The capture thread applies them between frames,
+        because a change reopens the SDK handle and must never race an in-flight capture."""
+        if exposure_s is not None:
+            self._pending["exposure_s"] = exposure_s
+        if gain is not None:
+            self._pending["gain"] = gain
+
     @property
     def stopped(self) -> bool:
         return self._stop.is_set()
@@ -74,6 +83,10 @@ class LiveCamera:
     def _grab(self) -> None:
         fps, t, focus, focus_t = 0.0, time.time(), "", 0.0
         while not self._stop.is_set():
+            if "exposure_s" in self._pending:
+                self.cam.set_exposure(self._pending.pop("exposure_s"))
+            if "gain" in self._pending:
+                self.cam.set_gain(int(self._pending.pop("gain")))
             raw = self.cam.capture()  # the driver reopens the camera on SDK timeouts
             now = time.time()
             fps, t = 0.9 * fps + 0.1 / max(now - t, 1e-6), now

@@ -2,8 +2,9 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import numpy as np
+import pytest
 
-from astro.capture.recorder import Recorder
+from astro.capture.recorder import CaptureRefused, Recorder
 from astro.capture.ser import read_ser
 from astro.devices.base import Roi
 from astro.devices.sim.main_cam import SimMainCamera
@@ -94,10 +95,79 @@ class DriftingPlanet:
 def test_recorder_recenters_on_drift(tmp_path, monkeypatch):
     monkeypatch.setattr("astro.capture.recorder.ROI_PX", 128)
     cam = DriftingPlanet()
-    rec = Recorder(cam, (800, 600), tmp_path).start("Jupiter", 0.3)
+    rec = Recorder(cam, (800, 600), tmp_path, lambda: None).start("Jupiter", 0.3)
     rec.done.wait(5)
     time.sleep(0.05)
     assert rec.frames > 60 and not rec.lost
     _, frames = read_ser(rec.path)
     assert cam.roi is None  # recorder restores full frame when done
     assert frames[-1].max() > 200  # planet still in the last frame after drifting past the ROI
+
+
+def test_second_capture_is_refused_while_recording(tmp_path):
+    s, _ = make_session(tmp_path)
+    s.main_focus_ok, s.record_seconds = True, 2
+    s.handle("take a picture")
+    assert texts(s.handle("take a picture")) == ["I'm already recording."]
+    s.recorder.stop()
+    s.recorder.current.done.wait(5)
+
+
+def test_recording_refused_and_stopped_when_unsafe(tmp_path, monkeypatch):
+    monkeypatch.setattr("astro.capture.recorder.ROI_PX", 128)
+    unsafe = {"reason": "too close to the Sun"}
+    rec = Recorder(DriftingPlanet(), (800, 600), tmp_path, lambda: unsafe["reason"])
+    with pytest.raises(CaptureRefused, match="too close to the Sun"):
+        rec.start("Jupiter", 1)
+    unsafe["reason"] = None
+    cam = DriftingPlanet()
+    rec = Recorder(cam, (800, 600), tmp_path, lambda: unsafe["reason"])
+    run = rec.start("Jupiter", 5)
+    time.sleep(0.2)
+    unsafe["reason"] = "daytime lockout"
+    assert run.done.wait(3) and "daytime lockout" in run.error
+
+
+class FailingCamera(DriftingPlanet):
+    def capture(self):
+        if self.n > 3:
+            raise RuntimeError("SVB error 11")
+        return super().capture()
+
+
+def test_camera_failure_is_reported_not_done(tmp_path, monkeypatch):
+    monkeypatch.setattr("astro.capture.recorder.ROI_PX", 128)
+    s, _ = make_session(tmp_path)
+    s.recorder.camera = FailingCamera()
+    s.recorder.sensor = (800, 600)
+    s.main_focus_ok = True
+    s.handle("take a picture")
+    s.recorder.current.done.wait(5)
+    said = texts(s.tick(100.0))[0]
+    assert said.startswith("Recording failed: SVB error 11") and "Done" not in said
+
+
+def test_focus_stops_when_pointing_becomes_unsafe(tmp_path):
+    s, _ = make_session(tmp_path)
+    s.handle("focus")
+    s.exposure_safety = lambda: "daytime lockout"
+    assert texts(s.tick(0.0)) == ["I stopped focusing: daytime lockout."]
+    assert s._focus_coach is None
+
+
+def test_barlow_retunes_active_guide(tmp_path):
+    from astro.guidance.engine import Guide
+
+    s, _ = make_session(tmp_path)
+    s.guide = Guide(45, 100)
+    s.handle("barlow in")
+    assert s.guide.tol_deg == pytest.approx(2 / 60)
+
+
+@pytest.mark.parametrize("planet", ["mercury", "uranus", "neptune"])
+def test_sim_main_camera_shows_every_planet(planet):
+    from astro.capture.roi import brightest_blob
+
+    alt, az = body_altaz(planet, WPB, EVENING)
+    cam = SimMainCamera(lambda: (alt, az), WPB, lambda: EVENING)
+    assert brightest_blob(cam.capture()) is not None
