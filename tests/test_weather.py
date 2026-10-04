@@ -25,6 +25,19 @@ def test_cloudy_night_is_mentioned_and_cached():
     assert len(calls) == 1  # cached, not asked again
 
 
+def test_fifty_percent_counts_as_cloudy():
+    s, _ = session(50.0)
+    assert s.handle("what's good tonight")[0]["text"].startswith("It looks about 50 percent cloudy")
+
+
+def test_moving_refetches_the_forecast():
+    s, calls = session(20.0)
+    s.handle("what's good tonight")
+    s.set_location(40.0, -105.0, None, None)
+    s.handle("what's good tonight")
+    assert len(calls) == 2
+
+
 def test_clear_or_offline_says_nothing_about_clouds():
     for clouds in (10.0, None):
         s, _ = session(clouds)

@@ -40,9 +40,9 @@ TOLERANCE_ARCMIN = {False: 4.0, True: 2.0}  # guidance tolerance without / with 
 RECORD_SECONDS = 60  # planetary video length
 STACK_SECONDS = 90  # deep-sky live stack; the target drifts out of the field in ~2 min
 FOCUS_CROP_PX = 256  # sharpness measured on a crop around the planet
-SITE_MOVE_KM = 1.0
+SITE_MOVE_KM = 1.0  # moving farther than this from the model's site invalidates the mount model
 CLOUD_CACHE_S = 15 * 60  # Open-Meteo is hourly; don't ask on every request
-CLOUDY_PCT = 50  # moving farther than this from the model's site invalidates the mount model
+CLOUDY_PCT = 50  # at or above this cloud cover, tonight's suggestions mention the clouds
 EARTH_RADIUS_KM = 6371.0
 
 
@@ -65,6 +65,7 @@ class Session:
         self.weather = weather  # (lat, lon, when) -> cloud % or None offline; None = no forecast
         self._clouds: float | None = None
         self._clouds_at = -1e9
+        self._clouds_site: tuple[float, float] | None = None
         self.position = finder.position if finder else position
         self.override = developer_override
         self.catalog = {t.name: t for t in load_targets()}
@@ -236,10 +237,11 @@ class Session:
 
     def clouds(self) -> float | None:
         """Cloud cover now (%), from Open-Meteo; None offline (cached for a while)."""
-        now = time.monotonic()
-        if self.weather is not None and now - self._clouds_at > CLOUD_CACHE_S:
-            self._clouds_at = now
-            self._clouds = self.weather(self.site.lat_deg, self.site.lon_deg, self.clock())
+        now, here = time.monotonic(), (self.site.lat_deg, self.site.lon_deg)
+        stale = now - self._clouds_at > CLOUD_CACHE_S or here != self._clouds_site
+        if self.weather is not None and stale:  # cache per place: a GPS move refetches
+            self._clouds_at, self._clouds_site = now, here
+            self._clouds = self.weather(*here, self.clock())
         return self._clouds
 
     def tonight(self) -> list[dict]:
