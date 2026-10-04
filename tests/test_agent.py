@@ -129,3 +129,23 @@ def test_next_step_stays_offline_with_a_key():
     client = FakeClient([])
     out = Agent(session(), client=client).handle("next step")
     assert client.requests == [] and out[0]["text"] == "Ask me what's good tonight first."
+
+
+def test_connection_lost_after_a_tool_ran_does_not_redo_it():
+    import httpx
+
+    class DropsAfterTool(FakeClient):
+        def create(self, **kw):
+            if self.requests:
+                raise __import__("anthropic").APIConnectionError(
+                    request=httpx.Request("POST", "https://x"))
+            return super().create(**kw)
+
+    client = DropsAfterTool([NS(stop_reason="tool_use", content=[
+        NS(type="tool_use", id="t1", name="goto", input={"target": "the ring nebula"})])])
+    s = session()
+    calls = []
+    s.handle = lambda text: calls.append(text) or []  # the offline fallback must not run
+    out = Agent(s, client=client).handle("I'd love to see that smoke ring thing")
+    assert s.target == "Ring Nebula" and calls == []
+    assert out[-1]["text"].startswith("I lost my connection")

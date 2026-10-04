@@ -72,6 +72,17 @@ _COMMANDS = {"list_tonight": "what's good tonight", "stop": "stop", "where_am_i"
              "horizon_walk": "start the horizon walk"}
 
 
+PARTIAL = "I lost my connection partway through, but I did what I could. Ask again if needed."
+
+
+class _ToolsRan(Exception):
+    """The API failed after tools already acted; carries what they produced."""
+
+    def __init__(self, side_effects: list[dict]):
+        super().__init__("API failed after tools ran")
+        self.side_effects = side_effects
+
+
 class Agent:
     def __init__(self, session: Session, client: anthropic.Anthropic | None = None):
         self.session = session
@@ -86,11 +97,16 @@ class Agent:
             return self.session.handle(text)
         try:
             return self._run(text)
-        except (anthropic.APIConnectionError, anthropic.APITimeoutError):
+        except _ToolsRan as partial:  # don't do it all again offline
+            self._note_failure(partial.__cause__)
+            return [*partial.side_effects, {"type": "say", "text": PARTIAL}]
+        except anthropic.APIError as e:
+            self._note_failure(e)
+            return self.session.handle(text)
+
+    def _note_failure(self, e: BaseException | None) -> None:
+        if isinstance(e, (anthropic.APIConnectionError, anthropic.APITimeoutError)):
             self._offline_until = time.monotonic() + OFFLINE_RETRY_S
-            return self.session.handle(text)
-        except anthropic.APIError:
-            return self.session.handle(text)
 
     def _offline_understands(self, text: str) -> bool:
         """Fast path for exact commands; anything vague goes to Claude for context."""
@@ -108,9 +124,15 @@ class Agent:
     def _run(self, text: str) -> list[dict]:
         messages = [*self.history, {"role": "user", "content": text}]
         side_effects: list[dict] = []
+        ran = False
         for _ in range(MAX_TOOL_ROUNDS):
-            resp = self.client.messages.create(model=MODEL, max_tokens=1024, system=SYSTEM,
-                                               tools=TOOLS, messages=messages)
+            try:
+                resp = self.client.messages.create(model=MODEL, max_tokens=1024, system=SYSTEM,
+                                                   tools=TOOLS, messages=messages)
+            except anthropic.APIError as e:
+                if ran:
+                    raise _ToolsRan(side_effects) from e
+                raise
             messages.append({"role": "assistant", "content": resp.content})
             if resp.stop_reason != "tool_use":
                 break
@@ -119,6 +141,7 @@ class Agent:
                 if block.type == "tool_use":
                     out = self._call(block.name, block.input)
                     side_effects += [m for m in out if m["type"] != "say"]
+                    ran = True
                     said = " ".join(m["text"] for m in out if m["type"] == "say")
                     results.append({"type": "tool_result", "tool_use_id": block.id,
                                     "content": said or "done"})
