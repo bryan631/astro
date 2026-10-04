@@ -18,6 +18,7 @@ merge_one() {
     case "$state" in
       MERGED*) echo "#$n merged"; return ;;
       *UNKNOWN*) sleep 10; continue ;;  # GitHub recomputing after another merge
+      *DIRTY*) echo "#$n has merge conflicts with main: resolve them first"; return 1 ;;
       *BEHIND*)  # update, then wait until the PR head really is the new merge commit
         old=$(gh pr view "$n" --json headRefOid -q .headRefOid) || return 1
         gh api -X PUT "repos/$REPO/pulls/$n/update-branch" >/dev/null || return 1

@@ -38,11 +38,32 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "next", "description": "Go to the next suggestion from tonight's list.",
      "input_schema": {"type": "object", "properties": {}}},
+    {"name": "take_picture", "description": "Take a picture of the current target: video for "
+     "planets/Moon, a live stack for everything else. Asks for focus first if needed.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "stop_picture", "description": "Stop a picture being taken (keeps what's done).",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "focus", "description": "Start the spoken focus helper for the main camera, or "
+     "for the finder if camera='finder'. The user says 'done' at the sharpest point.",
+     "input_schema": {"type": "object", "properties": {
+         "camera": {"type": "string", "enum": ["main", "finder"]}}}},
+    {"name": "sync", "description": "Look at the stars through the finder to find exactly "
+     "where the telescope points.", "input_schema": {"type": "object", "properties": {}}},
+    {"name": "barlow", "description": "Tell the system the Barlow lens was put in or taken out.",
+     "input_schema": {"type": "object", "properties": {"inserted": {"type": "boolean"}},
+                      "required": ["inserted"]}},
+    {"name": "horizon_walk", "description": "Start recording the treeline (the user then says "
+     "'mark' at points along it and 'done').", "input_schema": {"type": "object", "properties": {}}},
+    {"name": "session_status", "description": "What's going on: aligned or not, target, focus, "
+     "Barlow, picture in progress, pictures taken, horizon, clouds.",
+     "input_schema": {"type": "object", "properties": {}}},
 ]
 
 # Tool name -> offline command text the session already understands.
 _COMMANDS = {"list_tonight": "what's good tonight", "stop": "stop", "where_am_i": "where am i",
-             "next": "next", "set_location": "set location"}
+             "next": "next", "set_location": "set location", "take_picture": "take a picture",
+             "stop_picture": "stop recording", "sync": "sync",
+             "horizon_walk": "start the horizon walk"}
 
 
 class Agent:
@@ -65,6 +86,8 @@ class Agent:
         intent = parse(text)
         if intent is None or intent.name == "tonight":
             return False  # Claude gives a nicer, conversational overview
+        if intent.name in ("ready", "skip") and not self.session.wizard_active:
+            return False  # "okay" outside setup is conversation, not a command
         if intent.name == "goto":
             return match_name(intent.target or "", self.session.names()) is not None
         return True
@@ -93,6 +116,13 @@ class Agent:
         return [*side_effects, {"type": "say", "text": reply or "OK."}]
 
     def _call(self, name: str, args: dict) -> list[dict]:
+        if name == "focus":
+            return self.session.handle("focus the finder" if args.get("camera") == "finder"
+                                       else "focus")
+        if name == "barlow":
+            return self.session.handle("barlow in" if args.get("inserted") else "barlow out")
+        if name == "session_status":
+            return [{"type": "say", "text": self.session.status_text()}]
         if name == "list_tonight":
             return [{"type": "say", "text": self.session.tonight_by_category()}]
         if name == "goto":

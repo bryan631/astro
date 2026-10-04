@@ -112,6 +112,11 @@ class FinderSync:
         self.camera, self.solver, self.model = camera, solver, model
         self.encoders, self.site, self.clock = encoders, site, clock
         self.synced = False
+        self.last_rms: float | None = None  # arcmin, mount model fit after the latest sync
+
+    def alignment(self) -> tuple[int, float | None]:
+        """(number of syncs, model RMS in arcmin or None) for the setup wizard."""
+        return len(self.model.syncs), self.last_rms
 
     def reset(self, site: Site) -> None:
         """New site: the old mount model's alt/az frame no longer applies; re-sync from scratch."""
@@ -137,6 +142,7 @@ class FinderSync:
                            "Something may be blocking part of the view.")
         alt, az = radec_to_altaz(sol.ra_deg, sol.dec_deg, self.site, self.clock())
         rms = self.model.add_sync(Sync(enc[0], enc[1], alt, az))
+        self.last_rms = rms
         self.synced = True
         msg = "Got it, I know where we're pointing."
         if len(self.model.syncs) >= LOOSE_SYNC_SYNCS and rms > LOOSE_SYNC_ARCMIN:
