@@ -1,4 +1,4 @@
-"""Render a synthetic star field from tetra3's own star table (test helper)."""
+"""Render a synthetic star field from tetra3's own star table (simulators and tests)."""
 
 import numpy as np
 

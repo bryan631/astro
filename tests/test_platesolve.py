@@ -6,9 +6,9 @@ import pytest
 if not os.environ.get("ASTRO_REQUIRE_SOLVER"):
     pytest.importorskip("tetra3", reason="run scripts/install-solver.sh")
 
+from astro.devices.sim.sky import render
 from astro.pointing.geometry import separation_deg
 from astro.pointing.platesolve import FinderSolver, bin2x2
-from tests.synthsky import render
 
 
 @pytest.fixture(scope="module")
