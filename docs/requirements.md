@@ -11,7 +11,7 @@ The current requirements for the project. Each has an ID for reference.
 
 ## 2. Hard requirements
 
-- **H1** All software open source or in this repo; exception: vendor camera SDK binaries (SVBony).
+- **H1** All software is open source or in this repo. The only exception is a closed vendor driver/SDK with no open-source alternative (today the SVBony camera SDK; the ZWO SDK if the fallback camera is used). The Claude API is a cloud service used only for free-form conversation (see H5).
 - **H2** Voice-first, large-text tablet UI; red night mode; works one-handed.
 - **H3** Pointing guidance is deterministic local code, never the LLM. The LLM only interprets intent, calls tools, and narrates.
 - **H4** Never guide toward the Sun: exclusion zone >= 20 deg; daytime lockout for guidance and capture unless an explicit developer override is set.
@@ -140,7 +140,7 @@ The current requirements for the project. Each has an ID for reference.
 ## 16. Development process
 
 - **D1** Clean, concise, reviewable code; no overly complex designs.
-- **D2** Open-source libraries welcome; avoid binaries except closed drivers with no alternative.
+- **D2** Open-source libraries are welcome; no binaries beyond the H1 exception.
 - **D3** Commit often; modern CI/CD.
 - **D4** Good unit tests, not excessive.
 - **D5** Prototype first, then productize.
