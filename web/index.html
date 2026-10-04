@@ -57,6 +57,7 @@ function speak(text) {
 function handle(m) {
   if (m.type === "hello") { serverStt = m.server_stt; serverTts = m.server_tts; setupTalk(); }
   if (m.type === "heard") said.textContent = `“${m.text}”`;
+  if (m.type === "get_location") sendLocation();
   if (m.type === "picture" && !document.getElementById("gallery").hidden) showPictures();
   if (m.type === "say") { said.textContent = m.text; speak(m.text); }
   if (m.type === "state") {
@@ -70,6 +71,18 @@ function handle(m) {
     const d = m.distance_deg;
     dist.textContent = d >= 1 ? `${d.toFixed(0)}°` : `${(d * 60).toFixed(0)}′`;
   }
+}
+// Tablet GPS for the observing site (setup, or "use my location"). Needs HTTPS.
+function sendLocation() {
+  if (!navigator.geolocation) {
+    ws.send(JSON.stringify({type: "location_error", message: "This browser has no location service."}));
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(
+    p => ws.send(JSON.stringify({type: "location", lat: p.coords.latitude, lon: p.coords.longitude,
+                                 alt: p.coords.altitude, accuracy: p.coords.accuracy})),
+    e => ws.send(JSON.stringify({type: "location_error", message: e.message})),
+    {enableHighAccuracy: true, timeout: 20000, maximumAge: 0}  // always a fresh fix);
 }
 function send(text) { if (text.trim()) ws.send(JSON.stringify({type: "text", text})); }
 document.getElementById("typed").onsubmit = e => {

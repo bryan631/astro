@@ -7,9 +7,11 @@ messages for the tablet: {"type": "say", "text": ...} and {"type": "state", ...}
 import threading
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from pathlib import Path
+
+import numpy as np
 
 from astro.capture.focus import FocusCoach, laplacian_variance
 from astro.capture.recorder import CaptureRefused, Recorder
@@ -33,6 +35,8 @@ MIN_HFR_PX = 0.5  # floor so a perfectly sharp (tiny) star can't blow up the foc
 TOLERANCE_ARCMIN = {False: 4.0, True: 2.0}  # guidance tolerance without / with the 2x Barlow
 RECORD_SECONDS = 60  # planetary video length
 FOCUS_CROP_PX = 256  # sharpness measured on a crop around the planet
+SITE_MOVE_KM = 1.0  # moving farther than this from the model's site invalidates the mount model
+EARTH_RADIUS_KM = 6371.0
 
 
 def utcnow() -> datetime:
@@ -43,10 +47,13 @@ class Session:
     def __init__(self, site: Site, position: Callable[[], tuple[float, float]] | None = None,
                  clock: Clock = utcnow, developer_override: bool = False,
                  finder: FinderSync | None = None, main_camera: Camera | None = None,
-                 main_sensor: tuple[int, int] = (3856, 2180), data_dir: Path = Path("data")):
+                 main_sensor: tuple[int, int] = (3856, 2180), data_dir: Path = Path("data"),
+                 on_site_change: Callable[[Site], None] | None = None):
         """Pointing comes from `finder` (encoders + mount model + plate solving), or, for
         tests without a finder, from `position()` returning true (alt, az)."""
         self.site, self.clock, self.finder = site, clock, finder
+        self.on_site_change = on_site_change  # e.g. persist the GPS fix, update simulators
+        self._model_site = site  # site the current mount model was built for
         self.position = finder.position if finder else position
         self.override = developer_override
         self.catalog = {t.name: t for t in load_targets()}
@@ -130,6 +137,8 @@ class Session:
             if not self._suggestions:
                 return [say("Ask me what's good tonight first.")]
             return self.goto(self._suggestions.pop(0))
+        if intent.name == "location":
+            return self.request_location()
         if intent.name == "where":
             return self.where()
         return [say(f"{intent.name.replace('_', ' ').capitalize()} isn't ready yet.")]
@@ -308,6 +317,33 @@ class Session:
         """A camera failed even after the driver's retry: stop focusing and say so."""
         self._focus_coach = None
         return [say(f"The {which} camera stopped responding, so I stopped focusing. ({error})")]
+
+    def request_location(self) -> list[dict]:
+        """Ask the tablet for a GPS fix; it answers with a `location` message (see set_location)."""
+        return [say("Let me ask the tablet where we are. Please allow location access."),
+                {"type": "get_location"}]
+
+    def set_location(self, lat: float, lon: float, elevation_m: float | None,
+                     accuracy_m: float | None) -> list[dict]:
+        """Use a GPS fix from the tablet. Moving resets pointing, so the next goto re-syncs."""
+        if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+            return [say("That location doesn't look right, so I kept the old one.")]
+        new = replace(self.site, lat_deg=lat, lon_deg=lon,
+                      elevation_m=self.site.elevation_m if elevation_m is None else elevation_m)
+        # Great-circle distance from where the mount model was built (separation_deg works on
+        # any lat/lon pair), so a chain of small updates can't drift away without a reset.
+        ref = self._model_site
+        moved_km = np.radians(separation_deg(ref.lat_deg, ref.lon_deg, lat, lon)) * EARTH_RADIUS_KM
+        self.site = new
+        if moved_km > SITE_MOVE_KM:
+            self._model_site = new
+            if self.finder is not None:
+                self.finder.reset(new)
+            self.target, self.guide = None, None
+        if self.on_site_change:
+            self.on_site_change(new)
+        near = f", accurate to about {accuracy_m:.0f} meters" if accuracy_m else ""
+        return [say(f"Got it, I know where we are{near}.")]
 
     def exposure_safety(self) -> str | None:
         """Spoken reason why taking an exposure now is unsafe, else None (astro/safety.py)."""
