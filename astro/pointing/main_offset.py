@@ -16,7 +16,9 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-MIN_MOTION_DEG = 0.02  # ignore tiny moves (encoder noise, wobble)
+# IntelliScope encoders: 9216 counts/rev = 0.039 deg per count (~280 main-camera pixels at
+# 0.5"/px). A calibration move must span at least 2 counts to mean anything.
+MIN_MOTION_DEG = 0.08
 MIN_SPREAD = 0.3  # moves must not all be in one direction (needs both axes to solve)
 
 

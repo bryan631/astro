@@ -317,3 +317,15 @@ def test_plain_stop_ends_a_picture(tmp_path):
     s.handle("take a picture")
     assert texts(s.handle("stop")) == ["Stopping the recording."]
     assert s.recorder.current.done.wait(5)
+
+
+def test_on_target_hands_over_to_main_camera_centering(tmp_path):
+    from astro.guidance.engine import Guide
+
+    s, _ = make_session(tmp_path)
+    alt, az = body_altaz("saturn", WPB, EVENING)
+    s.guide = Guide(alt + 0.2, az)  # approaching from below; the scope sits on Saturn
+    said = texts(s.tick(0.0))
+    assert "stop" in said and s._centering
+    assert texts(s.tick(1.0)) == ["stop, it's centered"]  # sim main camera aims true
+    assert not s._centering
