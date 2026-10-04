@@ -81,6 +81,10 @@ Goal: everything that doesn't need the PC, Arduino, or scope, built and tested.
    - If the SDK or driver fails these, document it (we may swap to a ZWO ASI585MC).
 3. Finder plate solving
    - tetra3/cedar-solve database tuned for ~11°×8° fields; solve from a single frame; return RA/Dec/roll + confidence.
+   - Pre-flight finder focus gate: before solving, measure star HFR on the finder frame
+     (`astro/capture/focus.py`). If too soft, or the solver finds too few stars, run a voice-guided
+     refocus ("turn the finder focus slowly… sharper… stop") instead of failing silently; say why a
+     solve failed (soft focus, too few stars, clouds).
    - Test on real sky from the developer's yard: camera + 25mm lens on a tripod. Record solve rate,
      time, and failure modes (clouds, trees, streetlights). Save sample frames to `tests/data/`.
 4. Pointing math (pure functions, heavily unit-tested)
@@ -111,6 +115,8 @@ Goal: everything that doesn't need the PC, Arduino, or scope, built and tested.
 8. Capture & processing (testable with the main camera on the desk + any lens or none)
    - SER video writer with ROI that follows the brightest blob (planet tracking in-frame).
    - Focus metric (HFR/FWHM for stars, Laplacian variance for planets) → voice "sharper / passed it".
+   - Pre-flight main-camera focus gate: run the focus check (with the existing focus coach) at
+     session start and after a Barlow change, before any capture.
    - Planet pipeline: PSS stack → wavelets/deconvolution → RGB align → auto-crop → PNG/JPEG.
    - DSO pipeline: register + live stack short subs (with rotation/drift) → GraXpert background +
      denoise → Siril color calibration + stretch.
@@ -150,8 +156,13 @@ Phase 1 is done when: in sim mode a full session works end-to-end via the tablet
    - Horizon walk: user sweeps tube along treeline and says "mark" at 8–15 points →
      saved mask (also export Stellarium horizon format).
    - Focus reference positions (prime focus / Barlow) noted for planets vs DSO.
-4. First-light checklist: back-focus reach (prime vs Barlow), collimation, solve reliability,
+   - Pre-flight gates (finder focus, main focus) wired into the session flow, as built in Phase 1.
+4. First-light checklist: back-focus reach (prime vs Barlow), collimation (see below), solve reliability,
    guidance feel (tolerance, voice pacing), dew performance, battery runtime.
+   - Collimation check (main camera): defocused-star test measuring ring (donut) evenness and how
+     centred the secondary's shadow is, with spoken guidance for the primary-mirror collimation
+     screws ("turn the top screw a quarter turn… better… stop"). Run at first light, periodically,
+     and prompt for it after the scope has been moved or transported.
 5. Teach + tune: simplify prompts based on how he actually talks; tune cue pacing for his
    pushing speed; enlarge UI as needed.
 6. Remote support: confirm Tailscale access from developer's home; nightly log upload.
