@@ -9,6 +9,7 @@ import functools
 import json
 import logging
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from astro.devices import config as devices
 from astro.devices.sim.finder import SimFinderCamera
 from astro.devices.sim.main_cam import SimMainCamera
 from astro.devices.sim.scope import SimEncoders, SimScope, SimUser
+from astro.guidance.engine import cue_phrases
 from astro.planner import horizon_store
 from astro.planner.weather import cloud_cover_pct
 from astro.pointing.coords import Site
@@ -115,6 +117,13 @@ def start_logging() -> None:
         return
     log.info("server start", extra={"data": {"log": str(logs.setup(ROOT)), "sim": SIM}})
 stt, tts = Stt(), Tts()
+
+
+@app.on_event("startup")
+def warm_speech() -> None:
+    """Load Piper and pre-render the guidance cues in the background: "stop" must be instant."""
+    if tts.available():
+        threading.Thread(target=tts.warm, args=(cue_phrases(),), daemon=True).start()
 
 
 class Hub:

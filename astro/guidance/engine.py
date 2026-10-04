@@ -15,6 +15,14 @@ REPEAT_INTERVAL_S = 4.0
 SLOW_DOWN_TIME_S = 1.0  # say "slower" if we'd reach the target within this time
 
 
+def cue_phrases() -> list[str]:
+    """Every phrase the guide can say, for pre-rendering speech."""
+    dirs = ("left", "right", "up", "down")
+    return ["stop", "slower", "keep going", *(f"push {d}" for d in dirs),
+            *(f"{d}, getting closer" for d in dirs), *(f"{d} a little" for d in dirs),
+            *(f"passed it, back {d} a little" for d in dirs)]
+
+
 def wrap180(deg: float) -> float:
     return (deg + 180.0) % 360.0 - 180.0
 
