@@ -26,6 +26,13 @@ def test_one_sync_fixes_offsets_locally():
     assert separation_deg(*m.to_sky(*POINTS[0]), *TRUE.to_sky(*POINTS[0])) * 60 < 0.1
 
 
+def test_one_sync_near_zenith_does_not_flip():
+    m = MountModel()
+    m.add_sync(Sync(61.2, 76.6, 60.0, 200.0))  # encoders read 61.2 deg alt
+    assert m.alt_offset_deg == pytest.approx(-1.2)
+    assert separation_deg(*m.to_sky(31.2, 76.6), 30.0, 200.0) < 1e-6
+
+
 def test_three_syncs_recover_tilt_everywhere():
     m = MountModel()
     for p in POINTS[:3]:

@@ -6,9 +6,9 @@ import pytest
 if not os.environ.get("ASTRO_REQUIRE_SOLVER"):
     pytest.importorskip("tetra3", reason="run scripts/install-solver.sh")
 
+from astro.devices.sim.sky import render
 from astro.pointing.geometry import separation_deg
 from astro.pointing.platesolve import FinderSolver, bin2x2
-from tests.synthsky import render
 
 
 @pytest.fixture(scope="module")
@@ -44,3 +44,15 @@ def test_suburban_sky_mag6(solver):
 def test_blank_frame_returns_none(solver):
     noise = np.random.default_rng(1).normal(20, 3, (480, 640)).clip(0, 255).astype(np.uint8)
     assert solver.solve(noise, bayer=False) is None
+
+
+def test_solve_rate_on_finder_format_frames(solver):
+    """Full-res frames, binned like real finder data: guards solver settings (e.g. binary_open)."""
+    rng = np.random.default_rng(5)
+    solved = 0
+    for i in range(30):
+        ra, dec = rng.uniform(0, 360), np.degrees(np.arcsin(rng.uniform(-0.5, 1)))
+        img = render(solver._t3.star_table, ra, dec, rng.uniform(0, 360), 11.0, size=(1280, 960),
+                     sigma_px=2.0, mag_limit=6.5, seed=i)
+        solved += solver.solve(img) is not None
+    assert solved >= 26

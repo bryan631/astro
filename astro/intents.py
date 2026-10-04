@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Intent:
-    name: str  # goto, stop, next, tonight, capture, stop_capture, focus, where
+    name: str  # goto, stop, next, tonight, capture, stop_capture, focus, finder_focus, sync, where
     target: str | None = None
 
 
@@ -20,7 +20,9 @@ _PATTERNS = [
     ("next", r"\b(next|another one|something else)\b"),
     ("tonight", r"\b(what('s| is) (good|up|out|visible)|what can i see|tonight)\b"),
     ("capture", r"\b(capture|take (a )?(picture|photo|image)s?|record)\b"),
+    ("finder_focus", r"\bfocus (the )?finder\b"),
     ("focus", r"\bfocus\b"),
+    ("sync", r"\b(sync|align|plate ?solve|find (out )?where (we are|i am|it is) pointing)\b"),
     ("where", r"\b(where am i|what am i (looking at|pointing at))\b"),
     ("goto", r"\b(?:go ?to|find|show me|point (?:at|to)|take me to|look at)\s+(?:the\s+)?(.+)"),
 ]

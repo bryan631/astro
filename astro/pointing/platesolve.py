@@ -46,7 +46,11 @@ class FinderSolver:
         t0 = time.perf_counter()
         r = self._t3.solve_from_image(Image.fromarray(gray), fov_estimate=self.fov,
                                       fov_max_error=self.fov * 0.15, solve_timeout=timeout_ms,
-                                      match_threshold=max_false_prob)
+                                      match_threshold=max_false_prob,
+                                      # Sharp stars are only 1-2 px after binning; tetra3's default
+                                      # morphological opening erases them (21/30 -> 28/30 solved
+                                      # on simulated finder frames).
+                                      binary_open=False)
         ms = (time.perf_counter() - t0) * 1000
         if r.get("RA") is None or r.get("Prob", 1) > max_false_prob:
             return None

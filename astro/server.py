@@ -5,6 +5,7 @@ In sim mode a simulated user follows the spoken cues so the whole loop can be wa
 """
 
 import asyncio
+import functools
 import json
 import os
 import time
@@ -15,9 +16,13 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
 from astro.agent import Agent
-from astro.devices.sim.scope import SimScope, SimUser
+from astro.devices.sim.finder import SimFinderCamera
+from astro.devices.sim.scope import SimEncoders, SimScope, SimUser
 from astro.pointing.coords import Site
-from astro.session import Session
+from astro.pointing.finder_sync import FinderSync
+from astro.pointing.mount_model import MountModel
+from astro.pointing.platesolve import FinderSolver
+from astro.session import Session, utcnow
 from astro.voice.speech import Stt, Tts
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,11 +49,20 @@ def load_site() -> Site:
 
 
 def build_session() -> tuple[Session, SimScope | None]:
+    """Sim mode: an uncalibrated simulated mount with a finder that sees the real sky."""
     if not SIM:
         raise RuntimeError("Only sim mode exists so far; set ASTRO_SIM=1")
+    site, clock = load_site(), utcnow
     scope = SimScope(45, 180)
+    camera = SimFinderCamera(lambda: (scope.alt, scope.az), site, clock, solver()._t3.star_table)
+    finder = FinderSync(camera, solver(), MountModel(), SimEncoders(scope), site, clock)
     override = os.environ.get("ASTRO_DEV_OVERRIDE") == "1"
-    return Session(load_site(), lambda: (scope.alt, scope.az), developer_override=override), scope
+    return Session(site, clock=clock, developer_override=override, finder=finder), scope
+
+
+@functools.cache
+def solver() -> FinderSolver:
+    return FinderSolver()  # loads the star database once per process
 
 
 app = FastAPI()
@@ -76,7 +90,7 @@ async def ws(socket: WebSocket) -> None:
     async def guidance_loop() -> None:
         while True:
             t = time.monotonic() - t0
-            for msg in session.tick(t):
+            for msg in await asyncio.to_thread(session.tick, t):  # camera calls block
                 if user and msg["type"] == "say":
                     user.hear(msg["text"], t)
                 await send(msg)

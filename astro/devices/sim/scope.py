@@ -52,3 +52,15 @@ class SimUser:
             return (-speed, 0.0)
         sign = self.right_sign if "right" in text else -self.right_sign
         return (0.0, sign * speed)
+
+
+@dataclass
+class SimEncoders:
+    """Encoder angles for a SimScope, offset like an uncalibrated real mount."""
+
+    scope: SimScope
+    alt_offset: float = -1.2
+    az_offset: float = 123.4
+
+    def __call__(self) -> tuple[float, float]:
+        return self.scope.alt - self.alt_offset, (self.scope.az - self.az_offset) % 360

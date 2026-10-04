@@ -2,11 +2,13 @@
 
 ## Run locally (simulators, no hardware)
 
-    python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+    python3 -m venv .venv && .venv/bin/pip install -e ".[dev]" && scripts/install-solver.sh
     ASTRO_SIM=1 .venv/bin/pytest -q
     ASTRO_SIM=1 .venv/bin/uvicorn astro.server:app --host 0.0.0.0 --port 8000
 
-Open http://localhost:8000. Type or say "what's good tonight", then "next". In sim mode a
+Open http://localhost:8000. Type or say "what's good tonight", then "next" (or "sync", "focus the
+finder"). In sim mode the mount starts uncalibrated: the first goto plate-solves the simulated
+finder (it renders the real sky) to learn where the scope points. A
 simulated user follows the spoken cues so you can watch the arrow and hear the guidance.
 
 - `ASTRO_DEV_OVERRIDE=1` lifts the daytime lockout (the 20° Sun exclusion always applies).
