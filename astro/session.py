@@ -5,6 +5,7 @@ messages for the tablet: {"type": "say", "text": ...} and {"type": "state", ...}
 """
 
 import threading
+import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict, replace
@@ -39,7 +40,9 @@ TOLERANCE_ARCMIN = {False: 4.0, True: 2.0}  # guidance tolerance without / with 
 RECORD_SECONDS = 60  # planetary video length
 STACK_SECONDS = 90  # deep-sky live stack; the target drifts out of the field in ~2 min
 FOCUS_CROP_PX = 256  # sharpness measured on a crop around the planet
-SITE_MOVE_KM = 1.0  # moving farther than this from the model's site invalidates the mount model
+SITE_MOVE_KM = 1.0
+CLOUD_CACHE_S = 15 * 60  # Open-Meteo is hourly; don't ask on every request
+CLOUDY_PCT = 50  # moving farther than this from the model's site invalidates the mount model
 EARTH_RADIUS_KM = 6371.0
 
 
@@ -52,12 +55,16 @@ class Session:
                  clock: Clock = utcnow, developer_override: bool = False,
                  finder: FinderSync | None = None, main_camera: Camera | None = None,
                  main_sensor: tuple[int, int] = (3856, 2180), data_dir: Path = Path("data"),
-                 on_site_change: Callable[[Site], None] | None = None):
+                 on_site_change: Callable[[Site], None] | None = None,
+                 weather: Callable[[float, float, datetime], float | None] | None = None):
         """Pointing comes from `finder` (encoders + mount model + plate solving), or, for
         tests without a finder, from `position()` returning true (alt, az)."""
         self.site, self.clock, self.finder = site, clock, finder
         self.on_site_change = on_site_change  # e.g. persist the GPS fix, update simulators
         self._model_site = site  # site the current mount model was built for
+        self.weather = weather  # (lat, lon, when) -> cloud % or None offline; None = no forecast
+        self._clouds: float | None = None
+        self._clouds_at = -1e9
         self.position = finder.position if finder else position
         self.override = developer_override
         self.catalog = {t.name: t for t in load_targets()}
@@ -227,22 +234,37 @@ class Session:
         self.target, self.guide, self._focus_coach = name, guide, None
         return [*pre, say(f"Let's find {name}.")]
 
+    def clouds(self) -> float | None:
+        """Cloud cover now (%), from Open-Meteo; None offline (cached for a while)."""
+        now = time.monotonic()
+        if self.weather is not None and now - self._clouds_at > CLOUD_CACHE_S:
+            self._clouds_at = now
+            self._clouds = self.weather(self.site.lat_deg, self.site.lon_deg, self.clock())
+        return self._clouds
+
     def tonight(self) -> list[dict]:
-        choices = plan(self.site, self.clock())
+        clouds = self.clouds()
+        choices = plan(self.site, self.clock(), cloud_cover=clouds)
         flat = sorted((c for cs in choices.values() for c in cs), key=lambda c: -c.score)
         if not flat:
             return [say("Nothing good is up right now.")]
         self._suggestions = [c.name for c in flat[1:6]]
         best = flat[0]
         others = ", ".join(c.name for c in flat[1:3])
-        return [say(f"{best.name} is the best right now. {best.note} "
+        sky = ""
+        if clouds is not None and clouds >= CLOUDY_PCT:
+            sky = f"It looks about {clouds:.0f} percent cloudy, so it may come and go. "
+        return [say(f"{sky}{best.name} is the best right now. {best.note} "
                     f"Other good ones: {others}. Say 'go to' a name, or 'next'.")]
 
     def tonight_by_category(self) -> str:
         """Compact text for the agent: best target per category."""
-        choices = plan(self.site, self.clock())
+        clouds = self.clouds()
+        choices = plan(self.site, self.clock(), cloud_cover=clouds)
         lines = [f"{cat}: {cs[0].name} (best around {cs[0].best_time:%H:%M}). {cs[0].note}"
                  for cat, cs in choices.items()]
+        if clouds is not None:
+            lines.append(f"cloud cover: about {clouds:.0f}%")
         return "\n".join(lines) or "Nothing good is up right now."
 
     def where(self) -> list[dict]:
