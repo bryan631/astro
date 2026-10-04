@@ -19,13 +19,22 @@ def test_tts_warms_and_caches_per_phrase():
     assert tts.calls == ["stop", "push left"]  # "stop" came from the cache
 
 
-def test_cue_phrases_cover_what_the_guide_says():
-    phrases = set(cue_phrases())
-    g = Guide(45, 100)
-    for t, (alt, az) in enumerate([(10, 100), (30, 100), (44.6, 100), (45, 100)]):
-        _, cue = g.update(alt, az, t * 5.0)
-        if cue:
-            assert cue.text in phrases, cue.text
+def test_cue_phrases_match_everything_the_guide_says():
+    """Every phrase spoken in simulated sessions (all directions, both left/right conventions,
+    overshoots) is pre-rendered, and every pre-rendered phrase is actually used."""
+    from tests.test_guidance import run_session
+
+    seen = set()
+    trips = [((20, 10), (55, 80)), ((60, 350), (40, 20)), ((50, 100), (20, 60)),
+             ((30, 200), (31, 199)), ((40, 90), (40, 40)), ((70, 180), (30, 220))]
+    for start, target in trips:
+        for kw in ({}, {"right_is_plus_az": False}):
+            seen |= set(run_session(start, target, **kw)[1])
+    for below, above in ((44.0, 46.0), (46.0, 44.0)):  # vertical overshoots, both ways
+        g = Guide(45, 100)
+        g.update(below, 100, 0.0)
+        seen.add(g.update(above, 100, 0.1)[1].text)
+    assert seen == set(cue_phrases())
 
 
 def test_audio_ctx_covers_the_utterance():

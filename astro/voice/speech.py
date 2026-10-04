@@ -13,6 +13,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import wave
 from pathlib import Path
 
@@ -65,6 +66,7 @@ class Tts:
     def __init__(self) -> None:
         self.tool = _tool("ASTRO_PIPER_BIN", "ASTRO_PIPER_MODEL")
         self._voice = None  # piper.PiperVoice, loaded on first use
+        self._lock = threading.Lock()  # startup warm-up and requests share one voice
         # Guidance repeats a small set of phrases; cache per instance (not on the class).
         self.synthesize = functools.lru_cache(maxsize=CUE_CACHE)(self._synthesize)
 
@@ -87,12 +89,13 @@ class Tts:
     def _synthesize_in_process(self, text: str) -> bytes:
         from piper import PiperVoice
 
-        if self._voice is None:
-            self._voice = PiperVoice.load(self.tool[1])
-        buf = io.BytesIO()
-        with wave.open(buf, "wb") as wav:
-            self._voice.synthesize_wav(text, wav)
-        return buf.getvalue()
+        with self._lock:  # load once; one synthesis at a time on the shared voice
+            if self._voice is None:
+                self._voice = PiperVoice.load(self.tool[1])
+            buf = io.BytesIO()
+            with wave.open(buf, "wb") as wav:
+                self._voice.synthesize_wav(text, wav)
+            return buf.getvalue()
 
     def _synthesize_cli(self, text: str) -> bytes:
         binary, model = self.tool

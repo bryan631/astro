@@ -58,6 +58,9 @@ class FakeTts:
     def synthesize(self, text):
         return b"WAV:" + text.encode()
 
+    def warm(self, phrases):  # the server pre-renders cues at startup
+        pass
+
 
 def test_server_speech_roundtrip(monkeypatch):
     monkeypatch.setattr(server, "stt", FakeStt())
