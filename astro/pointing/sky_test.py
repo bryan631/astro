@@ -45,8 +45,10 @@ def test_frame(raw: np.ndarray, solver: FinderSolver, stats: SkyTestStats) -> st
         return f"{stats.frames}: no solve | {seen} | {focus.reason or NO_MATCH}"
     stats.outcomes[SOLVED] += 1
     stats.solve_ms.append(sol.ms)
-    return (f"{stats.frames}: RA {sol.ra_deg:.3f} Dec {sol.dec_deg:+.3f} roll {sol.roll_deg:.1f} "
-            f"fov {sol.fov_deg:.2f} matches {sol.matches} conf {sol.confidence:.1f} {sol.ms:.0f} ms | {seen}")
+    return (f"{stats.frames}: RA {sol.ra_deg:.3f} Dec {sol.dec_deg:+.3f} "
+            f"rotation {sol.roll_deg:.1f} deg scale {sol.scale_arcsec_px:.2f}\"/px "
+            f"fov {sol.fov_deg:.2f} matches {sol.matches} conf {sol.confidence:.1f} "
+            f"{sol.ms:.0f} ms | {seen}")
 
 
 def run(camera: Camera, solver: FinderSolver, every_s: float, save_dir: Path | None = None,
