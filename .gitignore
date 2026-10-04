@@ -4,6 +4,9 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
+
+# SVBony SDK writes camera config caches into the working directory
+*_Cfg_*.bin
 certs/
 vendor/
 models/
