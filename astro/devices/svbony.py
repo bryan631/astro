@@ -3,7 +3,8 @@
 SDK quirks (see docs/hardware-results.md):
 - exposure/ROI must be set before video capture starts; changing them mid-stream times out,
 - stop/start on one open handle is flaky, so any settings change closes and reopens,
-- the SDK's bundled libusb is empty; load the system one first.
+- the SDK's bundled libusb is empty; load the system one first,
+- the first 2 frames after starting are blank; the driver discards them.
 The SDK path comes from SVB_LIB. Everything above this file only sees the `Camera` interface.
 """
 
@@ -17,6 +18,9 @@ from astro.devices.base import Roi
 DEFAULT_LIB = "~/sdk/SVBCameraSDK/lib/x64/libSVBCameraSDK.so"
 RAW8, GAIN, EXPOSURE = 0, 0, 1  # SVB_IMG_RAW8, SVB_GAIN, SVB_EXPOSURE (microseconds)
 TIMEOUT = 11  # SVB_ERROR_TIMEOUT
+# After video capture starts, the SDK returns 2 blank (bias-only) frames before real exposures
+# (seen on the SV905C at 0.4-1.6 s: 0.5 s, then ~0 s, then frames at the exposure time).
+STARTUP_FRAMES = 2
 BAYER = ["RGGB", "BGGR", "GRBG", "GBRG"]
 
 
@@ -148,6 +152,11 @@ class SvbonyCamera:
     def _grab(self) -> np.ndarray:
         if not self._streaming:
             self._start()
+            for _ in range(STARTUP_FRAMES):
+                self._read()
+        return self._read()
+
+    def _read(self) -> np.ndarray:
         h, w = self._shape
         buf = (C.c_ubyte * (w * h))()
         wait_ms = int(self.exposure_s * 3000) + 2000

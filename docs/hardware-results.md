@@ -36,6 +36,13 @@ Scripts: `scripts/hwcheck/` (`enumerate.py`, `checklist.py`). SDK lives in `~/sd
 - Measured horizontal FOV 10.39° (estimate was 11°). The bright object 0.94° from center is Saturn.
 - Frame kept as `tests/data/finder_saturn.npy` (regression test).
 
+## Finder exposure sweep (2026-10-03, ~23:00 PDT, same field, 2 frames per cell)
+- **SDK quirk:** the first 2 frames after video capture starts are blank (bias only). The driver
+  now discards them; before that, about half of a settings sweep looked like "no stars".
+- Solved every time at **>= 0.8 s with gain >= 100** (10-17 matches), and at 1.6 s even at gain 50.
+  Nothing solved at <= 0.4 s, even with 30-46 detections (mostly noise; the faint stars are missing).
+- HFR 0.8-1.1 binned px everywhere: focus is fine. Default for `solve_sky.py`: 0.8 s, gain 200.
+
 ## Still open
 - ~~**Finder focus**~~ done 2026-10-03 (distant object, `viewer.py`).
 - **USB3 speed:** retest frame rates on the MeLE (container links at USB2).
