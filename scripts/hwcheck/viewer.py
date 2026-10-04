@@ -10,7 +10,6 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import cv2
-
 import svb
 
 ap = argparse.ArgumentParser()

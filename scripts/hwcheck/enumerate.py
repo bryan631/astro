@@ -3,7 +3,6 @@
 import sys
 
 import cv2
-
 import svb
 
 out = sys.argv[1] if len(sys.argv) > 1 else "."
