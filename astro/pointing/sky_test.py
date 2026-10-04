@@ -17,6 +17,18 @@ from astro.pointing.platesolve import FinderSolver, finder_gray
 
 SOLVED = "solved"
 NO_MATCH = "stars visible but no pattern match"
+OUTCOMES = ("solves", "no_match", "no_stars", "not_sky", "few_stars", "out_of_focus")
+
+
+def classify(raw: np.ndarray, solver: FinderSolver) -> str:
+    """One finder frame -> outcome code: solves, no_match, or the focus check's outcome.
+
+    The solver gets every frame, even ones the focus check rejects, so "solves" wins whenever
+    the stars are good enough for it."""
+    focus = check_focus(finder_gray(raw))
+    if solver.solve(raw) is not None:
+        return "solves"
+    return "no_match" if focus.ok else focus.outcome
 
 
 @dataclass

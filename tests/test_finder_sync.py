@@ -14,6 +14,7 @@ from astro.pointing.finder_sync import FinderSync, check_focus
 from astro.pointing.geometry import separation_deg
 from astro.pointing.mount_model import MountModel
 from astro.pointing.platesolve import FinderSolver
+from tests import frames
 
 WPB = Site(26.7, -80.1)
 EVENING = datetime(2026, 10, 3, 21, 0, tzinfo=timezone(timedelta(hours=-4)))
@@ -140,12 +141,12 @@ DATA = __import__("pathlib").Path(__file__).parent / "data"
 def test_real_capped_frame_has_no_stars():
     from astro.pointing.platesolve import finder_gray
 
-    report = check_focus(finder_gray(np.load(DATA / "finder_cap_on.npy")))
+    report = check_focus(finder_gray(frames.load("lens_cap")))
     assert report.stars == 0 and "can't see any stars" in report.reason
 
 
 def test_real_one_star_frame_is_not_called_out_of_focus():
     from astro.pointing.platesolve import finder_gray
 
-    report = check_focus(finder_gray(np.load(DATA / "finder_one_star.npy")))
+    report = check_focus(finder_gray(frames.load("one_star_gain1000")))
     assert report.stars == 1 and "a star or two" in report.reason
