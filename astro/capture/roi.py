@@ -21,6 +21,7 @@ def brightest_blob(frame: np.ndarray) -> tuple[float, float] | None:
 def roi_around(center: tuple[float, float], size: int, sensor: tuple[int, int]) -> Roi:
     """Square ROI centered on `center`, clamped to the sensor (w, h), on even pixels for Bayer."""
     w, h = sensor
-    x = int(max(min(max(center[0] - size / 2, 0), w - size), 0)) & ~1  # 0 if size > sensor
-    y = int(max(min(max(center[1] - size / 2, 0), h - size), 0)) & ~1
+    size = min(size, w, h) & ~1  # a small sensor gets a smaller ROI, never one past its edge
+    x = int(min(max(center[0] - size / 2, 0), w - size)) & ~1
+    y = int(min(max(center[1] - size / 2, 0), h - size)) & ~1
     return Roi(x, y, size, size)

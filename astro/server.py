@@ -180,7 +180,6 @@ class Hub:
         self._sender: asyncio.Task | None = None
         self._outbox: asyncio.Queue[dict | None] = asyncio.Queue()
         self._state: dict | None = None  # newest unsent state; None in the queue stands for it
-        self.asker: WebSocket | None = None  # GPS requests go to the tablet that last spoke
         self._t0 = time.monotonic()
 
     def join(self, socket: WebSocket) -> None:
@@ -221,8 +220,9 @@ class Hub:
                 except Exception:  # the words still go out as text
                     log.exception("speech synthesis failed")
             to = list(self.clients)
-            if msg["type"] == "get_location" and self.asker in self.clients:
-                to = [self.asker]  # every tablet answering with its own fix would be a race
+            asker = msg.pop("_to", None)  # GPS requests go only to the tablet that asked:
+            if asker in self.clients:     # every tablet answering with its own fix would race
+                to = [asker]
             for client in to:
                 try:
                     await client.send_json(msg)
@@ -233,14 +233,13 @@ class Hub:
 
     async def handle_text(self, socket: WebSocket, text: str) -> None:
         log.info("heard", extra={"data": {"text": text}})
-        self.asker = socket
         await socket.send_json({"type": "heard", "text": text})
         reply = asyncio.create_task(asyncio.to_thread(self.agent.handle, text))
         done, _ = await asyncio.wait({reply}, timeout=THINKING_AFTER_S)
         if not done:  # a slow LLM round trip: let the user know we heard them
             await self.broadcast({"type": "say", "text": "Let me think."})
         for out in await reply:
-            await self.broadcast(out)
+            await self.broadcast(_for(out, socket))
 
     async def _guidance_loop(self) -> None:
         failing = False  # speak a failure once per streak, not ten times a second
@@ -260,6 +259,11 @@ class Hub:
             if self.user and self.scope:
                 self.scope.step(*self.user.act(t), TICK_S)
             await asyncio.sleep(TICK_S)
+
+
+def _for(msg: dict, socket: WebSocket) -> dict:
+    """A GPS request is addressed to the tablet whose turn produced it."""
+    return {**msg, "_to": socket} if msg["type"] == "get_location" else msg
 
 
 def get_hub() -> Hub:
@@ -319,9 +323,8 @@ async def ws(socket: WebSocket) -> None:
                             "server_tts": tts.available()})
     hub.join(socket)
     if not site_store.has_saved(ROOT):  # setup: first run at this installation
-        hub.asker = socket
         for out in hub.session.request_location():
-            await hub.broadcast(out)
+            await hub.broadcast(_for(out, socket))
     try:
         while True:
             msg = await socket.receive()

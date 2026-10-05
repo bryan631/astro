@@ -160,7 +160,7 @@ class FinderSync:
         focus = check_focus(gray)
         if not focus.ok:
             return False, focus.reason
-        sol = self.solver.solve(gray, bayer=False)
+        sol = self.solver.solve(gray, bayer=False, binned=2)
         if sol is None:
             return False, ("I can see stars but couldn't recognize the pattern. "
                            "Something may be blocking part of the view.")

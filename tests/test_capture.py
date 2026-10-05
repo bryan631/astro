@@ -74,4 +74,11 @@ def test_roi_never_negative_on_a_small_sensor():
     from astro.capture.roi import roi_around
 
     roi = roi_around((100, 100), 512, (400, 300))
-    assert roi.x == 0 and roi.y == 0
+    assert (roi.x, roi.y, roi.width, roi.height) == (0, 0, 300, 300)
+
+
+def test_sharpest_is_said_once_per_plateau():
+    coach = FocusCoach()
+    said = [coach.update(s) for s in [10, 15, 15.1, 15.0, 15.1, 11, 15, 15.1]]
+    assert said.count("that's the sharpest so far") == 2  # once, then again after a change
+    assert said[2] == "that's the sharpest so far" and said[3] is None and said[4] is None

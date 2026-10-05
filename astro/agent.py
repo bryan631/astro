@@ -94,12 +94,15 @@ class Agent:
 
     def handle(self, text: str) -> list[dict]:
         """Return messages for the tablet. Core commands never need the network."""
+        with self._turn:  # turns from all tablets in arrival order: a later "stop" wins
+            return self._handle(text)
+
+    def _handle(self, text: str) -> list[dict]:
         offline = time.monotonic() < self._offline_until  # recently unreachable: don't wait again
         if self.client is None or offline or self._offline_understands(text):
             return self.session.handle(text)
         try:
-            with self._turn:
-                return self._run(text)
+            return self._run(text)
         except _ToolsRan as partial:  # don't do it all again offline
             self._note_failure(partial.__cause__)
             return [*partial.side_effects, {"type": "say", "text": PARTIAL}]
