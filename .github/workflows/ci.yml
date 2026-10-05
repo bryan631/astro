@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python: ["3.11", "3.12"]  # dev box, and Ubuntu 24.04 on the MiniPC
+        python: ["3.11", "3.12", "3.14"]  # dev box; Ubuntu 24.04 and 26.04 on the MiniPC
     env:
       ASTRO_SIM: "1"
       ASTRO_REQUIRE_SOLVER: "1"  # fail, not skip, if the solver is missing
