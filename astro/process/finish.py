@@ -6,10 +6,12 @@ from pathlib import Path
 
 import numpy as np
 from astropy.io import fits
+from scipy import ndimage
 
 GRID = 16  # background sampled in GRID x GRID tiles
 CLIP_SIGMA = 2.0  # tiles this much brighter than the rest hold a target or stars: not sky
-STAR_PCT = 99.5  # pixels above this percentile are stars, for the color balance
+STAR_PCT = 99.5  # pixels standing out this much (percentile) are stars, for color balance
+STAR_WINDOW_PX = 9  # stars are smaller than this; nebulae much bigger
 
 
 def remove_gradient(rgb: np.ndarray) -> np.ndarray:
@@ -36,10 +38,15 @@ def _quadratic(x: np.ndarray, y: np.ndarray) -> np.ndarray:
 
 
 def balance_color(rgb: np.ndarray) -> np.ndarray:
-    """Scale channels so the stars come out white on average (most stars are near-white)."""
-    lum = rgb.mean(axis=-1)
-    stars = lum > np.percentile(lum, STAR_PCT)
-    means = rgb[stars].mean(axis=0)
+    """Scale channels so the stars come out white on average (most stars are near-white).
+    Stars are picked by how much they stand out from their surroundings, so a bright nebula
+    (extended) keeps its own color."""
+    excess = rgb - ndimage.median_filter(rgb, size=(STAR_WINDOW_PX, STAR_WINDOW_PX, 1))
+    compact = excess.mean(axis=-1)  # starlight above whatever lies behind it
+    stars = compact >= np.percentile(compact, STAR_PCT)
+    if np.ptp(compact) == 0:  # featureless: nothing to calibrate on
+        return rgb
+    means = excess[stars].mean(axis=0)
     return rgb * (means.mean() / np.maximum(means, 1e-6))
 
 

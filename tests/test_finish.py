@@ -37,6 +37,28 @@ def test_finish_gives_8bit_with_the_nebula_above_the_sky():
 
 
 def test_fits_is_16bit_channels_first(tmp_path):
-    save_fits(np.random.default_rng(3).random((20, 30, 3)), tmp_path / "s.fits")
+    rgb = np.zeros((20, 30, 3))
+    rgb[0, 0] = [1.0, 0.5, 0.25]  # top-left pixel: brightest, so it scales to 65535
+    save_fits(rgb, tmp_path / "s.fits")
     data = fits.getdata(tmp_path / "s.fits")
-    assert data.shape == (3, 20, 30) and data.dtype.kind in "iu"
+    assert data.shape == (3, 20, 30)
+    assert list(data[:, -1, 0]) == [65535, 32767, 16383]  # top row stored last (bottom-up)
+    assert data[:, :-1].max() == 0 and data[:, -1, 1:].max() == 0
+
+
+def test_a_bright_nebula_keeps_its_color():
+    rng = np.random.default_rng(5)
+    size = 128
+    y, x = np.mgrid[:size, :size] / size
+    nebula = 200 * np.exp(-((x - 0.5) ** 2 + (y - 0.5) ** 2) / 0.02)
+    rgb = np.stack([nebula * 1.0, nebula * 0.3, nebula * 0.3], axis=-1) + 10  # red emission
+    for sy, sx in rng.integers(5, size - 5, (30, 2)):
+        rgb[sy, sx] += 300  # white stars
+    out = balance_color(rgb)
+    center = out[60:68, 60:68].mean(axis=(0, 1))
+    assert center[0] > 2 * center[1]  # still red
+
+
+def test_flat_frame_is_left_alone():
+    flat = np.full((32, 32, 3), 7.0)
+    assert np.array_equal(balance_color(flat), flat)
