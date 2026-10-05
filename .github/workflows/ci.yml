@@ -12,9 +12,10 @@ jobs:
   # Branch protection requires a check named "test": it passes only if every Python passes.
   test:
     needs: pytest
-    runs-on: ubuntu-latest
+    if: ${{ always() }}  # a skipped check would count as passing: always run, and fail
+    runs-on: ubuntu-latest  # unless every Python version passed
     steps:
-      - run: echo "all Python versions passed"
+      - run: test "${{ needs.pytest.result }}" = success
 
   pytest:
     runs-on: ubuntu-latest
