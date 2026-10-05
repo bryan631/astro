@@ -77,7 +77,8 @@ class FinderSolver:
         self._t3 = tetra3.Tetra3()  # loads the bundled 14 MB database
 
     def solve(self, image: np.ndarray, bayer: bool = True, max_false_prob: float = 1e-5,
-              timeout_ms: int = 2000) -> Solution | None:
+              timeout_ms: int = 2000, binned: int = 1) -> Solution | None:
+        """`binned`: how many sensor pixels one gray pixel spans (2 for finder_gray output)."""
         gray = finder_gray(image) if bayer else image.astype(np.float32)
         t0 = time.perf_counter()
         r = self._t3.solve_from_image(Image.fromarray(gray), fov_estimate=self.fov,
@@ -90,7 +91,7 @@ class FinderSolver:
         ms = (time.perf_counter() - t0) * 1000
         if r.get("RA") is None or r.get("Prob", 1) > max_false_prob:
             return None
-        width_px = image.shape[1]  # sensor pixels (before binning when bayer=True)
+        width_px = image.shape[1] * binned  # sensor pixels
         return Solution(float(r["RA"]), float(r["Dec"]), float(r["Roll"]), float(r["FOV"]),
                         float(r["RMSE"]), int(r["Matches"]), float(r["Prob"]), ms,
                         float(r["FOV"]) * 3600 / width_px)
