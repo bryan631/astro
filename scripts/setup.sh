@@ -22,9 +22,12 @@ if [ "${1:-}" != "--minipc" ]; then
 fi
 
 scripts/install-voice.sh  # whisper.cpp, Piper, ffmpeg
-sudo usermod -aG dialout "$USER"  # the encoder board's serial port
+sudo usermod -aG dialout,video "$USER"  # the encoder board's serial port
+# SVBony cameras (f266:*) need a udev rule for non-root USB access.
+echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="f266", MODE="0666"' | sudo tee /etc/udev/rules.d/90-ckusb.rules >/dev/null
+sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=usb
 command -v tailscale >/dev/null || curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up  # prints a login link the first time
+sudo tailscale up --ssh  # prints a login link the first time
 scripts/tailscale-cert.sh
 # The units assume user 'astro' with the repo at /home/astro/astro: rewrite for this install.
 for unit in deploy/*.service deploy/*.timer; do
