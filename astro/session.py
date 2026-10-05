@@ -27,6 +27,7 @@ from astro.messages import say
 from astro.optics import MAIN_SENSOR_PX
 from astro.planner.catalog import load_targets
 from astro.planner.horizon import HorizonMask
+from astro.planner.moon_features import FEATURES
 from astro.planner.tonight import PLANET_NOTES, PLANETS, next_dark, plan
 from astro.pointing.coords import Site, body_altaz, radec_to_altaz
 from astro.pointing.finder_sync import FinderSync, check_focus
@@ -48,7 +49,8 @@ ENCODER_STALE_S = 1.0  # encoder positions older than this mean the board or cab
 MIN_HFR_PX = 0.5  # floor so a perfectly sharp (tiny) star can't blow up the focus score
 TOLERANCE_ARCMIN = 4.0  # guidance "on target" tolerance
 TOLERANCE_BARLOW_ARCMIN = 2.0  # half that with the 2x Barlow (half the field)
-EXTENDED_TARGETS = {p.capitalize() for p in PLANETS} | {"Moon"}  # pictured as SER video
+MOON_FEATURES = {f.name: f for f in FEATURES}  # pointing at one means pointing at the Moon
+EXTENDED_TARGETS = {p.capitalize() for p in PLANETS} | {"Moon", *MOON_FEATURES}  # SER video
 RECORD_SECONDS = 60  # planetary video length
 STACK_SECONDS = 90  # deep-sky live stack; the target drifts out of the field in ~2 min
 FOCUS_CROP_PX = 256  # sharpness measured on a crop around the planet
@@ -152,6 +154,8 @@ class Session:
             kind, note = "a planet", PLANET_NOTES[name.lower()]
         elif name == "Moon":
             kind, note = "our Moon", "Craters and mountains show best along the shadow line."
+        elif name in MOON_FEATURES:
+            kind, note = "a feature on the Moon", MOON_FEATURES[name].note
         else:
             target = self.catalog[name]
             kind, note = f"a {target.category} ({target.id})", target.note
@@ -163,9 +167,11 @@ class Session:
         return [say(f"{name} is {kind}. {note} {where}")]
 
     def names(self) -> list[str]:
-        return [p.capitalize() for p in PLANETS] + ["Moon", *self.catalog]
+        return [p.capitalize() for p in PLANETS] + ["Moon", *MOON_FEATURES, *self.catalog]
 
     def altaz_of(self, name: str) -> tuple[float, float]:
+        if name in MOON_FEATURES:  # the Moon fills the main camera: aim at its center
+            name = "Moon"
         if name.lower() in PLANETS or name == "Moon":
             return body_altaz(name.lower(), self.site, self.clock())
         t = self.catalog[name]

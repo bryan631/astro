@@ -5,11 +5,12 @@ from datetime import datetime
 
 import astropy.units as u
 import numpy as np
-from astropy.coordinates import SkyCoord, get_body
+from astropy.coordinates import GeocentricTrueEcliptic, SkyCoord, get_body
 from astropy.time import Time
 
 from astro.planner.catalog import Target, load_targets
 from astro.planner.horizon import HorizonMask
+from astro.planner.moon_features import best_features
 from astro.pointing.coords import Site
 
 # Weight = how rewarding it is in an 8" scope.
@@ -90,7 +91,24 @@ def plan(site: Site, start: datetime, mask: HorizonMask | None = None,
         best = Choice(name, cat, note, times[i].to_datetime(timezone=start.tzinfo),
                       round(float(alt[i]), 1), int(visible.sum()) * STEP_MIN, round(score, 3))
         out.setdefault(cat, []).append(best)
+    if moon_choice := out.get("moon"):
+        out["moon feature"] = _moon_features(moon_choice[0], Time(moon_choice[0].best_time))
     return {c: sorted(v, key=lambda x: -x.score)[:per_category] for c, v in out.items()}
+
+
+def moon_minus_sun_deg(when: Time) -> float:
+    """Moon's ecliptic longitude minus the Sun's: 0 new, 90 first quarter, 180 full."""
+    ecl = GeocentricTrueEcliptic(equinox=when)
+    moon = get_body("moon", when).transform_to(ecl).lon.deg
+    sun = get_body("sun", when).transform_to(ecl).lon.deg
+    return float((moon - sun) % 360)
+
+
+def _moon_features(moon: Choice, when: Time) -> list[Choice]:
+    """Features near the shadow line, seen when (and where) the Moon is best."""
+    return [Choice(f.name, "moon feature", f.note, moon.best_time, moon.best_alt_deg,
+                   moon.minutes_visible, round(moon.score * quality, 3))
+            for f, quality in best_features(moon_minus_sun_deg(when))]
 
 
 def moonlight_factor(category: str, moon_sep_deg: float, moon_lit: float) -> float:
