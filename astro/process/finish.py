@@ -56,9 +56,9 @@ def denoise(rgb: np.ndarray, sigma: float = DENOISE_SIGMA_PX) -> np.ndarray:
     """Smooth the faint sky, where noise is all there is, and leave stars and bright detail
     sharp: blend toward a blurred copy by how close each pixel is to the background."""
     blurred = ndimage.gaussian_filter(rgb, (sigma, sigma, 0))
-    lum = blurred.mean(axis=-1, keepdims=True)
+    lum = rgb.mean(axis=-1, keepdims=True)  # unblurred: a faint star keeps its full peak
     sky = np.median(lum)
-    noise = 1.4826 * np.median(np.abs(rgb.mean(axis=-1) - rgb.mean(axis=-1).mean()))
+    noise = 1.4826 * np.median(np.abs(lum - sky))  # robust: stars and nebulae don't inflate it
     signal = np.clip((lum - sky) / max(DENOISE_KNEE * noise, 1e-6), 0, 1)  # 0 sky, 1 detail
     return signal * rgb + (1 - signal) * blurred
 

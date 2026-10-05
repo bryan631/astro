@@ -71,3 +71,13 @@ def test_denoise_smooths_sky_and_keeps_stars():
     out = denoise(rgb)
     assert out[:20, :20].std() < rgb[:20, :20].std() / 2
     assert out[32, 32].mean() > 0.9 * rgb[32, 32].mean()
+
+
+def test_denoise_keeps_a_faint_star_next_to_a_bright_nebula():
+    rng = np.random.default_rng(7)
+    rgb = 10 + rng.normal(0, 2, (64, 64, 3))
+    rgb[5:25, 5:25] += 150  # extended bright target in one corner
+    rgb[48, 48] += 20  # faint star: 10 sigma
+    out = denoise(rgb)
+    assert out[48, 48].mean() - 10 > 0.8 * 20
+    assert out[40:60, 30:45].std() < rgb[40:60, 30:45].std() / 1.5  # sky still smoothed
