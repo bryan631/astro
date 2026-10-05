@@ -11,6 +11,8 @@ from scipy import ndimage
 GRID = 16  # background sampled in GRID x GRID tiles
 CLIP_SIGMA = 2.0  # tiles this much brighter than the rest hold a target or stars: not sky
 STAR_PCT = 99.5  # pixels standing out this much (percentile) are stars, for color balance
+DENOISE_SIGMA_PX = 1.5  # blur for the faint sky (the stretch amplifies its noise most)
+DENOISE_KNEE = 3.0  # this many noise sigmas above the sky counts as real detail, kept sharp
 STAR_WINDOW_PX = 9  # stars are smaller than this; nebulae much bigger
 
 
@@ -50,6 +52,17 @@ def balance_color(rgb: np.ndarray) -> np.ndarray:
     return rgb * (means.mean() / np.maximum(means, 1e-6))
 
 
+def denoise(rgb: np.ndarray, sigma: float = DENOISE_SIGMA_PX) -> np.ndarray:
+    """Smooth the faint sky, where noise is all there is, and leave stars and bright detail
+    sharp: blend toward a blurred copy by how close each pixel is to the background."""
+    blurred = ndimage.gaussian_filter(rgb, (sigma, sigma, 0))
+    lum = rgb.mean(axis=-1, keepdims=True)  # unblurred: a faint star keeps its full peak
+    sky = np.median(lum)
+    noise = 1.4826 * np.median(np.abs(lum - sky))  # robust: stars and nebulae don't inflate it
+    signal = np.clip((lum - sky) / max(DENOISE_KNEE * noise, 1e-6), 0, 1)  # 0 sky, 1 detail
+    return signal * rgb + (1 - signal) * blurred
+
+
 def asinh_stretch(rgb: np.ndarray, strength: float = 50) -> np.ndarray:
     """Lift the faint nebula without blowing out the stars; keeps colors (one scale per pixel)."""
     lum = rgb.mean(axis=-1, keepdims=True)
@@ -61,7 +74,7 @@ def asinh_stretch(rgb: np.ndarray, strength: float = 50) -> np.ndarray:
 
 def finish(rgb: np.ndarray) -> np.ndarray:
     """Linear stacked RGB -> display-ready 8-bit RGB."""
-    return asinh_stretch(balance_color(np.clip(remove_gradient(rgb), 0, None)))
+    return asinh_stretch(denoise(balance_color(np.clip(remove_gradient(rgb), 0, None))))
 
 
 def save_fits(rgb: np.ndarray, path: Path) -> None:

@@ -95,7 +95,8 @@ The current requirements for the project. Each has an ID for reference.
 - **C1** SER video writer with an ROI that follows the brightest blob.
 - **C2** Focus metric (HFR for stars, Laplacian variance for planets) -> voice "sharper / passed it".
 - **C3** Planet pipeline: stack -> sharpen -> RGB align -> auto-crop -> PNG.
-- **C4** Deep-sky pipeline: register + live-stack short subs with rotation/drift -> GraXpert background/denoise -> Siril color calibration + stretch.
+- **C4** Deep-sky pipeline: register + live-stack short subs with rotation/drift -> background (gradient) removal and denoise -> color calibration + stretch, in-process
+  (numpy, no external binaries); the linear stack is also saved as FITS.
 - **C5** Validate with downloaded sample SER/FITS data.
 - **C6** Gallery of processed pictures on the tablet; spoken "your picture is ready".
 
