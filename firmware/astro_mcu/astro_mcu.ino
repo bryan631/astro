@@ -84,7 +84,7 @@ bool checksumOk(char* text) {
   return cs == (uint8_t)strtol(star + 1, nullptr, 16);
 }
 
-// Parse a whole decimal integer; false on empty input or trailing junk.
+// Parse a decimal integer; false on empty input. Callers check *end for trailing junk.
 bool parseInt(const char* s, char** end, long* out) {
   *out = strtol(s, end, 10);
   return *end != s;

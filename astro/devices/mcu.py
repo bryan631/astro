@@ -96,6 +96,8 @@ class Mcu:
             self.errors = [*self.errors[-9:], msg.text]
 
     def _set_heat(self, percent: int) -> None:
+        # Both channels get the same power for now. The finder lens and the secondary dew up
+        # differently; give each its own percent if one fogs while the other doesn't.
         self.heat = percent
         for ch in HEATER_CHANNELS:
             self._send(proto.heat(ch, percent))

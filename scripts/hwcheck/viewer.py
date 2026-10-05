@@ -11,7 +11,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import cv2
 from live import LiveCamera, parse_args
 
-args = parse_args(__doc__, lambda ap: ap.add_argument("--port", type=int, default=8080))
+
+def _extra(ap):
+    ap.add_argument("--port", type=int, default=8080)
+    ap.add_argument("--host", default="127.0.0.1", help="0.0.0.0 to view from another device")
+
+
+args = parse_args(__doc__, _extra)
 live = LiveCamera(args).start()
 
 
@@ -35,7 +41,7 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-server = ThreadingHTTPServer(("", args.port), Handler)
+server = ThreadingHTTPServer((args.host, args.port), Handler)
 server.daemon_threads = True
 print(f"{args.cam}: open http://localhost:{args.port}  (Ctrl+C to stop)", flush=True)
 try:

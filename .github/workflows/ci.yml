@@ -9,8 +9,19 @@ permissions:
   contents: read
 
 jobs:
+  # Branch protection requires a check named "test": it passes only if every Python passes.
   test:
+    needs: pytest
+    if: ${{ always() }}  # a skipped check would count as passing: always run, and fail
+    runs-on: ubuntu-latest  # unless every Python version passed
+    steps:
+      - run: test "${{ needs.pytest.result }}" = success
+
+  pytest:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.12"]  # dev box, and Ubuntu 24.04 on the MiniPC
     env:
       ASTRO_SIM: "1"
       ASTRO_REQUIRE_SOLVER: "1"  # fail, not skip, if the solver is missing
@@ -18,7 +29,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python }}
           cache: pip
       - run: pip install -e ".[dev]"
       - run: PIP=pip scripts/install-solver.sh
