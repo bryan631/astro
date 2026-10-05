@@ -28,6 +28,7 @@ from astro.devices.sim.main_cam import SimMainCamera
 from astro.devices.sim.scope import SimEncoders, SimScope, SimUser
 from astro.guidance.centering import centering_phrases
 from astro.guidance.engine import cue_phrases
+from astro.optics import MAIN_SENSOR_PX
 from astro.planner import horizon_store
 from astro.planner.weather import cloud_cover_pct
 from astro.pointing.coords import Site
@@ -56,6 +57,13 @@ def load_env(path: Path = ROOT / ".env") -> None:
 
 log = logging.getLogger("astro.server")
 LOGGED = {"say", "picture", "get_location"}  # not the 10 Hz "state" or "live" updates
+GALLERY = ROOT / "data" / "gallery"
+LIVE = ROOT / "data" / "live"  # live-stack previews while they build (not gallery pictures)
+
+# Module state: speech engines, and the shared hubs (one per process; see get_hub).
+stt, tts = Stt(), Tts()
+_real_hub: "Hub | None" = None
+_sim_hub: "Hub | None" = None
 
 
 def load_site() -> Site:
@@ -69,7 +77,7 @@ def build_session() -> tuple[Session, SimScope | None]:
         return build_real_session(), None
     site, clock = load_site(), utcnow
     scope = SimScope(45, 180)
-    camera = SimFinderCamera(lambda: (scope.alt, scope.az), site, clock, solver()._t3.star_table)
+    camera = SimFinderCamera(lambda: (scope.alt, scope.az), site, clock, solver().star_table)
     finder = FinderSync(camera, solver(), MountModel(), SimEncoders(scope), site, clock)
     override = os.environ.get("ASTRO_DEV_OVERRIDE") == "1"
     main = SimMainCamera(lambda: (scope.alt, scope.az), site, clock)
@@ -100,7 +108,7 @@ def build_real_session() -> Session:
             _hardware_closers.append(main.close)
         override = os.environ.get("ASTRO_DEV_OVERRIDE") == "1"
         return Session(site, clock=clock, developer_override=override, finder=finder,
-                       main_camera=main, main_sensor=main.sensor_size if main else (3856, 2180),
+                       main_camera=main, main_sensor=main.sensor_size if main else MAIN_SENSOR_PX,
                        data_dir=ROOT / "data", on_site_change=lambda s: site_store.save(ROOT, s),
                        horizon=horizon_store.load(ROOT),
                        on_horizon_change=lambda m: horizon_store.save(ROOT, m),
@@ -154,7 +162,6 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
-stt, tts = Stt(), Tts()
 
 
 def warm_speech() -> None:
@@ -279,9 +286,6 @@ def get_hub() -> Hub:
     return _real_hub
 
 
-_real_hub: Hub | None = None
-_sim_hub: Hub | None = None
-
 
 def _allowed(conn: Request | WebSocket) -> bool:
     """Optional shared token (ASTRO_TOKEN) for public WiFi: open the app once as
@@ -370,8 +374,6 @@ async def handle_message(hub: Hub, socket: WebSocket, msg: dict) -> None:
             await hub.broadcast(out)
 
 
-GALLERY = ROOT / "data" / "gallery"
-LIVE = ROOT / "data" / "live"  # live-stack previews while they build (not gallery pictures)
 
 
 @app.get("/gallery")

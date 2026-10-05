@@ -50,7 +50,7 @@ MIN_STAR_AREA_PX = 2
 SATURATED_BINNED = 4 * 250
 
 MIN_STARS = 4  # the solver matches 4-star patterns; don't gate stricter than it
-FEW_STARS = 3
+STARS_TO_JUDGE_FOCUS = 3  # fewer is "a star or two": too few to tell focus from clouds
 # Binned pixels (~62"/px). Defocus first hides faint stars, then grows the HFR, so a short
 # star count with a slightly soft HFR also means "focus". Tuned on simulation; retune on real sky.
 HFR_MAX_PX = 2.0
@@ -77,9 +77,11 @@ def _clipped_std(gray: np.ndarray) -> float:
 def check_focus(gray: np.ndarray) -> FocusReport:
     """Count stars and measure their sharpness on a (binned) gray finder frame."""
     bg = np.median(gray)
-    noise = MAD_TO_SIGMA * np.median(np.abs(gray - bg)) or _clipped_std(gray)
+    noise = MAD_TO_SIGMA * np.median(np.abs(gray - bg))
+    if noise == 0:  # over half the pixels equal the median (dark, quantized): MAD says nothing
+        noise = _clipped_std(gray)
     noise = max(noise, MIN_NOISE_ADU)
-    labels, n = ndimage.label(gray > bg + DETECT_SIGMA * noise)
+    labels, _ = ndimage.label(gray > bg + DETECT_SIGMA * noise)
     areas = np.bincount(labels.ravel())[1:]
     keep = np.flatnonzero(areas >= MIN_STAR_AREA_PX) + 1  # label ids of star-sized blobs
     n = len(keep)
@@ -101,7 +103,7 @@ def check_focus(gray: np.ndarray) -> FocusReport:
         cut[cut < CLIP_SIGMA * noise] = 0  # keep background noise from inflating the radius
         hfrs.append(half_flux_radius(cut))
     hfr = float(np.median(hfrs))
-    if n < FEW_STARS:  # too few stars to judge focus; say what we see
+    if n < STARS_TO_JUDGE_FOCUS:  # too few stars to judge focus; say what we see
         return FocusReport(n, hfr, False,
                            "I only see a star or two. Clouds or trees may be in the way.",
                            "few_stars")

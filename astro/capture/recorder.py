@@ -104,7 +104,7 @@ class Recorder:
 
     def _run(self, rec: Recording, roi: Roi, seconds: float) -> None:
         end = time.monotonic() + seconds
-        checked = -SAFETY_CHECK_S
+        checked = -1e9  # check on the first frame
         try:
             with SerWriter(rec.path, roi.width, roi.height, bayer=self.camera.bayer) as ser:
                 while time.monotonic() < end and not self._stop.is_set():

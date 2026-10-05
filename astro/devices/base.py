@@ -18,6 +18,9 @@ class Camera(Protocol):
     """A camera returning 8-bit RAW (Bayer) frames."""
 
     bayer: str  # "RGGB", "GRBG", ... for debayering and SER headers
+    exposure_s: float  # current settings, so a mode change can be undone
+    gain: int
+    sensor_size: tuple[int, int]  # full frame (width, height), pixels
 
     def connect(self) -> None: ...
     def close(self) -> None: ...

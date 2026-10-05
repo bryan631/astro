@@ -23,6 +23,8 @@ from astro.devices.base import Camera
 from astro.guidance.centering import CALIBRATED, Centerer
 from astro.guidance.engine import CueLimiter, DirectionLearner, Guide, wrap180
 from astro.intents import Intent, match_name, parse
+from astro.messages import say
+from astro.optics import MAIN_SENSOR_PX
 from astro.planner.catalog import load_targets
 from astro.planner.horizon import HorizonMask
 from astro.planner.tonight import PLANET_NOTES, PLANETS, next_dark, plan
@@ -44,7 +46,9 @@ DIRECTION_PROBE_S = 1.5  # after a left/right cue, look this long for the azimut
 FIX_STALE_S = 2.0  # a plate-solve fix older than this is too old to steer by
 ENCODER_STALE_S = 1.0  # encoder positions older than this mean the board or cable is gone
 MIN_HFR_PX = 0.5  # floor so a perfectly sharp (tiny) star can't blow up the focus score
-TOLERANCE_ARCMIN = {False: 4.0, True: 2.0}  # guidance tolerance without / with the 2x Barlow
+TOLERANCE_ARCMIN = 4.0  # guidance "on target" tolerance
+TOLERANCE_BARLOW_ARCMIN = 2.0  # half that with the 2x Barlow (half the field)
+EXTENDED_TARGETS = {p.capitalize() for p in PLANETS} | {"Moon"}  # pictured as SER video
 RECORD_SECONDS = 60  # planetary video length
 STACK_SECONDS = 90  # deep-sky live stack; the target drifts out of the field in ~2 min
 FOCUS_CROP_PX = 256  # sharpness measured on a crop around the planet
@@ -64,7 +68,7 @@ class Session:
     def __init__(self, site: Site, position: Callable[[], tuple[float, float]] | None = None,
                  clock: Clock = utcnow, developer_override: bool = False,
                  finder: FinderSync | None = None, main_camera: Camera | None = None,
-                 main_sensor: tuple[int, int] = (3856, 2180), data_dir: Path = Path("data"),
+                 main_sensor: tuple[int, int] = MAIN_SENSOR_PX, data_dir: Path = Path("data"),
                  on_site_change: Callable[[Site], None] | None = None,
                  horizon: HorizonMask | None = None,
                  on_horizon_change: Callable[[HorizonMask], None] | None = None,
@@ -192,65 +196,63 @@ class Session:
         if intent.name == "goto":
             name = match_name(intent.target or "", self.names())
             return self.goto(name) if name else [say(f"I don't know {intent.target}.")]
-        if intent.name == "stop":
-            if self.wizard is not None and self.wizard.active:
-                self.wizard = None
-                return [say("OK, setup stopped. Say 'set up the telescope' to start again.")]
-            if self._horizon is not None:  # "done" / "stop" finishes the horizon walk
-                return self.finish_horizon()
-            if self._focus_coach is not None:
-                if self._focus_coach.samples < MIN_FOCUS_SAMPLES:
-                    return [say("Keep turning slowly a little longer, so I can find the "
-                                "sharpest point.")]
-                if self._focus_mode == "main":
-                    self.main_focus_ok = True
-                self._focus_coach = None
-                return [say("OK, focus is set.")]
-            if self._camera_busy():  # "stop" while taking a picture ends the picture
-                return self._handle("stop recording")
-            self.target, self.guide, self._centering = None, None, False
-            return [say("Stopped.")]
-        if intent.name in ("barlow_on", "barlow_off"):
-            self.barlow = intent.name == "barlow_on"
-            self.main_focus_ok = False
-            if self._focus_coach is not None and self._focus_mode == "main":
-                self._focus_coach = FocusCoach()  # old scores don't compare across optics
-            if self.guide is not None:  # an active guide switches tolerance too
-                self.guide.tol_deg = TOLERANCE_ARCMIN[self.barlow] / 60
-            return [say("Got it. The Barlow changes focus, so we'll refocus before taking pictures.")]
-        if intent.name == "focus":
-            return self.start_main_focus()
-        if intent.name == "capture":
-            return self.capture()
-        if intent.name == "stop_capture":
-            if self.stacker is not None and self.stacker.busy:
-                self.stacker.stop()
-                return [say("Stopping. I'll keep what's stacked so far.")]
-            if self.recorder is None or not self.recorder.busy:
-                return [say("We're not recording.")]
-            self.recorder.stop()
-            return [say("Stopping the recording.")]
-        if intent.name == "sync":
-            return self.sync()
-        if intent.name == "finder_focus":
-            return self.start_finder_focus()
-        if intent.name == "tonight":
-            return self.tonight()
-        if intent.name == "next":
-            if not self._suggestions:
-                return [say("Ask me what's good tonight first.")]
-            return self.goto(self._suggestions.pop(0))
-        if intent.name == "horizon_start":
-            return self.start_horizon()
-        if intent.name == "horizon_mark":
-            return self.mark_horizon()
-        if intent.name == "location":
-            return self.request_location()
         if intent.name == "describe":
             return self.describe(intent.target or "")
-        if intent.name == "where":
-            return self.where()
-        return [say(f"{intent.name.replace('_', ' ').capitalize()} isn't ready yet.")]
+        if intent.name in ("barlow_on", "barlow_off"):
+            return self._set_barlow(intent.name == "barlow_on")
+        command = {
+            "stop": self._stop, "focus": self.start_main_focus, "capture": self.capture,
+            "stop_capture": self._stop_capture, "sync": self.sync,
+            "finder_focus": self.start_finder_focus, "tonight": self.tonight, "next": self._next,
+            "horizon_start": self.start_horizon, "horizon_mark": self.mark_horizon,
+            "location": self.request_location, "where": self.where,
+        }.get(intent.name)
+        if command is None:
+            return [say(f"{intent.name.replace('_', ' ').capitalize()} isn't ready yet.")]
+        return command()
+
+    def _stop(self) -> list[dict]:
+        """'Stop' (or 'done') ends whatever is going on, most specific first."""
+        if self.wizard is not None and self.wizard.active:
+            self.wizard = None
+            return [say("OK, setup stopped. Say 'set up the telescope' to start again.")]
+        if self._horizon is not None:  # "done" / "stop" finishes the horizon walk
+            return self.finish_horizon()
+        if self._focus_coach is not None:
+            if self._focus_coach.samples < MIN_FOCUS_SAMPLES:
+                return [say("Keep turning slowly a little longer, so I can find the "
+                            "sharpest point.")]
+            if self._focus_mode == "main":
+                self.main_focus_ok = True
+            self._focus_coach = None
+            return [say("OK, focus is set.")]
+        if self._camera_busy():  # "stop" while taking a picture ends the picture
+            return self._stop_capture()
+        self.target, self.guide, self._centering = None, None, False
+        return [say("Stopped.")]
+
+    def _set_barlow(self, inserted: bool) -> list[dict]:
+        self.barlow = inserted
+        self.main_focus_ok = False
+        if self._focus_coach is not None and self._focus_mode == "main":
+            self._focus_coach = FocusCoach()  # old scores don't compare across optics
+        if self.guide is not None:  # an active guide switches tolerance too
+            self.guide.tol_deg = self._tolerance_arcmin() / 60
+        return [say("Got it. The Barlow changes focus, so we'll refocus before taking pictures.")]
+
+    def _stop_capture(self) -> list[dict]:
+        if self.stacker is not None and self.stacker.busy:
+            self.stacker.stop()
+            return [say("Stopping. I'll keep what's stacked so far.")]
+        if self.recorder is None or not self.recorder.busy:
+            return [say("We're not recording.")]
+        self.recorder.stop()
+        return [say("Stopping the recording.")]
+
+    def _next(self) -> list[dict]:
+        if not self._suggestions:
+            return [say("Ask me what's good tonight first.")]
+        return self.goto(self._suggestions.pop(0))
 
     def sync(self) -> list[dict]:
         if self.finder is None:
@@ -287,7 +289,7 @@ class Session:
             return [say("I'm already recording." if self.recorder.busy else "I'm already stacking.")]
         name = self.target or "capture"
         try:
-            if self.target is None or self.target in self._extended_targets():
+            if self.target is None or self.target in EXTENDED_TARGETS:
                 self.recorder.start(name, self.record_seconds)
                 self._picture_started()
                 self._announced_done = False
@@ -322,7 +324,7 @@ class Session:
         safe = self.target_safety(alt, az)
         if not safe.ok:
             return [say(f"I can't go to {name}: it's {safe.reason}.")]
-        guide = Guide(*self._aim(alt, az), tolerance_arcmin=TOLERANCE_ARCMIN[self.barlow],
+        guide = Guide(*self._aim(alt, az), tolerance_arcmin=self._tolerance_arcmin(),
                           right_is_plus_az=self.right_is_plus_az)
         self._centering = False
         self.target, self.guide, self._focus_coach = name, guide, None
@@ -559,7 +561,7 @@ class Session:
         return alt, az
 
     def _should_center(self) -> bool:
-        return (self.main_camera is not None and self.target in self._extended_targets()
+        return (self.main_camera is not None and self.target in EXTENDED_TARGETS
                 and not self._camera_busy())
 
     def _center_step(self, t: float) -> list[dict]:
@@ -581,7 +583,7 @@ class Session:
         if step.lost:  # back to finder guidance, as the words promise
             self._centering = False
             alt, az = self.altaz_of(self.target)
-            self.guide = Guide(*self._aim(alt, az), tolerance_arcmin=TOLERANCE_ARCMIN[self.barlow],
+            self.guide = Guide(*self._aim(alt, az), tolerance_arcmin=self._tolerance_arcmin(),
                           right_is_plus_az=self.right_is_plus_az)
         elif step.done:
             self._centering = False
@@ -618,7 +620,7 @@ class Session:
             frame = self.main_camera.capture()
         except (RuntimeError, OSError) as e:
             return self._camera_failed("main", e)
-        if self.target is None or self.target in self._extended_targets():
+        if self.target is None or self.target in EXTENDED_TARGETS:
             center = brightest_blob(frame)
             if center is None:
                 return [say("I don't see anything bright in the main camera.")]
@@ -808,8 +810,8 @@ class Session:
             return [say(f"I stopped focusing: {reason}.")]
         return []
 
-    def _extended_targets(self) -> set[str]:
-        return {p.capitalize() for p in PLANETS} | {"Moon"}
+    def _tolerance_arcmin(self) -> float:
+        return TOLERANCE_BARLOW_ARCMIN if self.barlow else TOLERANCE_ARCMIN
 
 
 def _compass(az: float) -> str:
@@ -822,6 +824,3 @@ def _clock(t: datetime) -> str:
     """Local wall-clock time as spoken: '9:15 PM'."""
     return t.strftime("%I:%M %p").lstrip("0")
 
-
-def say(text: str) -> dict:
-    return {"type": "say", "text": text}

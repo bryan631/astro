@@ -24,7 +24,7 @@ def observe(scene, angle_deg, shift, rng, noise=8.0):
                                                     order=1), shift, order=1)
                        for c in range(3)])
     raw = np.zeros((SIZE, SIZE))
-    for (y, x), c in zip(_LAYOUT["GRBG"], (0, 1, 1, 2)):
+    for (y, x), c in zip(_LAYOUT["GRBG"], (0, 1, 1, 2), strict=True):
         raw[y::2, x::2] = moved[y::2, x::2, c]
     return (raw + 20 + rng.normal(0, noise, raw.shape)).clip(0, 255).astype(np.uint8)
 

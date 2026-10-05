@@ -44,6 +44,7 @@ class LiveStacker:
         self.preview_dir = preview_dir or out_dir.parent / "live"
         self._stop = threading.Event()
         self.current: LiveSession | None = None
+        self._restore: tuple[float, int] = (0.0, 0)  # camera mode to go back to after a stack
 
     @property
     def busy(self) -> bool:
@@ -55,7 +56,7 @@ class LiveStacker:
         if reason := self.safety():
             raise CaptureRefused(f"I can't take pictures now: {reason}.")
         # Remember the camera's mode so planetary work afterwards isn't stuck at 0.2 s / gain 300.
-        self._restore = (getattr(self.camera, "exposure_s", None), getattr(self.camera, "gain", None))
+        self._restore = (self.camera.exposure_s, self.camera.gain)
         try:
             self.camera.set_roi(None)
             self.camera.set_exposure(SUB_EXPOSURE_S)
@@ -78,7 +79,7 @@ class LiveStacker:
     def _run(self, live: LiveSession, seconds: float) -> None:
         stack = LiveStack(self.camera.bayer)
         end = time.monotonic() + seconds
-        checked = saved = -1e9
+        checked = saved = -1e9  # check (and save) on the first frame
         skips_in_a_row = 0
         try:
             while time.monotonic() < end and not self._stop.is_set():
@@ -118,10 +119,8 @@ class LiveStacker:
 
     def _restore_mode(self) -> None:
         exposure, gain = self._restore
-        if exposure is not None:
-            self.camera.set_exposure(exposure)
-        if gain is not None:
-            self.camera.set_gain(gain)
+        self.camera.set_exposure(exposure)
+        self.camera.set_gain(gain)
 
     def _save(self, stack: LiveStack, live: LiveSession) -> None:
         """Write next to the preview, then swap it in: the tablet never reads a half file."""

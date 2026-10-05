@@ -11,6 +11,7 @@ import numpy as np
 from scipy import ndimage
 
 from astro.devices.base import Roi
+from astro.optics import MAIN_SENSOR_PX
 from astro.pointing.coords import Site, altaz_to_radec, body_altaz, radec_to_altaz
 
 # Apparent diameter, arcsec (typical). Every body the planner can suggest must be here.
@@ -18,7 +19,7 @@ BODIES = {"moon": 1870, "mercury": 7, "venus": 25, "mars": 12, "jupiter": 45, "s
           "uranus": 3.7, "neptune": 2.3}
 MIN_RADIUS_PX = 3  # draw tiny disks (Uranus, Neptune) big enough to find and focus on
 POSITION_REFRESH_S = 1.0  # bodies move slowly; look up positions once a second, not per frame
-SENSOR = (1928, 1090)  # SV705C 3856x2180 binned 2x2
+SENSOR = (MAIN_SENSOR_PX[0] // 2, MAIN_SENSOR_PX[1] // 2)  # SV705C binned 2x2
 NOISE = 4.0
 # Synthetic deep-sky stars (the real camera sees mag ~12+, far deeper than any catalog here):
 # a random field fixed to the sky (stable 1-degree tiles, the 3x3 around the view combined),
@@ -39,8 +40,10 @@ class SimMainCamera:
         self.true_altaz, self.site, self.clock = true_altaz, site, clock
         self.scale, self.blur_px = arcsec_per_px, blur_px
         self.sensor_size = SENSOR
+        self.exposure_s, self.gain = 0.01, 0
         self._roi: Roi | None = None
         self._rng = np.random.default_rng(seed)
+        self._tiles: dict = {}  # star field per sky tile, generated once
         self._diam = np.array(list(BODIES.values()))
         self._positions: tuple[datetime, np.ndarray, np.ndarray] | None = None  # (when, alt, az)
 
@@ -49,8 +52,11 @@ class SimMainCamera:
 
     def connect(self) -> None: ...
     def close(self) -> None: ...
-    def set_exposure(self, seconds: float) -> None: ...
-    def set_gain(self, gain: int) -> None: ...
+    def set_exposure(self, seconds: float) -> None:
+        self.exposure_s = seconds
+
+    def set_gain(self, gain: int) -> None:
+        self.gain = gain
 
     def set_roi(self, roi: Roi | None) -> None:
         self._roi = roi
@@ -101,10 +107,10 @@ class SimMainCamera:
         """Stars from the 3x3 tiles around the view; each tile is generated once from its key."""
         ti, tj = int(np.floor(ra0 / STAR_TILE_DEG)), int(np.floor(dec0 / STAR_TILE_DEG))
         tiles = [self._tile(ti + di, tj + dj) for di in (-1, 0, 1) for dj in (-1, 0, 1)]
-        return tuple(np.concatenate(parts) for parts in zip(*tiles))
+        return tuple(np.concatenate(parts) for parts in zip(*tiles, strict=True))
 
     def _tile(self, i: int, j: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        cache = self.__dict__.setdefault("_tiles", {})
+        cache = self._tiles
         if (i, j) not in cache:
             rng = np.random.default_rng([i % round(360 / STAR_TILE_DEG), j + 900])  # deterministic per tile
             n = rng.poisson(STARS_PER_SQ_ARCMIN * (STAR_TILE_DEG * 60) ** 2

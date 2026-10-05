@@ -5,12 +5,13 @@ from scipy import ndimage
 
 from astro.devices.base import Roi
 
+MIN_CONTRAST_ADU = 10  # 8-bit frames: a peak this far over the median is "something there"
 
 def brightest_blob(frame: np.ndarray) -> tuple[float, float] | None:
     """(x, y) centroid of the brightest connected region, or None for an empty frame."""
     smooth = ndimage.uniform_filter(frame.astype(np.float32), 5)
     peak = smooth.max()
-    if peak - np.median(smooth) < 10:
+    if peak - np.median(smooth) < MIN_CONTRAST_ADU:
         return None
     labels, _ = ndimage.label(smooth > (peak + np.median(smooth)) / 2)
     region = labels == labels[np.unravel_index(np.argmax(smooth), smooth.shape)]

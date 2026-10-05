@@ -293,7 +293,8 @@ def test_deep_sky_capture_live_stacks_drifting_stars(tmp_path):
     from astro.pointing.coords import radec_to_altaz
 
     start = time.monotonic()
-    clock = lambda: EVENING + timedelta(seconds=time.monotonic() - start)
+    def clock():
+        return EVENING + timedelta(seconds=time.monotonic() - start)
     alt, az = radec_to_altaz(299.90, 22.72, WPB, EVENING)  # M27; scope fixed, sky drifts
     cam = SimMainCamera(lambda: (alt, az), WPB, clock)
     s = Session(WPB, lambda: (alt, az), clock=clock, main_camera=cam,

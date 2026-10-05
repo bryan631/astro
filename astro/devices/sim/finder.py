@@ -20,11 +20,15 @@ class SimFinderCamera:
         self.star_table, self.fov = star_table, fov_deg
         self.blur_px, self.mag_limit = blur_px, mag_limit  # raise blur_px to simulate defocus
         self._n = 0
+        self.exposure_s, self.gain, self.sensor_size = 0.5, 100, (1280, 960)
 
     def connect(self) -> None: ...
     def close(self) -> None: ...
-    def set_exposure(self, seconds: float) -> None: ...
-    def set_gain(self, gain: int) -> None: ...
+    def set_exposure(self, seconds: float) -> None:
+        self.exposure_s = seconds
+
+    def set_gain(self, gain: int) -> None:
+        self.gain = gain
     def set_roi(self, roi: Roi | None) -> None: ...
 
     def temperature_c(self) -> float | None:

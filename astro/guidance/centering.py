@@ -91,7 +91,7 @@ class Centerer:
                     return Step(CALIBRATED)
         else:
             self._last = (position, px)
-        direction = "left" if not self.axes._sky else "up"
+        direction = "left" if not self.axes.moves else "up"
         ask = f"push {direction} a tiny bit, then stop"
         if ask != self._asked:
             self._asked, self._waiting = ask, 0
