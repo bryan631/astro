@@ -15,9 +15,8 @@ from astro.devices.base import Camera
 from astro.pointing.finder_sync import check_focus
 from astro.pointing.platesolve import FinderSolver, finder_gray
 
-SOLVED = "solved"
-NO_MATCH = "stars visible but no pattern match"
-OUTCOMES = ("solves", "no_match", "no_stars", "not_sky", "few_stars", "out_of_focus")
+SOLVED, NO_MATCH = "solves", "no_match"  # outcome codes; the rest come from check_focus
+OUTCOMES = (SOLVED, NO_MATCH, "no_stars", "not_sky", "few_stars", "out_of_focus")
 
 
 def classify(raw: np.ndarray, solver: FinderSolver) -> str:
@@ -27,8 +26,8 @@ def classify(raw: np.ndarray, solver: FinderSolver) -> str:
     the stars are good enough for it."""
     focus = check_focus(finder_gray(raw))
     if solver.solve(raw) is not None:
-        return "solves"
-    return "no_match" if focus.ok else focus.outcome
+        return SOLVED
+    return NO_MATCH if focus.ok else focus.outcome
 
 
 @dataclass
@@ -36,25 +35,30 @@ class SkyTestStats:
     frames: int = 0
     outcomes: collections.Counter = field(default_factory=collections.Counter)
     solve_ms: list[float] = field(default_factory=list)
+    reasons: dict[str, str] = field(default_factory=dict)  # outcome code -> what was said
 
     def summary(self) -> str:
         solved = self.outcomes[SOLVED]
         median = f"{np.median(self.solve_ms):.0f} ms" if self.solve_ms else "n/a"
         rate = 100 * solved / max(self.frames, 1)
         lines = [f"{self.frames} frames, solved {solved} ({rate:.0f}%), median solve {median}"]
-        lines += [f"  {k}x {reason}" for reason, k in self.outcomes.most_common() if reason != SOLVED]
+        lines += [f"  {k}x {code}: {self.reasons.get(code, '')}"
+                  for code, k in self.outcomes.most_common() if code != SOLVED]
         return "\n".join(lines)
 
 
-def test_frame(raw: np.ndarray, solver: FinderSolver, stats: SkyTestStats) -> str:
+def check_frame(raw: np.ndarray, solver: FinderSolver, stats: SkyTestStats) -> str:
     """Focus-check and solve one raw finder frame; update `stats`; return a report line."""
     stats.frames += 1
     focus = check_focus(finder_gray(raw))
     seen = f"stars {focus.stars} hfr {focus.hfr_px:.2f}"
     sol = solver.solve(raw)
-    if sol is None:
-        stats.outcomes[focus.reason or NO_MATCH] += 1
-        return f"{stats.frames}: no solve | {seen} | {focus.reason or NO_MATCH}"
+    if sol is None:  # counted by code, like classify(); the line says it in words
+        code = NO_MATCH if focus.ok else focus.outcome
+        why = focus.reason or "stars visible but no pattern match"
+        stats.outcomes[code] += 1
+        stats.reasons[code] = why
+        return f"{stats.frames}: no solve | {seen} | {why}"
     stats.outcomes[SOLVED] += 1
     stats.solve_ms.append(sol.ms)
     return (f"{stats.frames}: RA {sol.ra_deg:.3f} Dec {sol.dec_deg:+.3f} "
@@ -72,7 +76,7 @@ def run(camera: Camera, solver: FinderSolver, every_s: float, save_dir: Path | N
     try:
         while True:
             raw = camera.capture()
-            out(test_frame(raw, solver, stats))
+            out(check_frame(raw, solver, stats))
             if save_dir and stats.frames % save_every == 0:
                 np.save(save_dir / f"finder_{int(time.time())}_{stats.frames:04d}.npy", raw)
             time.sleep(every_s)

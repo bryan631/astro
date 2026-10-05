@@ -36,6 +36,11 @@ class CameraAxes:
     _px: list[np.ndarray] = field(default_factory=list)
     matrix: np.ndarray | None = None  # A, pixels per degree
 
+    @property
+    def moves(self) -> int:
+        """Pushes recorded so far."""
+        return len(self._sky)
+
     def add_move(self, d_az_sky_deg: float, d_alt_deg: float, dx_px: float, dy_px: float) -> bool:
         """Record one push (scope motion) and how far the target moved in the image.
 

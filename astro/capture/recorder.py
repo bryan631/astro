@@ -21,6 +21,7 @@ def safe_name(name: str) -> str:
     """A target name as a file name part: "Barnard's Star" -> "Barnards_Star"."""
     return re.sub(r"[^A-Za-z0-9_-]", "", name.replace(" ", "_")) or "target"
 
+
 ROI_PX = 512  # square planet ROI, sensor pixels
 RECENTER_EVERY = 50  # frames between drift checks
 RECENTER_FRACTION = 0.25  # re-center when the planet drifts this far from the ROI center
@@ -104,7 +105,7 @@ class Recorder:
 
     def _run(self, rec: Recording, roi: Roi, seconds: float) -> None:
         end = time.monotonic() + seconds
-        checked = -SAFETY_CHECK_S
+        checked = -1e9  # check on the first frame
         try:
             with SerWriter(rec.path, roi.width, roi.height, bayer=self.camera.bayer) as ser:
                 while time.monotonic() < end and not self._stop.is_set():

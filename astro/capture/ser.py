@@ -19,10 +19,15 @@ def _ticks(t: datetime) -> int:
     return _EPOCH_OFFSET_TICKS + int(t.timestamp() * 1e7)
 
 
+def _local_offset_ticks() -> int:
+    """This machine's UTC offset in SER ticks (100 ns), for the header's local DateTime."""
+    return int(datetime.now().astimezone().utcoffset().total_seconds() * 10_000_000)
+
+
 class SerWriter:
     def __init__(self, path: Path, width: int, height: int, bayer: str = "GRBG",  # SV705C, per hardware checkout
                  instrument: str = "SV705C", telescope: str = "XT8i"):
-        self.path, self.size = Path(path), (height, width)
+        self.path, self.shape = Path(path), (height, width)
         self._color = COLOR_IDS[bayer]
         self._meta = (instrument, telescope)
         self._stamps: list[int] = []
@@ -30,17 +35,18 @@ class SerWriter:
         self._f.write(b"\0" * _HEADER.size)  # real header written on close
 
     def write(self, frame: np.ndarray, when: datetime | None = None) -> None:
-        if frame.shape != self.size or frame.dtype != np.uint8:
-            raise ValueError(f"expected uint8 frame of shape {self.size}, got {frame.dtype} {frame.shape}")
+        if frame.shape != self.shape or frame.dtype != np.uint8:
+            raise ValueError(f"expected uint8 frame of shape {self.shape}, got {frame.dtype} {frame.shape}")
         self._f.write(np.ascontiguousarray(frame).tobytes())
         self._stamps.append(_ticks(when or datetime.now(UTC)))
 
     def close(self) -> None:
         self._f.write(struct.pack(f"<{len(self._stamps)}q", *self._stamps))
         first = self._stamps[0] if self._stamps else _ticks(datetime.now(UTC))
-        h, w = self.size
+        h, w = self.shape
         header = _HEADER.pack(b"LUCAM-RECORDER", 0, self._color, 0, w, h, 8, len(self._stamps),
-                              b"astro", self._meta[0].encode(), self._meta[1].encode(), first, first)
+                              b"astro", self._meta[0].encode(), self._meta[1].encode(),
+                              first + _local_offset_ticks(), first)  # DateTime is local time
         self._f.seek(0)
         self._f.write(header)
         self._f.close()

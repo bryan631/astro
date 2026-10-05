@@ -39,6 +39,7 @@ if args.exp <= 0:
 if args.exp > 10:
     ap.error(f"--exp is in seconds; {args.exp:g} s is very long. Did you mean {args.exp / 1000:g}?")
 
+
 def next_free_name(base: str) -> str:
     """base, or base_2, base_3, ...: never overwrite an existing regression frame."""
     name, k = base, 2

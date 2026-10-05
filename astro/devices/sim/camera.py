@@ -12,8 +12,9 @@ class SimCamera:
         self._size = (height, width)
         self._rng = np.random.default_rng(seed)
         self._roi: Roi | None = None
-        self.exposure = 0.01
+        self.exposure_s = 0.01
         self.gain = 0
+        self.sensor_size = (width, height)
         self.connected = False
 
     def connect(self) -> None:
@@ -23,7 +24,7 @@ class SimCamera:
         self.connected = False
 
     def set_exposure(self, seconds: float) -> None:
-        self.exposure = seconds
+        self.exposure_s = seconds
 
     def set_gain(self, gain: int) -> None:
         self.gain = gain
