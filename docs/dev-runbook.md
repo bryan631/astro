@@ -85,7 +85,7 @@ The server then announces `server_stt/server_tts` and the tablet records audio f
 8443 is the real port (the service runs `run.sh`); 8000 is only the dev command above.
 
 Platform defaults are all overridable (R6): the SVBony SDK path (`SVB_LIB`), the MCU serial
-port (`port` in `devices.toml`, else the first `/dev/ttyACM*`), and the repo path and user in
+port (`port` in `devices.toml`, else the first `/dev/ttyACM*`, then `/dev/ttyUSB*`), and the repo path and user in
 `deploy/*.service` (rewritten by `setup.sh --minipc`).
 
 ## Field use: HTTPS with no internet, and access token

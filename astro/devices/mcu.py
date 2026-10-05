@@ -23,7 +23,8 @@ HEATER_CHANNELS = (0, 1)  # secondary holder, finder lens
 
 
 def default_port() -> str:
-    ports = sorted(glob.glob("/dev/ttyACM*"))
+    # Nano Every enumerates as ttyACM*; a classic Nano (CH340) as ttyUSB*.
+    ports = sorted(glob.glob("/dev/ttyACM*")) + sorted(glob.glob("/dev/ttyUSB*"))
     return os.environ.get("ASTRO_MCU_PORT") or (ports[0] if ports else "/dev/ttyACM0")
 
 
