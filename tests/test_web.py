@@ -19,3 +19,17 @@ def test_page_script_parses(tmp_path):
     result = subprocess.run(["node", "--check", str(js)], capture_output=True, text=True,
                             check=False)
     assert result.returncode == 0, result.stderr
+
+
+def test_installable_pwa_files_are_served():
+
+    from fastapi.testclient import TestClient
+
+    from astro import server
+
+    client = TestClient(server.app)
+    manifest = client.get("/manifest.json").json()
+    assert {i["sizes"] for i in manifest["icons"]} == {"192x192", "512x512"}
+    for icon in manifest["icons"]:
+        assert client.get("/" + icon["src"]).status_code == 200
+    assert "fetch" in client.get("/sw.js").text
