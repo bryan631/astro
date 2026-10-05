@@ -1,4 +1,9 @@
-"""Minimal ctypes wrapper for the SVBony SDK (hardware checkout only)."""
+"""Minimal ctypes wrapper for the SVBony SDK (hardware checkout only).
+
+Deliberately separate from astro/devices/svbony.py: the checkout probes the raw SDK
+behavior (blank first frames, timeouts on mid-stream changes, every control) that the
+driver exists to hide with its discard, reopen and retry logic. Using the driver here
+would test the workarounds instead of finding the quirks."""
 import ctypes as C
 import os
 
