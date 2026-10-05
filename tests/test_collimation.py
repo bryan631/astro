@@ -57,3 +57,26 @@ def test_session_coaches_until_centered_then_asks_to_refocus():
     assert "3 o'clock" in said[0] and said[1] == "Better, keep going."
     assert "centered" in said[2] and "sharp point" in said[2]
     assert s._collimation is None and not s.main_focus_ok
+
+
+def test_small_turns_add_up_to_better():
+    coach = CollimationCoach()
+    coach.update(analyze(donut(shadow_dx=8)))  # ~0.20
+    said = [coach.update(analyze(donut(shadow_dx=dx))) for dx in (7.6, 7.2, 6.8)]
+    assert "Better, keep going." in said  # each step < CHANGE, together > CHANGE
+
+
+def test_collimation_blocks_capture_and_drops_the_focus_gate():
+    from datetime import datetime, timedelta, timezone
+
+    from astro.pointing.coords import Site
+    from astro.session import Session
+
+    evening = datetime(2026, 10, 3, 21, 0, tzinfo=timezone(timedelta(hours=-4)))
+    s = Session(Site(26.7, -80.1), lambda: (45, 180), clock=lambda: evening,
+                main_camera=object())
+    s.main_focus_ok = True
+    s.handle("collimate")
+    assert not s.main_focus_ok
+    for cmd in ("take a picture", "focus", "start the horizon walk", "set up the telescope"):
+        assert "checking collimation" in s.handle(cmd)[0]["text"]

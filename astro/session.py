@@ -55,6 +55,7 @@ RECORD_SECONDS = 60  # planetary video length
 STACK_SECONDS = 90  # deep-sky live stack; the target drifts out of the field in ~2 min
 FOCUS_CROP_PX = 256  # sharpness measured on a crop around the planet
 COLLIMATION_STEP_S = 2.0  # time to turn a screw and let the image settle between checks
+COLLIMATING = "We're checking collimation. Say stop to finish that first."
 COLLIMATION_CROP_PX = 512  # around the defocused star (the donut is ~100-300 px across)
 MIN_HORIZON_MARKS = 3
 SITE_MOVE_KM = 1.0  # moving farther than this from the model's site invalidates the mount model
@@ -270,6 +271,8 @@ class Session:
         return [say(self.finder.sync()[1])]
 
     def start_finder_focus(self) -> list[dict]:
+        if self._collimation is not None:
+            return [say(COLLIMATING)]
         if self.finder is None:
             return [say("There's no finder camera connected.")]
         self.target, self.guide = None, None
@@ -280,6 +283,8 @@ class Session:
     def start_main_focus(self) -> list[dict]:
         if self.main_camera is None:
             return [say("There's no main camera connected.")]
+        if self._collimation is not None:
+            return [say(COLLIMATING)]
         if self._camera_busy():  # one user of the camera at a time
             return [say("I'm recording right now. Say 'stop recording' first.")]
         self.guide = None  # keep the target; we're on it
@@ -291,6 +296,8 @@ class Session:
     def capture(self) -> list[dict]:
         if self.recorder is None:
             return [say("There's no main camera connected.")]
+        if self._collimation is not None:
+            return [say(COLLIMATING)]
         if self._focus_coach is not None:  # focus is still using a camera
             return [say("Let's finish focusing first. Say done when it's sharpest.")]
         if not self.main_focus_ok:  # pre-flight gate (plan Phase 1 step 8)
@@ -627,6 +634,7 @@ class Session:
         if self._camera_busy() or self._focus_coach is not None:
             return [say("Let's finish what the camera is doing first.")]
         self.guide, self._centering = None, False
+        self.main_focus_ok = False  # we're about to defocus on purpose
         self._collimation = CollimationCoach()
         return [say("Let's check collimation. Center a bright star, then turn the focus knob "
                     "until it becomes a big donut with a dark middle. Say stop when we're done.")]
@@ -709,6 +717,8 @@ class Session:
 
     # --- horizon walk (calibration wizard) ------------------------------------------------
     def start_horizon(self) -> list[dict]:
+        if self._collimation is not None:
+            return [say(COLLIMATING)]
         if self.finder is not None and not self.finder.synced:
             ok, msg = self.finder.sync()  # marks are only as good as the pointing
             if not ok:
@@ -744,6 +754,8 @@ class Session:
 
     def _wizard_command(self, name: str) -> list[dict]:
         if name == "setup":
+            if self._collimation is not None:
+                return [say(COLLIMATING)]
             if self.finder is None:
                 return [say("There's no finder camera, so I can't run setup.")]
             self.wizard = SetupWizard(self.request_location, self.finder.sync,

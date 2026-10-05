@@ -58,10 +58,12 @@ class CollimationCoach:
     """Spoken feedback while the user turns the primary mirror's screws."""
 
     def __init__(self):
-        self.last: float | None = None
+        self.last: float | None = None  # offset when we last said something: small turns add up
 
     def update(self, donut: Donut) -> str | None:
-        prev, self.last = self.last, donut.off
+        prev = self.last
+        if prev is None or abs(donut.off - prev) > CHANGE or donut.off <= CENTERED:
+            self.last = donut.off
         if donut.off <= CENTERED:
             return "The shadow is centered. Collimation looks good."
         where = (f"The shadow is toward {donut.clock} o'clock, "
