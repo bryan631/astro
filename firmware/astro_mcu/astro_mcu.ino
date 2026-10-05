@@ -1,5 +1,6 @@
 // astro_mcu: IntelliScope encoders, environment sensors and dew heaters for the astro host.
-// Board: Arduino Nano Every (ATmega4809, 5 V). Protocol: see astro/devices/mcu_protocol.py.
+// Board: classic Nano (ATmega328P, 5 V) or Nano Every (ATmega4809). Protocol: see
+// astro/devices/mcu_protocol.py.
 //
 // Wiring (screw-terminal board):
 //   Az encoder A/B  -> D2 / D4      Alt encoder A/B -> D7 / D8   (5 V TTL quadrature; UNVERIFIED)
@@ -9,6 +10,9 @@
 #include <Adafruit_BME280.h>
 #include <DallasTemperature.h>
 #include <OneWire.h>
+#ifdef __AVR_ATmega328P__
+#include <avr/wdt.h>
+#endif
 
 const char* NAME = "astro-mcu";
 const char* VERSION = "0.1";
@@ -175,9 +179,34 @@ void pollOptic(unsigned long now) {
   }
 }
 
+#ifdef __AVR_ATmega328P__
+// The 328P only has external interrupts on D2/D3, so use pin-change interrupts:
+// D2, D4, D7 share PCINT2 (port D); D8 is PCINT0 (port B). Unchanged pins decode to 0.
+ISR(PCINT2_vect) {
+  azChange();
+  altChange();
+}
+ISR(PCINT0_vect) { altChange(); }
+
+void encodersStart() {
+  PCMSK2 |= _BV(PCINT18) | _BV(PCINT20) | _BV(PCINT23);  // D2, D4, D7
+  PCMSK0 |= _BV(PCINT0);                                 // D8
+  PCICR |= _BV(PCIE2) | _BV(PCIE0);
+}
+
+void watchdogStart() { wdt_enable(WDTO_2S); }  // reset if loop() stalls for ~2 s
+#else
+void encodersStart() {
+  attachInterrupt(digitalPinToInterrupt(AZ_A), azChange, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(AZ_B), azChange, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(ALT_A), altChange, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(ALT_B), altChange, CHANGE);
+}
+
 void watchdogStart() {  // ATmega4809: reset if loop() stalls for ~2 s
   _PROTECTED_WRITE(WDT.CTRLA, WDT_PERIOD_2KCLK_gc);
 }
+#endif
 
 void watchdogFeed() {
   __asm__ __volatile__("wdr");
@@ -191,10 +220,7 @@ void setup() {
   heatersOff();
   azState = (digitalRead(AZ_A) << 1) | digitalRead(AZ_B);
   altState = (digitalRead(ALT_A) << 1) | digitalRead(ALT_B);
-  attachInterrupt(digitalPinToInterrupt(AZ_A), azChange, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(AZ_B), azChange, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(ALT_A), altChange, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(ALT_B), altChange, CHANGE);
+  encodersStart();
   bmeOk = bme.begin(0x76) || bme.begin(0x77);
   optic.begin();
   opticOk = optic.getDeviceCount() > 0;

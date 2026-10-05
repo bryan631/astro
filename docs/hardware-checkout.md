@@ -20,7 +20,7 @@ session is building the main code (scaffold, pointing math, guidance) in paralle
    - Write a small ctypes enumerate + capture-one-frame script, then run the plan's checklist:
      connect 10x in a row, ROI video frame rate at 8-bit, 0.2-2s exposures, debayer correct.
    - Document pass/fail and any quirks in `docs/hardware-results.md`.
-2. Arduino Nano Every: only when it arrives. Check serial passthrough (`/dev/ttyACM*`), flash a blink test.
+2. Arduino Nano (classic `/dev/ttyUSB*` or Every `/dev/ttyACM*`): check serial passthrough, flash a blink test.
 3. If the SDK or driver fails, document it; the fallback is a ZWO ASI585MC.
 
 ## Rules for this session
