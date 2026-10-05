@@ -180,6 +180,14 @@ def test_boot_after_positions_means_reboot():
     assert parse(frame("BOOT astro-mcu 0.1")) == Boot("astro-mcu", "0.1")
 
 
+def test_boot_asks_for_version_again():
+    from astro.devices.mcu_protocol import Boot
+
+    m, fake = make_mcu([])
+    m.handle(Boot("astro-mcu", "0.1"))  # a VER? sent before the reset finished was lost
+    assert fake.written == [frame("VER?")]
+
+
 class WriteFailsSerial(FakeSerial):
     def write(self, data):
         import serial
