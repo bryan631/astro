@@ -43,6 +43,7 @@ jobs:
       - uses: arduino/setup-arduino-cli@v2
       - run: |
           arduino-cli core update-index
-          arduino-cli core install arduino:megaavr
+          arduino-cli core install arduino:megaavr arduino:avr
           arduino-cli lib install "Adafruit BME280 Library" OneWire DallasTemperature
       - run: arduino-cli compile --fqbn arduino:megaavr:nona4809:mode=off firmware/astro_mcu
+      - run: arduino-cli compile --fqbn arduino:avr:nano:cpu=atmega328old firmware/astro_mcu
