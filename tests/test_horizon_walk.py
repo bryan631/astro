@@ -1,5 +1,7 @@
 from datetime import UTC, datetime
 
+import pytest
+
 from astro.intents import Intent, parse
 from astro.planner import horizon_store
 from astro.planner.horizon import HorizonMask
@@ -90,3 +92,11 @@ def test_stopping_the_walk_keeps_the_marks():
 def test_next_step_outside_setup_means_next():
     s, _ = walk_session([])
     assert texts(s.handle("next step"))[0] == "Ask me what's good tonight first."
+
+
+def test_partial_treeline_warns_about_the_gap():
+    from astro.session import _azimuth_coverage
+
+    assert _azimuth_coverage([90, 120, 150, 180]) == 90
+    assert _azimuth_coverage([0, 90, 180, 270]) == 270
+    assert _azimuth_coverage([350, 10, 40]) == pytest.approx(50)  # across north

@@ -61,6 +61,9 @@ def plan(site: Site, start: datetime, mask: HorizonMask | None = None,
     moon = get_body("moon", times, frame.location)
     moon_aa = moon.transform_to(frame)
     moon_up = moon_aa.alt.deg > 0
+    # Lit fraction from the Sun-Moon elongation: a full Moon brightens the whole sky.
+    elongation = get_body("sun", times, frame.location).separation(moon).rad
+    moon_lit = (1 - np.cos(elongation)) / 2
 
     candidates: list[tuple[str, str, str, SkyCoord, float]] = []
     for p, weight in PLANETS.items():
@@ -80,18 +83,23 @@ def plan(site: Site, start: datetime, mask: HorizonMask | None = None,
             continue
         i = int(np.argmax(np.where(visible, alt, -90)))
         score = weight * (alt[i] / 90 + visible.sum() * STEP_MIN / 600)
-        if cat not in ("planet", "moon"):
-            # Moonlight hurts faint fuzzies; doubles and clusters suffer less.
-            sep = aa[i].separation(moon_aa[i]).deg if moon_up[i] else 180
-            factor = 0.5 if cat in ("nebula", "galaxy") else 0.85
-            if sep < 30:
-                score *= factor
+        if cat not in ("planet", "moon") and moon_up[i]:
+            score *= moonlight_factor(cat, aa[i].separation(moon_aa[i]).deg, float(moon_lit[i]))
         if cloud_cover is not None:
             score *= 1 - cloud_cover / 200
         best = Choice(name, cat, note, times[i].to_datetime(timezone=start.tzinfo),
                       round(float(alt[i]), 1), int(visible.sum()) * STEP_MIN, round(score, 3))
         out.setdefault(cat, []).append(best)
     return {c: sorted(v, key=lambda x: -x.score)[:per_category] for c, v in out.items()}
+
+
+def moonlight_factor(category: str, moon_sep_deg: float, moon_lit: float) -> float:
+    """Score multiplier for a target while the Moon is up. Faint fuzzies suffer most, doubles
+    and clusters less. Near the Moon is worst, but a bright Moon washes out the whole
+    (Bortle 8) sky, and a thin crescent hardly matters."""
+    worst = 0.5 if category in ("nebula", "galaxy") else 0.15
+    near = 1.0 if moon_sep_deg < 30 else 0.5
+    return 1 - worst * near * moon_lit
 
 
 def next_dark(site: Site, now: datetime, within_hours: float = 24) -> datetime | None:

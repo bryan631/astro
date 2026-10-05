@@ -49,6 +49,7 @@ RECORD_SECONDS = 60  # planetary video length
 STACK_SECONDS = 90  # deep-sky live stack; the target drifts out of the field in ~2 min
 FOCUS_CROP_PX = 256  # sharpness measured on a crop around the planet
 MIN_HORIZON_MARKS = 3
+MIN_HORIZON_COVERAGE_DEG = 270  # less: a big unmarked gap gets a straight-line guess
 SITE_MOVE_KM = 1.0  # moving farther than this from the model's site invalidates the mount model
 CLOUD_CACHE_S = 15 * 60  # Open-Meteo is hourly; don't ask on every request
 LATER_MIN = 30  # "tonight" more than this far ahead: say when it gets dark
@@ -685,8 +686,11 @@ class Session:
         self.horizon = HorizonMask(tuple(sorted(points)))
         if self.on_horizon_change:
             self.on_horizon_change(self.horizon)
-        return [say(f"Saved the treeline from {len(points)} marks. "
-                    "I'll only suggest things above it.")]
+        msg = f"Saved the treeline from {len(points)} marks. I'll only suggest things above it."
+        if (covered := _azimuth_coverage([az for az, _ in points])) < MIN_HORIZON_COVERAGE_DEG:
+            msg += (f" Your marks only go about {covered:.0f} degrees around, so I guessed a "
+                    "straight line across the rest. Mark the other side when you can.")
+        return [say(msg)]
 
     @property
     def wizard_active(self) -> bool:
@@ -810,6 +814,13 @@ class Session:
 
     def _extended_targets(self) -> set[str]:
         return {p.capitalize() for p in PLANETS} | {"Moon"}
+
+
+def _azimuth_coverage(azs: list[float]) -> float:
+    """Degrees of azimuth the marks span: 360 minus the biggest gap between neighbors."""
+    a = sorted(az % 360 for az in azs)
+    gaps = np.diff([*a, a[0] + 360])
+    return 360 - float(gaps.max())
 
 
 def _compass(az: float) -> str:
