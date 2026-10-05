@@ -1,6 +1,7 @@
 """Background planetary recording: SER video with an ROI that follows the planet."""
 
 import logging
+import re
 import shutil
 import threading
 import time
@@ -14,6 +15,11 @@ from astro.capture.ser import SerWriter
 from astro.devices.base import Camera, Roi
 
 log = logging.getLogger(__name__)
+
+
+def safe_name(name: str) -> str:
+    """A target name as a file name part: "Barnard's Star" -> "Barnards_Star"."""
+    return re.sub(r"[^A-Za-z0-9_-]", "", name.replace(" ", "_")) or "target"
 
 ROI_PX = 512  # square planet ROI, sensor pixels
 RECENTER_EVERY = 50  # frames between drift checks
@@ -85,7 +91,7 @@ class Recorder:
             raise CaptureRefused(f"The main camera isn't responding: {e}") from e
         stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")  # microseconds: never reuse a name
         self.out_dir.mkdir(parents=True, exist_ok=True)
-        rec = Recording(self.out_dir / f"{stamp}_{name.replace(' ', '_')}.ser", name)
+        rec = Recording(self.out_dir / f"{stamp}_{safe_name(name)}.ser", name)
         self._stop.clear()
         self.current = rec
         log.info("recording", extra={"data": {"name": name, "seconds": seconds,

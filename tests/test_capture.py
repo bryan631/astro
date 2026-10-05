@@ -60,3 +60,25 @@ def test_focus_coach_sequence():
     assert said[:3] == ["keep turning the focus knob slowly", "sharper", "sharper"]
     assert said[3] == "that's the sharpest so far"
     assert said[4] == "passed it, go back slowly"
+
+
+def test_file_names_are_safe():
+    from astro.capture.recorder import safe_name
+
+    assert safe_name("Barnard's Star") == "Barnards_Star"
+    assert safe_name("M31/Andromeda") == "M31Andromeda"
+    assert safe_name("///") == "target"
+
+
+def test_roi_never_negative_on_a_small_sensor():
+    from astro.capture.roi import roi_around
+
+    roi = roi_around((100, 100), 512, (400, 300))
+    assert (roi.x, roi.y, roi.width, roi.height) == (0, 0, 300, 300)
+
+
+def test_sharpest_is_said_once_per_plateau():
+    coach = FocusCoach()
+    said = [coach.update(s) for s in [10, 15, 15.1, 15.0, 15.1, 11, 15, 15.1]]
+    assert said.count("that's the sharpest so far") == 2  # once, then again after a change
+    assert said[2] == "that's the sharpest so far" and said[3] is None and said[4] is None

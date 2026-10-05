@@ -168,7 +168,9 @@ void pollOptic(unsigned long now) {
     opticStarted = now;
   } else if (now - opticStarted >= OPTIC_CONVERSION_MS) {
     float t = optic.getTempCByIndex(0);
-    opticC = (t == DEVICE_DISCONNECTED_C) ? NAN : t;
+    // 85.0 is the sensor's power-on value: before any real reading it means "no data yet".
+    bool powerOn = t == 85.0f && isnan(opticC);
+    opticC = (t == DEVICE_DISCONNECTED_C || powerOn) ? NAN : t;
     opticPending = false;
   }
 }

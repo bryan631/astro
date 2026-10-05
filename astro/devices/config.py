@@ -7,7 +7,7 @@ from pathlib import Path
 
 from astro.devices.base import Camera
 from astro.pointing.coords import Site
-from astro.pointing.encoders import EncoderAxis
+from astro.pointing.encoders import COUNTS_PER_REV, EncoderAxis
 from astro.pointing.finder_sync import FinderSync
 from astro.pointing.mount_model import MountModel
 from astro.pointing.platesolve import FinderSolver
@@ -16,7 +16,9 @@ from astro.pointing.solve_tracker import SolveTracker
 
 def load(path: Path) -> dict:
     with path.open("rb") as f:
-        return tomllib.load(f)
+        cfg = tomllib.load(f)
+    cfg.setdefault("main", {}).setdefault("driver", "none")  # no main camera is fine
+    return cfg
 
 
 def open_camera(cfg: dict) -> Camera:
@@ -39,12 +41,16 @@ CAMERA_DRIVERS = ("svbony",)
 
 def validate(cfg: dict) -> None:
     """Reject unknown drivers before any hardware is touched."""
+    for section in ("mount", "finder"):
+        if "driver" not in cfg.get(section, {}):
+            raise ValueError(f"devices config: [{section}] needs a driver")
     if cfg["mount"]["driver"] not in MOUNT_DRIVERS:
         raise ValueError(f"unknown mount driver {cfg['mount']['driver']!r}")
     if cfg["finder"]["driver"] not in CAMERA_DRIVERS:
         raise ValueError(f"unknown finder driver {cfg['finder']['driver']!r}")
-    if cfg["main"]["driver"] not in (*CAMERA_DRIVERS, "none"):
-        raise ValueError(f"unknown main camera driver {cfg['main']['driver']!r}")
+    main = cfg.get("main", {}).get("driver", "none")
+    if main not in (*CAMERA_DRIVERS, "none"):
+        raise ValueError(f"unknown main camera driver {main!r}")
 
 
 def build_pointing(cfg: dict, solver: FinderSolver, site: Site, clock: Callable[[], datetime]
@@ -52,7 +58,7 @@ def build_pointing(cfg: dict, solver: FinderSolver, site: Site, clock: Callable[
     """Finder camera plus the mount: encoders + model (mcu), or plate solving alone (solve).
 
     Returns (pointing, close). If anything fails part-way, what was opened is closed again."""
-    validate(cfg)
+    validate(cfg)  # all drivers known before any hardware opens
     mount = cfg["mount"]
     finder_cam = open_camera(cfg["finder"])
     if mount["driver"] == "solve":
@@ -72,8 +78,9 @@ def build_pointing(cfg: dict, solver: FinderSolver, site: Site, clock: Callable[
             source.close()
         finder_cam.close()
         raise
-    az = EncoderAxis(mount.get("counts_per_rev", 9216), mount.get("az_sign", 1))
-    alt = EncoderAxis(mount.get("counts_per_rev", 9216), mount.get("alt_sign", 1))
+    counts = mount.get("counts_per_rev", COUNTS_PER_REV)
+    az = EncoderAxis(counts, mount.get("az_sign", 1))
+    alt = EncoderAxis(counts, mount.get("alt_sign", 1))
 
     def encoders() -> tuple[float, float]:
         az_counts, alt_counts = source.counts()

@@ -92,7 +92,6 @@ def build_real_session() -> Session:
     again, and shutdown closes it (heaters off, cameras and solver released)."""
     site, clock = load_site(), utcnow
     cfg = devices.load(Path(os.environ.get("ASTRO_DEVICES", ROOT / "config" / "devices.toml")))
-    devices.validate(cfg)  # all drivers known before any hardware opens
     try:
         finder, close_pointing = devices.build_pointing(cfg, solver(), site, clock)
         _hardware_closers.append(close_pointing)
@@ -220,7 +219,11 @@ class Hub:
                     audio = await asyncio.to_thread(tts.synthesize, msg["text"])
                 except Exception:  # the words still go out as text
                     log.exception("speech synthesis failed")
-            for client in list(self.clients):
+            to = list(self.clients)
+            asker = msg.pop("_to", None)  # GPS requests go only to the tablet that asked:
+            if asker in self.clients:     # every tablet answering with its own fix would race
+                to = [asker]
+            for client in to:
                 try:
                     await client.send_json(msg)
                     if audio:
@@ -236,7 +239,7 @@ class Hub:
         if not done:  # a slow LLM round trip: let the user know we heard them
             await self.broadcast({"type": "say", "text": "Let me think."})
         for out in await reply:
-            await self.broadcast(out)
+            await self.broadcast(_for(out, socket))
 
     async def _guidance_loop(self) -> None:
         failing = False  # speak a failure once per streak, not ten times a second
@@ -256,6 +259,11 @@ class Hub:
             if self.user and self.scope:
                 self.scope.step(*self.user.act(t), TICK_S)
             await asyncio.sleep(TICK_S)
+
+
+def _for(msg: dict, socket: WebSocket) -> dict:
+    """A GPS request is addressed to the tablet whose turn produced it."""
+    return {**msg, "_to": socket} if msg["type"] == "get_location" else msg
 
 
 def get_hub() -> Hub:
@@ -316,7 +324,7 @@ async def ws(socket: WebSocket) -> None:
     hub.join(socket)
     if not site_store.has_saved(ROOT):  # setup: first run at this installation
         for out in hub.session.request_location():
-            await hub.broadcast(out)
+            await hub.broadcast(_for(out, socket))
     try:
         while True:
             msg = await socket.receive()
