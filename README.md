@@ -1,7 +1,8 @@
 # astro
 
 A voice-guided push-to telescope helper: plate-solved pointing, spoken guidance from a
-tablet, planetary and deep-sky imaging (lucky imaging and live stacking), and a Claude
+tablet, planetary and deep-sky imaging (lucky imaging and live stacking), a collimation
+check, and a Claude
 agent for free-form questions. Runs on a MiniPC at the telescope, with simulators for
 development.
 

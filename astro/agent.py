@@ -61,6 +61,9 @@ TOOLS = [
                       "required": ["inserted"]}},
     {"name": "horizon_walk", "description": "Start recording the treeline (the user then says "
      "'mark' at points along it and 'done').", "input_schema": {"type": "object", "properties": {}}},
+    {"name": "collimate", "description": "Check the telescope's collimation (mirror alignment) "
+     "from a defocused star and coach the primary mirror's screws.",
+     "input_schema": {"type": "object", "properties": {}}},
     {"name": "session_status", "description": "What's going on: aligned or not, target, focus, "
      "Barlow, picture in progress, pictures taken, horizon, clouds.",
      "input_schema": {"type": "object", "properties": {}}},
@@ -70,7 +73,7 @@ TOOLS = [
 _COMMANDS = {"list_tonight": "what's good tonight", "stop": "stop", "where_am_i": "where am i",
              "next": "next", "set_location": "set location", "take_picture": "take a picture",
              "stop_picture": "stop recording", "sync": "sync",
-             "horizon_walk": "start the horizon walk"}
+             "horizon_walk": "start the horizon walk", "collimate": "collimate"}
 
 
 PARTIAL = "I lost my connection partway through, but I did what I could. Ask again if needed."
