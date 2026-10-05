@@ -45,6 +45,7 @@ Power off: a short press of the power button shuts down cleanly (logind `HandleP
 ## Remote notes (from the first bring-up)
 
 - The dev box runs Tailscale in userspace mode: plain `ssh mele` fails, use `tailscale ssh astro@mele`. The user is the Mele's Linux account, not the Tailscale login; "tailnet policy does not permit you to SSH as user X" usually means account X doesn't exist on the Mele.
+- Field WiFi lives in `/etc/netplan/60-wifi.yaml` (mode 600): the Pixel hotspot, used when Ethernet is unplugged. Add networks there while Ethernet is connected. Both links are `optional` so boot doesn't wait for one.
 - `astro` needs `video` (cameras), `dialout` (MCU serial) and the SDK in `/home/astro/sdk`.
 - Optional: passwordless sudo for that user (`/etc/sudoers.d/<user>`) lets Claude run installs unattended, but it means any session on that account has root. The Mele is reachable only over your tailnet; drop the file when the bring-up is done.
 - `scripts/setup.sh --minipc` needs HTTPS certificates enabled in the Tailscale admin console (DNS), or it stops at the cert step.
