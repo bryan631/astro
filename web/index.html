@@ -73,6 +73,9 @@ function handle(m) {
   }
   if (m.type === "picture") document.getElementById("live").hidden = true;
   if (m.type === "hold") { arrow.hidden = true; dist.textContent = "Hold still"; holding = true; }
+  if (m.type === "say" && holding && !m.text.startsWith("Hold still")) {  // e.g. "stop"
+    holding = false; dist.textContent = "";
+  }
   if (m.type === "say") { said.textContent = m.text; speak(m.text); }
   if (m.type === "state") {
     holding = false;
@@ -132,9 +135,9 @@ document.getElementById("beeps").onclick = e => {
 };
 setInterval(() => {
   const now = performance.now();
-  if (now - stateAt > 1000 && !holding) {
-    beepHz = 0;
-    if (!arrow.hidden) { arrow.hidden = true; dist.textContent = ""; }
+  if (now - stateAt > 1000) {
+    beepHz = 0;  // no fresh state: paused (hold), stopped or disconnected
+    if (!holding && !arrow.hidden) { arrow.hidden = true; dist.textContent = ""; }
   }
   if (!beepsOn || !audio || beepHz <= 0 || now - lastBeep < 1000 / beepHz) return;
   lastBeep = now;
