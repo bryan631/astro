@@ -17,3 +17,9 @@ ssh <mele-user>@mele
 ```
 
 Tailscale SSH needs no keys. In the Tailscale admin console, disable key expiry for the Mele.
+
+## Florida (dad's place)
+
+The Mele logs in with the owner's Google account, so dad needs no Tailscale account. He powers it on and plugs in Ethernet.
+
+To give him access too, in the Tailscale admin console go to Machines -> `mele` -> Share and send him the link. He signs in with his own account. Don't share the Google login.
