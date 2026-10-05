@@ -26,7 +26,8 @@ Voice/text commands (offline grammar; Claude handles anything vaguer):
 
 - `ASTRO_DEV_OVERRIDE=1` lifts the daytime lockout (the 20° Sun exclusion always applies).
 - `ANTHROPIC_API_KEY` in `.env` enables the Claude agent for free-form questions; without it
-  (or offline) the built-in command grammar still handles goto/stop/next/tonight/where.
+  (or offline) the built-in command grammar handles exact commands (goto, stop, next, where,
+  tonight). With a key, it still answers those offline-first; only vague requests go to Claude.
 - The microphone needs HTTPS on anything but localhost (see "Tablet" below).
 
 ## Layout
@@ -43,7 +44,12 @@ Voice/text commands (offline grammar; Claude handles anything vaguer):
 | `scripts/hwcheck/` | hardware tools: `viewer.py` (browser), `viewer_plot.py`, `solve_sky.py`, checklist |
 | `data/` | per-install, git-ignored: `site.toml`, `captures/*.ser`, `gallery/*.png` |
 | `astro/session.py` | ties it together; `agent.py` adds Claude; `server.py` serves the PWA |
-| `config/` | `site.toml`, `targets.toml` |
+| `astro/wizard.py` | first-time setup steps (GPS, syncs, horizon walk) |
+| `astro/voice/` | offline speech: whisper.cpp (in) and Piper (out) |
+| `astro/calibration_store.py` | calibration that survives a restart (`data/calibration.json`) |
+| `firmware/` | Arduino Nano Every: encoders, BME280 and DS18B20, dew heaters |
+| `deploy/` | systemd units (server, monthly cert renewal), installed by `setup.sh --minipc` |
+| `config/` | `site.toml`, `targets.toml`, `devices.toml` (which drivers: sim, svbony, mcu, handset) |
 | `web/` | tablet PWA |
 
 ## Hardware tools
@@ -75,6 +81,11 @@ The server then announces `server_stt/server_tts` and the tablet records audio f
     sudo cp deploy/*.service deploy/*.timer /etc/systemd/system/
     sudo systemctl enable --now astro astro-cert.timer
 `scripts/run.sh` serves HTTPS on port 8443 when `certs/` has a cert, plain HTTP otherwise.
+8443 is the real port (the service runs `run.sh`); 8000 is only the dev command above.
+
+Platform defaults are all overridable (R6): the SVBony SDK path (`SVB_LIB`), the MCU serial
+port (`port` in `devices.toml`, else the first `/dev/ttyACM*`), and the repo path and user in
+`deploy/*.service` (rewritten by `setup.sh --minipc`).
 
 ## Field use: HTTPS with no internet, and access token
 

@@ -35,6 +35,8 @@ def parse_args(description: str, extra=None) -> argparse.Namespace:
     if extra:
         extra(ap)
     args = ap.parse_args()
+    if args.exp <= 0:
+        ap.error("--exp must be more than 0 seconds")
     if args.exp > MAX_EXPOSURE_S:
         ap.error(f"--exp is in seconds; {args.exp:g} s is very long. "
                  f"Did you mean {args.exp / 1000:g}?")
