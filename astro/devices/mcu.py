@@ -93,6 +93,10 @@ class Mcu:
             # counts is wrong, including one restored from disk at start-up (CV7).
             if self.on_reboot:
                 self.on_reboot()
+            # Opening the port resets a classic Nano (DTR), so the VER? from start() can be
+            # lost in the bootloader; ask again now that the firmware is up. Last, so a failed
+            # write can't skip the reboot handling above.
+            self._send(proto.frame("VER?"))
         elif isinstance(msg, proto.McuError):
             self.errors = [*self.errors[-9:], msg.text]
 
