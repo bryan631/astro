@@ -14,8 +14,9 @@ Classic Nano (ATmega328P, CH340 USB, shows up as `/dev/ttyUSB*`):
 Most CH340 clones ship the old bootloader (`cpu=atmega328old`); if upload times out, try
 `arduino:avr:nano` (Optiboot). The encoders use pin-change interrupts on this board, because only
 D2/D3 have external interrupts. Caveat: the old bootloader does not clear the watchdog, so a
-watchdog reset (loop stalled > 2 s) reboot-loops until you power-cycle. Heaters stay off while it
-loops (pins float as inputs), so it fails safe. Burn Optiboot to fix it properly.
+watchdog reset (loop stalled > 2 s) reboot-loops until you power-cycle. The heater pins float as inputs while it
+loops, so each MOSFET gate needs a pull-down (e.g. 10k to GND) to keep the heaters off. Burn
+Optiboot to fix it properly.
 
 Nano Every (ATmega4809, shows up as `/dev/ttyACM*`):
 

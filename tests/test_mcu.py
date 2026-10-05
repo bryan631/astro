@@ -215,3 +215,19 @@ def test_write_error_while_handling_env_reopens_instead_of_dying():
     time.sleep(0.3)
     m._stop.set()
     assert len(opened) == 2 and m.counts() == (7, 8)
+
+
+@pytest.mark.parametrize("ports,expected", [
+    (["/dev/ttyUSB0", "/dev/ttyACM1", "/dev/ttyACM0"], "/dev/ttyACM0"),  # Nano Every first
+    (["/dev/ttyUSB1", "/dev/ttyUSB0"], "/dev/ttyUSB0"),  # classic Nano fallback
+    ([], "/dev/ttyACM0"),
+])
+def test_default_port(monkeypatch, ports, expected):
+    import glob
+
+    from astro.devices import mcu
+    monkeypatch.delenv("ASTRO_MCU_PORT", raising=False)
+    monkeypatch.setattr(glob, "glob", lambda pat: [p for p in ports if p.startswith(pat[:-1])])
+    assert mcu.default_port() == expected
+    monkeypatch.setenv("ASTRO_MCU_PORT", "/dev/ttyUSB3")
+    assert mcu.default_port() == "/dev/ttyUSB3"
