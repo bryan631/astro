@@ -16,7 +16,11 @@
   #dist { font-size: 40px; }
   #talk { width: 70vmin; height: 70vmin; max-width: 320px; max-height: 320px; border-radius: 50%;
           border: 6px solid var(--fg); background: transparent; color: var(--fg); font-size: 40px; }
+  #talk { touch-action: none; }  /* a press is never a scroll (which cancels it) */
   #talk.listening { background: var(--dim); }
+  /* Night: pictures in dim red too, so they don't spoil dark-adapted eyes. */
+  body:not(.day) #live, body:not(.day) #gallery img {
+    filter: grayscale(1) sepia(1) saturate(5) hue-rotate(-50deg) brightness(.6); }
   #typed { display: flex; gap: 8px; width: 100%; max-width: 600px; }
   #typed input, button.small { font-size: 24px; padding: 12px; background: var(--bg); color: var(--fg);
           border: 2px solid var(--dim); border-radius: 12px; }
@@ -41,9 +45,11 @@
 const said = document.getElementById("said"), arrow = document.getElementById("arrow"),
       dist = document.getElementById("dist"), talk = document.getElementById("talk");
 let ws, serverStt = false, serverTts = false, player = null;
+const pending = [];  // sent while reconnecting: delivered once the socket is back
 function connect() {
   ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
   ws.binaryType = "blob";
+  ws.onopen = () => { while (pending.length) ws.send(pending.shift()); };
   ws.onmessage = e => typeof e.data === "string" ? handle(JSON.parse(e.data)) : play(e.data);
   ws.onclose = () => setTimeout(connect, 1000);
 }
@@ -66,9 +72,13 @@ function handle(m) {
     img.src = `${m.url}?n=${m.frames}`; img.hidden = false;
   }
   if (m.type === "picture") document.getElementById("live").hidden = true;
-  if (m.type === "hold") { arrow.hidden = true; dist.textContent = "Hold still"; }
+  if (m.type === "hold") { arrow.hidden = true; dist.textContent = "Hold still"; holding = true; }
+  if (m.type === "say" && holding && !m.text.startsWith("Hold still")) {  // e.g. "stop"
+    holding = false; dist.textContent = "";
+  }
   if (m.type === "say") { said.textContent = m.text; speak(m.text); }
   if (m.type === "state") {
+    holding = false;
     beepHz = m.on_target ? 0 : m.beep_hz; stateAt = performance.now();
     arrow.hidden = false;
     document.body.classList.toggle("on-target", m.on_target);
@@ -83,18 +93,19 @@ function handle(m) {
   }
 }
 // Tablet GPS for the observing site (setup, or "use my location"). Needs HTTPS.
+function wsSend(data) { ws && ws.readyState === WebSocket.OPEN ? ws.send(data) : pending.push(data); }
 function sendLocation(id) {  // echo the request id so stale answers can be ignored
   if (!navigator.geolocation) {
-    ws.send(JSON.stringify({type: "location_error", id, message: "This browser has no location service."}));
+    wsSend(JSON.stringify({type: "location_error", id, message: "This browser has no location service."}));
     return;
   }
   navigator.geolocation.getCurrentPosition(
-    p => ws.send(JSON.stringify({type: "location", id, lat: p.coords.latitude, lon: p.coords.longitude,
+    p => wsSend(JSON.stringify({type: "location", id, lat: p.coords.latitude, lon: p.coords.longitude,
                                  alt: p.coords.altitude, accuracy: p.coords.accuracy})),
-    e => ws.send(JSON.stringify({type: "location_error", id, message: e.message})),
+    e => wsSend(JSON.stringify({type: "location_error", id, message: e.message})),
     {enableHighAccuracy: true, timeout: 20000, maximumAge: 0});  // always a fresh fix
 }
-function send(text) { if (text.trim()) ws.send(JSON.stringify({type: "text", text})); }
+function send(text) { if (text.trim()) wsSend(JSON.stringify({type: "text", text})); }
 document.getElementById("typed").onsubmit = e => {
   e.preventDefault(); const i = document.getElementById("text"); send(i.value); i.value = "";
 };
@@ -109,11 +120,14 @@ document.getElementById("pics").onclick = () => {
   const box = document.getElementById("gallery");
   box.hidden ? showPictures() : (box.hidden = true);
 };
-document.getElementById("mode").onclick = () => document.body.classList.toggle("day");
+document.getElementById("mode").onclick = e => {
+  e.target.textContent = document.body.classList.toggle("day") ? "Night mode" : "Day mode";
+};
 
 // Optional proximity beeps (G4): faster as the target gets closer.
-// States stream at 10 Hz while guiding; when they stop (stop, disconnect), so do the beeps.
-let beepHz = 0, beepsOn = false, audio = null, lastBeep = 0, stateAt = 0;
+// States stream at 10 Hz while guiding; when they stop (stop, unsafe, disconnect), the
+// beeps stop and the arrow goes away instead of pointing at the last target.
+let beepHz = 0, beepsOn = false, audio = null, lastBeep = 0, stateAt = 0, holding = false;
 document.getElementById("beeps").onclick = e => {
   beepsOn = !beepsOn;
   e.target.textContent = beepsOn ? "Beeps on" : "Beeps off";
@@ -121,7 +135,10 @@ document.getElementById("beeps").onclick = e => {
 };
 setInterval(() => {
   const now = performance.now();
-  if (now - stateAt > 1000) beepHz = 0;
+  if (now - stateAt > 1000) {
+    beepHz = 0;  // no fresh state: paused (hold), stopped or disconnected
+    if (!holding && !arrow.hidden) { arrow.hidden = true; dist.textContent = ""; }
+  }
   if (!beepsOn || !audio || beepHz <= 0 || now - lastBeep < 1000 / beepHz) return;
   lastBeep = now;
   const osc = audio.createOscillator(), gain = audio.createGain();
@@ -139,13 +156,12 @@ function setupTalk() {
   const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
   let start, stop;
   if (serverStt && navigator.mediaDevices) {
-    let rec;
+    let rec, stream = null;  // the mic stays open: reopening it per press clips the first word
     start = async () => {
-      const stream = await navigator.mediaDevices.getUserMedia({audio: true});
+      stream = stream || await navigator.mediaDevices.getUserMedia({audio: true});
       const chunks = []; rec = new MediaRecorder(stream);
       rec.ondataavailable = e => chunks.push(e.data);
-      rec.onstop = () => { stream.getTracks().forEach(t => t.stop()); listen(false);
-                           ws.send(new Blob(chunks, {type: rec.mimeType})); };
+      rec.onstop = () => { listen(false); wsSend(new Blob(chunks, {type: rec.mimeType})); };
       rec.start();
     };
     stop = () => rec && rec.state === "recording" && rec.stop();
@@ -157,11 +173,21 @@ function setupTalk() {
   } else {
     talk.textContent = "Type below"; talk.disabled = true; return;
   }
-  talk.addEventListener("pointerdown", e => { e.preventDefault(); stopAudio(); listen(true); start(); });
-  talk.addEventListener("pointerup", () => stop());
-  talk.addEventListener("pointerleave", () => stop());
+  let pressed = false;
+  talk.addEventListener("pointerdown", async e => {
+    e.preventDefault(); stopAudio(); listen(true); pressed = true;
+    try {
+      await start();
+      if (!pressed) stop();  // let go while the microphone was opening
+    } catch (err) {  // e.g. microphone permission denied
+      listen(false); said.textContent = `I can't use the microphone: ${err.message}. Type below.`;
+    }
+  });
+  for (const ev of ["pointerup", "pointerleave", "pointercancel"])
+    talk.addEventListener(ev, () => { pressed = false; stop(); });
 }
 connect();
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");  // installable (V1)
 </script>
 </body>
 </html>
