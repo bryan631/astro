@@ -75,7 +75,7 @@ class SolveTracker:
 
     def _solve_once(self) -> tuple[bool, str]:
         with self._camera_lock:
-            raw = self.camera.capture()
+            raw, when = self.camera.capture(), self.clock()  # the solve can take ~2 s
         focus = check_focus(finder_gray(raw))
         if not focus.ok:
             self._last_reason = focus.reason
@@ -86,7 +86,7 @@ class SolveTracker:
                                  "Something may be blocking part of the view.")
             return False, self._last_reason
         self.last_solution = sol
-        self._altaz = radec_to_altaz(sol.ra_deg, sol.dec_deg, self.site, self.clock())
+        self._altaz = radec_to_altaz(sol.ra_deg, sol.dec_deg, self.site, when)
         self._solved_at, self.synced = time.monotonic(), True
         return True, ""
 

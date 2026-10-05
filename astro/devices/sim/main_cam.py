@@ -87,7 +87,7 @@ class SimMainCamera:
         north = np.arctan2(-(n_alt - alt), ((n_az - az + 180) % 360 - 180) * np.cos(np.radians(alt)))
         ra, dec, flux = self._field(ra0, dec0)
         # Offsets east/north in arcsec, then rotate into sensor x (right) / y (down).
-        east = (ra - ra0) * np.cos(np.radians(dec0)) * 3600
+        east = ((ra - ra0 + 180) % 360 - 180) * np.cos(np.radians(dec0)) * 3600
         up = (dec - dec0) * 3600
         ang = north - np.pi / 2
         x = (east * np.cos(ang) - up * np.sin(ang)) / self.scale + SENSOR[0] / 2 - roi.x
@@ -106,7 +106,7 @@ class SimMainCamera:
     def _tile(self, i: int, j: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         cache = self.__dict__.setdefault("_tiles", {})
         if (i, j) not in cache:
-            rng = np.random.default_rng([i % 3600, j + 900])  # deterministic per tile
+            rng = np.random.default_rng([i % round(360 / STAR_TILE_DEG), j + 900])  # deterministic per tile
             n = rng.poisson(STARS_PER_SQ_ARCMIN * (STAR_TILE_DEG * 60) ** 2
                             * np.cos(np.radians((j + 0.5) * STAR_TILE_DEG)))
             dec = (j + rng.uniform(0, 1, n)) * STAR_TILE_DEG

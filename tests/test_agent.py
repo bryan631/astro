@@ -149,3 +149,15 @@ def test_connection_lost_after_a_tool_ran_does_not_redo_it():
     out = Agent(s, client=client).handle("I'd love to see that smoke ring thing")
     assert s.target == "Ring Nebula" and calls == []
     assert out[-1]["text"].startswith("I lost my connection")
+
+
+def test_out_of_tool_rounds_ends_with_words():
+    from astro.agent import MAX_TOOL_ROUNDS
+
+    tool = NS(stop_reason="tool_use", content=[NS(type="tool_use", id="t", name="session_status",
+                                                  input={})])
+    client = FakeClient([tool] * MAX_TOOL_ROUNDS + [NS(stop_reason="end_turn",
+                                                       content=[text("All set.")])])
+    out = Agent(session(), client=client).handle("tell me everything, then more")
+    assert out[-1]["text"] == "All set."
+    assert client.requests[-1]["tool_choice"] == {"type": "none"}
