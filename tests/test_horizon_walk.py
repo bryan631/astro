@@ -100,3 +100,13 @@ def test_partial_treeline_warns_about_the_gap():
     assert _azimuth_coverage([90, 120, 150, 180]) == 90
     assert _azimuth_coverage([0, 90, 180, 270]) == 270
     assert _azimuth_coverage([350, 10, 40]) == pytest.approx(50)  # across north
+
+
+def test_partial_walk_says_it_guessed_the_rest():
+    s, pos = walk_session([])
+    s.handle("start the horizon walk")
+    for az in (90, 120, 150, 180):
+        pos.update(alt=25, az=az)
+        s.handle("mark")
+    said = texts(s.handle("done"))[0]
+    assert "only go about 90 degrees around" in said
