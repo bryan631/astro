@@ -60,3 +60,18 @@ def test_focus_coach_sequence():
     assert said[:3] == ["keep turning the focus knob slowly", "sharper", "sharper"]
     assert said[3] == "that's the sharpest so far"
     assert said[4] == "passed it, go back slowly"
+
+
+def test_file_names_are_safe():
+    from astro.capture.recorder import safe_name
+
+    assert safe_name("Barnard's Star") == "Barnards_Star"
+    assert safe_name("M31/Andromeda") == "M31Andromeda"
+    assert safe_name("///") == "target"
+
+
+def test_roi_never_negative_on_a_small_sensor():
+    from astro.capture.roi import roi_around
+
+    roi = roi_around((100, 100), 512, (400, 300))
+    assert roi.x == 0 and roi.y == 0

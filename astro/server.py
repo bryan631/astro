@@ -92,7 +92,6 @@ def build_real_session() -> Session:
     again, and shutdown closes it (heaters off, cameras and solver released)."""
     site, clock = load_site(), utcnow
     cfg = devices.load(Path(os.environ.get("ASTRO_DEVICES", ROOT / "config" / "devices.toml")))
-    devices.validate(cfg)  # all drivers known before any hardware opens
     try:
         finder, close_pointing = devices.build_pointing(cfg, solver(), site, clock)
         _hardware_closers.append(close_pointing)
@@ -181,6 +180,7 @@ class Hub:
         self._sender: asyncio.Task | None = None
         self._outbox: asyncio.Queue[dict | None] = asyncio.Queue()
         self._state: dict | None = None  # newest unsent state; None in the queue stands for it
+        self.asker: WebSocket | None = None  # GPS requests go to the tablet that last spoke
         self._t0 = time.monotonic()
 
     def join(self, socket: WebSocket) -> None:
@@ -220,7 +220,10 @@ class Hub:
                     audio = await asyncio.to_thread(tts.synthesize, msg["text"])
                 except Exception:  # the words still go out as text
                     log.exception("speech synthesis failed")
-            for client in list(self.clients):
+            to = list(self.clients)
+            if msg["type"] == "get_location" and self.asker in self.clients:
+                to = [self.asker]  # every tablet answering with its own fix would be a race
+            for client in to:
                 try:
                     await client.send_json(msg)
                     if audio:
@@ -230,6 +233,7 @@ class Hub:
 
     async def handle_text(self, socket: WebSocket, text: str) -> None:
         log.info("heard", extra={"data": {"text": text}})
+        self.asker = socket
         await socket.send_json({"type": "heard", "text": text})
         reply = asyncio.create_task(asyncio.to_thread(self.agent.handle, text))
         done, _ = await asyncio.wait({reply}, timeout=THINKING_AFTER_S)
@@ -315,6 +319,7 @@ async def ws(socket: WebSocket) -> None:
                             "server_tts": tts.available()})
     hub.join(socket)
     if not site_store.has_saved(ROOT):  # setup: first run at this installation
+        hub.asker = socket
         for out in hub.session.request_location():
             await hub.broadcast(out)
     try:

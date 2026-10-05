@@ -5,6 +5,7 @@ Falls back to the offline grammar when there's no API key or no network.
 """
 
 import os
+import threading
 import time
 
 import anthropic
@@ -88,6 +89,7 @@ class Agent:
         self.session = session
         self.client = client if client is not None else _default_client()
         self.history: list[dict] = []
+        self._turn = threading.Lock()  # one conversation turn at a time (two tablets talking)
         self._offline_until = 0.0  # after a connection failure, answer offline until then
 
     def handle(self, text: str) -> list[dict]:
@@ -96,7 +98,8 @@ class Agent:
         if self.client is None or offline or self._offline_understands(text):
             return self.session.handle(text)
         try:
-            return self._run(text)
+            with self._turn:
+                return self._run(text)
         except _ToolsRan as partial:  # don't do it all again offline
             self._note_failure(partial.__cause__)
             return [*partial.side_effects, {"type": "say", "text": PARTIAL}]
@@ -125,14 +128,18 @@ class Agent:
         messages = [*self.history, {"role": "user", "content": text}]
         side_effects: list[dict] = []
         ran = False
-        for _ in range(MAX_TOOL_ROUNDS):
+
+        def ask(**extra):
             try:
-                resp = self.client.messages.create(model=MODEL, max_tokens=1024, system=SYSTEM,
-                                                   tools=TOOLS, messages=messages)
+                return self.client.messages.create(model=MODEL, max_tokens=1024, system=SYSTEM,
+                                                   tools=TOOLS, messages=messages, **extra)
             except anthropic.APIError as e:
                 if ran:
                     raise _ToolsRan(side_effects) from e
                 raise
+
+        for _ in range(MAX_TOOL_ROUNDS):
+            resp = ask()
             messages.append({"role": "assistant", "content": resp.content})
             if resp.stop_reason != "tool_use":
                 break
@@ -146,6 +153,8 @@ class Agent:
                     results.append({"type": "tool_result", "tool_use_id": block.id,
                                     "content": said or "done"})
             messages.append({"role": "user", "content": results})
+        else:  # out of tool rounds: one last answer, in words, about what was done
+            resp = ask(tool_choice={"type": "none"})
         reply = " ".join(b.text for b in resp.content if b.type == "text").strip()
         self.history = [*self.history, {"role": "user", "content": text},
                         {"role": "assistant", "content": reply or "OK."}][-2 * HISTORY_TURNS:]

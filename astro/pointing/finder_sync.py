@@ -155,8 +155,8 @@ class FinderSync:
         """Solve the current finder view and refine the mount model. Returns (ok, message)."""
         if self.safety and (reason := self.safety()):  # every finder exposure is gated (S2/S3)
             return False, f"I can't look at the sky right now: {reason}."
-        enc = self.encoders()  # read encoders at exposure time, not after the solve
-        gray = finder_gray(self.camera.capture())
+        enc = self.encoders()  # read encoders and clock at exposure time, not after the solve
+        gray, when = finder_gray(self.camera.capture()), self.clock()
         focus = check_focus(gray)
         if not focus.ok:
             return False, focus.reason
@@ -166,7 +166,7 @@ class FinderSync:
                            "Something may be blocking part of the view.")
         self.last_solution = sol
         log_solution(sol)
-        alt, az = radec_to_altaz(sol.ra_deg, sol.dec_deg, self.site, self.clock())
+        alt, az = radec_to_altaz(sol.ra_deg, sol.dec_deg, self.site, when)
         rms = self.model.add_sync(Sync(enc[0], enc[1], alt, az))
         self.last_rms = rms
         self.synced = True

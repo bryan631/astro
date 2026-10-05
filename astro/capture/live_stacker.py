@@ -13,7 +13,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from astro.capture.recorder import CaptureRefused, SafetyCheck
+from astro.capture.recorder import CaptureRefused, SafetyCheck, safe_name
 from astro.devices.base import Camera
 from astro.process.livestack import LiveStack, stretch
 
@@ -65,7 +65,7 @@ class LiveStacker:
         stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.preview_dir.mkdir(parents=True, exist_ok=True)
-        file = f"{stamp}_{name.replace(' ', '_')}.png"
+        file = f"{stamp}_{safe_name(name)}.png"
         live = LiveSession(name, self.preview_dir / file, self.out_dir / file)
         self._stop.clear()
         self.current = live

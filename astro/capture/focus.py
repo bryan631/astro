@@ -32,6 +32,7 @@ class FocusCoach:
         self.best: float | None = None
         self.last: float | None = None
         self.samples = 0  # readings so far ("done" too early means focus was never checked)
+        self._at_best = False  # "that's the sharpest" already said for this plateau
 
     def update(self, score: float) -> str | None:
         self.samples += 1
@@ -41,10 +42,13 @@ class FocusCoach:
         if prev is None:
             return "keep turning the focus knob slowly"
         change = (score - prev) / max(abs(prev), 1e-9)
+        if abs(change) > self.tol:
+            self._at_best = False
         if change > self.tol:
             return "sharper"
         if change < -self.tol:
             return "passed it, go back slowly" if self.best > score * (1 + self.tol) else "softer"
-        if abs(score - self.best) <= self.tol * self.best:
+        if abs(score - self.best) <= self.tol * self.best and not self._at_best:
+            self._at_best = True  # said once until the focus changes again
             return "that's the sharpest so far"
         return None

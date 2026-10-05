@@ -90,7 +90,8 @@ class FinderSolver:
         ms = (time.perf_counter() - t0) * 1000
         if r.get("RA") is None or r.get("Prob", 1) > max_false_prob:
             return None
-        width_px = image.shape[1]  # sensor pixels (before binning when bayer=True)
+        # Sensor pixels: a raw frame (bayer=True) is full size; a gray one is finder_gray's 2x2 bin.
+        width_px = image.shape[1] * (1 if bayer else 2)
         return Solution(float(r["RA"]), float(r["Dec"]), float(r["Roll"]), float(r["FOV"]),
                         float(r["RMSE"]), int(r["Matches"]), float(r["Prob"]), ms,
                         float(r["FOV"]) * 3600 / width_px)
