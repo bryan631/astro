@@ -3,6 +3,10 @@
 #   scripts/setup.sh            dev: Debian/ChromeOS Linux, simulators only
 #   scripts/setup.sh --minipc   field box: Ubuntu 24.04 MiniPC, adds voice, Tailscale, services
 set -euo pipefail
+case "${1:-}" in
+  ""|--minipc) ;;
+  *) echo "usage: $0 [--minipc]" >&2; exit 2 ;;
+esac
 cd "$(dirname "$0")/.."
 sudo apt-get update -q
 sudo apt-get install -y -q python3-venv python3-pip python3-tk
@@ -32,7 +36,9 @@ sudo systemctl enable --now astro.service astro-cert.timer
 cat <<'NOTES'
 Done. Still by hand (see docs/plan.md):
   - BIOS: power on after AC loss, so the box starts when the battery is switched on.
-  - Phone hotspot: join it once (nmcli dev wifi connect <ssid> password <pw>) so the box
-    reconnects in the field; home WiFi stays the first choice.
+  - Phone hotspot: join it once so the box reconnects in the field, at a lower priority so
+    home WiFi stays the first choice:
+      nmcli dev wifi connect <ssid> password <pw> name hotspot
+      nmcli con modify hotspot connection.autoconnect-priority -10
   - Field check: docs/dev-runbook.md "Field use" (HTTPS with no internet, access token).
 NOTES

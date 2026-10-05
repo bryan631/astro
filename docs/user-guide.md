@@ -3,17 +3,17 @@
 **First time at a new place**
 
 1. Turn on the telescope box. Wait one minute.
-2. Open **Astro** on the tablet. It asks to use the tablet's location. Tap **Allow**.
-3. **Hold the big circle** and talk. Let go when you finish.
-4. Say **"Set up the telescope."** It walks you through these steps:
-   - **"Focus the finder."** Turn the small camera's focus ring slowly until it says
-     **"that's the sharpest."**
-   - **"Sync."** Point at any clear patch of sky and hold still. It looks at the stars
-     and learns where the telescope points. Doing it again in another part of the sky
-     makes it more accurate.
-   - **"Start the horizon walk."** Point at the top of the trees, say **"Mark,"** move
-     along the treeline and mark again. Say **"Done"** when you're back where you started.
-   Say **"Skip"** to skip a step. It remembers all of this for next time.
+2. Open **Astro** on the tablet. **Hold the big circle** and talk. Let go when you finish.
+3. If the stars look blurry on the finder, say **"Focus the finder"** and turn its focus
+   ring slowly until it says **"that's the sharpest."** Then say **"Done."**
+4. Say **"Set up the telescope."** It walks you through each step. Say **"Ready"** when
+   you've done what it asks, or **"Skip"** to skip a step.
+   - **Location:** the tablet asks to use its location. Tap **Allow**.
+   - **Stars:** point at a clear patch of sky, hold still, and say **"Ready."** It does
+     this three times, in different parts of the sky.
+   - **Treeline:** point at the top of the trees and say **"Mark."** Move along the
+     treeline, marking as you go. Say **"Done"** when you're back where you started.
+   It remembers all of this for next time.
 
 **Find something**
 
