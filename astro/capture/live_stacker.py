@@ -15,6 +15,7 @@ from PIL import Image
 
 from astro.capture.recorder import CaptureRefused, SafetyCheck, safe_name
 from astro.devices.base import Camera
+from astro.process.finish import finish, save_fits
 from astro.process.livestack import LiveStack, stretch
 
 SUB_EXPOSURE_S = 0.2  # ~6 px of drift at prime focus: still round-ish stars
@@ -105,8 +106,7 @@ class LiveStacker:
         finally:
             try:
                 if stack.has_frames:
-                    self._save(stack, live)
-                    os.replace(live.preview, live.picture)  # finished: into the gallery
+                    self._finish(stack, live)
             except (RuntimeError, OSError, ValueError) as e:
                 live.frames = 0  # no picture to announce
                 live.error = f"I couldn't save the stacked picture: {e}"
@@ -121,6 +121,16 @@ class LiveStacker:
         exposure, gain = self._restore
         self.camera.set_exposure(exposure)
         self.camera.set_gain(gain)
+
+    def _finish(self, stack: LiveStack, live: LiveSession) -> None:
+        """The gallery picture: gradient removed, color balanced, stretched (C4). The linear
+        stack is kept as FITS beside it, for Siril or GraXpert later."""
+        linear = stack.image()
+        save_fits(linear, live.picture.with_suffix(".fits"))
+        tmp = live.picture.with_name(live.picture.name + ".tmp")
+        Image.fromarray(finish(linear)).save(tmp, format="PNG")
+        os.replace(tmp, live.picture)
+        live.preview.unlink(missing_ok=True)
 
     def _save(self, stack: LiveStack, live: LiveSession) -> None:
         """Write next to the preview, then swap it in: the tablet never reads a half file."""
