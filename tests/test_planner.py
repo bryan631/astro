@@ -46,3 +46,12 @@ def test_next_dark_plans_the_coming_night_when_asked_by_day():
     start = next_dark(WPB, afternoon)
     assert start.date() == afternoon.date() and 19 <= start.hour <= 20  # nautical dusk
     assert next_dark(WPB, EVENING.replace(hour=22)) == EVENING.replace(hour=22)  # already dark
+
+
+def test_moon_phase_scales_the_moonlight_penalty():
+    from astro.planner.tonight import moonlight_factor
+
+    assert moonlight_factor("galaxy", 20, 1.0) == 0.5  # full Moon nearby: halved
+    assert moonlight_factor("galaxy", 90, 1.0) == 0.75  # full Moon far away: still hurts
+    assert moonlight_factor("galaxy", 20, 0.0) == 1.0  # new Moon: no harm
+    assert moonlight_factor("double", 20, 1.0) > moonlight_factor("galaxy", 20, 1.0)

@@ -13,7 +13,9 @@ import numpy as np
 from astro.pointing.finder_sync import check_focus
 from astro.process.planet import superpixel_rgb
 
-MIN_STARS = 6  # astroalign needs a handful of stars to match triangles
+# astroalign matches star triangles (3 minimum); 4 keeps a margin without rejecting double
+# stars (PL2), whose short frames show the pair plus only a few field stars.
+MIN_STARS = 4
 MAX_CONTROL_POINTS = 40  # brightest stars used for matching
 
 
@@ -37,7 +39,7 @@ class LiveStack:
         rgb = superpixel_rgb(raw, self.bayer)
         lum = rgb.mean(axis=-1)
         if self._ref_lum is None:  # first good frame defines the reference
-            stars = check_focus(lum).stars
+            stars = check_focus(lum).stars  # only its star count: the focus limits are the finder's
             if stars < MIN_STARS:  # clouds or a capped lens: don't anchor the stack to it
                 self.status.frames_skipped += 1
                 self.status.last_error = f"only {stars} stars in the first frame"

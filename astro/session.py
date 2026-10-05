@@ -29,6 +29,7 @@ from astro.messages import say
 from astro.optics import MAIN_SENSOR_PX
 from astro.planner.catalog import load_targets
 from astro.planner.horizon import HorizonMask
+from astro.planner.moon_features import FEATURES
 from astro.planner.tonight import PLANET_NOTES, PLANETS, next_dark, plan
 from astro.pointing.coords import Site, body_altaz, radec_to_altaz
 from astro.pointing.finder_sync import FinderSync, check_focus
@@ -50,7 +51,8 @@ ENCODER_STALE_S = 1.0  # encoder positions older than this mean the board or cab
 MIN_HFR_PX = 0.5  # floor so a perfectly sharp (tiny) star can't blow up the focus score
 TOLERANCE_ARCMIN = 4.0  # guidance "on target" tolerance
 TOLERANCE_BARLOW_ARCMIN = 2.0  # half that with the 2x Barlow (half the field)
-EXTENDED_TARGETS = {p.capitalize() for p in PLANETS} | {"Moon"}  # pictured as SER video
+MOON_FEATURES = {f.name: f for f in FEATURES}  # pointing at one means pointing at the Moon
+EXTENDED_TARGETS = {p.capitalize() for p in PLANETS} | {"Moon", *MOON_FEATURES}  # SER video
 RECORD_SECONDS = 60  # planetary video length
 STACK_SECONDS = 90  # deep-sky live stack; the target drifts out of the field in ~2 min
 FOCUS_CROP_PX = 256  # sharpness measured on a crop around the planet
@@ -58,6 +60,7 @@ COLLIMATION_STEP_S = 2.0  # time to turn a screw and let the image settle betwee
 COLLIMATING = "We're checking collimation. Say stop to finish that first."
 COLLIMATION_CROP_PX = 512  # around the defocused star (the donut is ~100-300 px across)
 MIN_HORIZON_MARKS = 3
+MIN_HORIZON_COVERAGE_DEG = 270  # less: a big unmarked gap gets a straight-line guess
 SITE_MOVE_KM = 1.0  # moving farther than this from the model's site invalidates the mount model
 CLOUD_CACHE_S = 15 * 60  # Open-Meteo is hourly; don't ask on every request
 LATER_MIN = 30  # "tonight" more than this far ahead: say when it gets dark
@@ -158,6 +161,8 @@ class Session:
             kind, note = "a planet", PLANET_NOTES[name.lower()]
         elif name == "Moon":
             kind, note = "our Moon", "Craters and mountains show best along the shadow line."
+        elif name in MOON_FEATURES:
+            kind, note = "a feature on the Moon", MOON_FEATURES[name].note
         else:
             target = self.catalog[name]
             kind, note = f"a {target.category} ({target.id})", target.note
@@ -169,9 +174,11 @@ class Session:
         return [say(f"{name} is {kind}. {note} {where}")]
 
     def names(self) -> list[str]:
-        return [p.capitalize() for p in PLANETS] + ["Moon", *self.catalog]
+        return [p.capitalize() for p in PLANETS] + ["Moon", *MOON_FEATURES, *self.catalog]
 
     def altaz_of(self, name: str) -> tuple[float, float]:
+        if name in MOON_FEATURES:  # the Moon fills the main camera: aim at its center
+            name = "Moon"
         if name.lower() in PLANETS or name == "Moon":
             return body_altaz(name.lower(), self.site, self.clock())
         t = self.catalog[name]
@@ -745,8 +752,11 @@ class Session:
         self.horizon = HorizonMask(tuple(sorted(points)))
         if self.on_horizon_change:
             self.on_horizon_change(self.horizon)
-        return [say(f"Saved the treeline from {len(points)} marks. "
-                    "I'll only suggest things above it.")]
+        msg = f"Saved the treeline from {len(points)} marks. I'll only suggest things above it."
+        if (covered := _azimuth_coverage([az for az, _ in points])) < MIN_HORIZON_COVERAGE_DEG:
+            msg += (f" Your marks only go about {covered:.0f} degrees around, so I guessed a "
+                    "straight line across the rest. Mark the other side when you can.")
+        return [say(msg)]
 
     @property
     def wizard_active(self) -> bool:
@@ -872,6 +882,13 @@ class Session:
 
     def _tolerance_arcmin(self) -> float:
         return TOLERANCE_BARLOW_ARCMIN if self.barlow else TOLERANCE_ARCMIN
+
+
+def _azimuth_coverage(azs: list[float]) -> float:
+    """Degrees of azimuth the marks span: 360 minus the biggest gap between neighbors."""
+    a = sorted(az % 360 for az in azs)
+    gaps = np.diff([*a, a[0] + 360])
+    return 360 - float(gaps.max())
 
 
 def _compass(az: float) -> str:

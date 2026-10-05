@@ -108,3 +108,14 @@ def test_safety_stop_mid_stack_keeps_frames_and_restores_camera(tmp_path):
     assert live.picture.exists() and not live.preview.exists()  # moved into the gallery
     assert not list(live.preview.parent.glob("*.tmp"))  # no half-written previews left behind
     assert (cam.exposure_s, cam.gain) == (0.01, 0)  # planetary mode restored
+
+
+def test_four_stars_anchor_the_stack_three_do_not(monkeypatch):
+    from types import SimpleNamespace
+
+    from astro.process import livestack
+
+    frame = np.zeros((64, 64), np.uint8)
+    for stars, anchored in [(3, False), (4, True)]:
+        monkeypatch.setattr(livestack, "check_focus", lambda lum, n=stars: SimpleNamespace(stars=n))
+        assert LiveStack("GRBG").add(frame) is anchored  # a double star plus two field stars
