@@ -188,6 +188,22 @@ def test_boot_asks_for_version_again():
     assert fake.written == [frame("VER?")]
 
 
+def test_boot_invalidates_even_if_version_request_fails():
+    from astro.devices.mcu_protocol import Boot
+
+    m, fake = make_mcu([])
+    reboots = []
+    m.on_reboot = lambda: reboots.append(1)
+
+    def unplugged(data):
+        raise OSError("unplugged")
+
+    fake.write = unplugged
+    with pytest.raises(OSError):
+        m.handle(Boot("astro-mcu", "0.1"))
+    assert reboots == [1]
+
+
 class WriteFailsSerial(FakeSerial):
     def write(self, data):
         import serial

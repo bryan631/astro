@@ -89,13 +89,14 @@ class Mcu:
             self.version = msg
         elif isinstance(msg, proto.Boot):
             self.boots += 1
-            # Opening the port resets a classic Nano (DTR), so the VER? from start() can be
-            # lost in the bootloader; ask again now that the firmware is up.
-            self._send(proto.frame("VER?"))
             # The board (re)started, so its counts are 0: any mount model built on earlier
             # counts is wrong, including one restored from disk at start-up (CV7).
             if self.on_reboot:
                 self.on_reboot()
+            # Opening the port resets a classic Nano (DTR), so the VER? from start() can be
+            # lost in the bootloader; ask again now that the firmware is up. Last, so a failed
+            # write can't skip the reboot handling above.
+            self._send(proto.frame("VER?"))
         elif isinstance(msg, proto.McuError):
             self.errors = [*self.errors[-9:], msg.text]
 
