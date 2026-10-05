@@ -27,6 +27,7 @@ def solver():
 
 def make(solver, alt=60, az=200, **cam):
     scope = SimScope(alt, az)
+
     def clock():
         return EVENING
     camera = SimFinderCamera(lambda: (scope.alt, scope.az), WPB, clock, solver._t3.star_table, **cam)

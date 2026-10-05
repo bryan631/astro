@@ -7,6 +7,7 @@ from astro.devices.base import Roi
 
 MIN_CONTRAST_ADU = 10  # 8-bit frames: a peak this far over the median is "something there"
 
+
 def brightest_blob(frame: np.ndarray) -> tuple[float, float] | None:
     """(x, y) centroid of the brightest connected region, or None for an empty frame."""
     smooth = ndimage.uniform_filter(frame.astype(np.float32), 5)

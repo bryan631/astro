@@ -155,6 +155,8 @@ def test_temperature_in_tenths_of_a_degree():
         return 0
     sdk.SVBGetControlValue = get
     assert connected(sdk).temperature_c() == 23.5
+
+
 def test_failed_reopen_retries_with_backoff(monkeypatch):
     import astro.devices.svbony as svb
 

@@ -121,7 +121,6 @@ class SimMainCamera:
             cache[(i, j)] = (ra, dec, flux)
         return cache[(i, j)]
 
-
     def _body_positions(self) -> tuple[np.ndarray, np.ndarray]:
         when = self.clock()
         cached = self._positions

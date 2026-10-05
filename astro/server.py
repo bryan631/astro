@@ -286,7 +286,6 @@ def get_hub() -> Hub:
     return _real_hub
 
 
-
 def _allowed(conn: Request | WebSocket) -> bool:
     """Optional shared token (ASTRO_TOKEN) for public WiFi: open the app once as
     https://.../?token=..., and a cookie remembers it. Unset: anyone on the network."""
@@ -372,8 +371,6 @@ async def handle_message(hub: Hub, socket: WebSocket, msg: dict) -> None:
     elif data.get("type") == "location_error":
         for out in session.location_failed(str(data.get("message", "")), request_id):
             await hub.broadcast(out)
-
-
 
 
 @app.get("/gallery")

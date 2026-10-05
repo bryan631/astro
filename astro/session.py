@@ -592,7 +592,6 @@ class Session:
         spoken = self._center_limiter.speak(step.say, t, urgent) if step.say else None
         return [say(spoken)] if spoken else []
 
-
     def _finder_focus_step(self, t: float) -> list[dict]:
         if t - self._focus_at < FOCUS_STEP_S or self.finder is None or self._focus_coach is None:
             return []
@@ -608,7 +607,6 @@ class Session:
         # Fewer visible stars also means softer focus, so fold the count into the score.
         cue = self._focus_coach.update(report.stars / max(report.hfr_px, MIN_HFR_PX))
         return [say(cue)] if cue else []
-
 
     def _main_focus_step(self, t: float) -> list[dict]:
         if t - self._focus_at < FOCUS_STEP_S or self.main_camera is None or self._focus_coach is None:

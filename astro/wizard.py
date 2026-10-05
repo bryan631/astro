@@ -14,8 +14,6 @@ SYNC_STEPS = 3
 Reply = list[dict]
 
 
-
-
 class SetupWizard:
     def __init__(self, request_location: Callable[[], Reply], sync: Callable[[], tuple[bool, str]],
                  alignment: Callable[[], tuple[int, float | None]],

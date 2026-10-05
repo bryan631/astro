@@ -19,10 +19,10 @@ def _ticks(t: datetime) -> int:
     return _EPOCH_OFFSET_TICKS + int(t.timestamp() * 1e7)
 
 
-
 def _local_offset_ticks() -> int:
     """This machine's UTC offset in SER ticks (100 ns), for the header's local DateTime."""
     return int(datetime.now().astimezone().utcoffset().total_seconds() * 10_000_000)
+
 
 class SerWriter:
     def __init__(self, path: Path, width: int, height: int, bayer: str = "GRBG",  # SV705C, per hardware checkout

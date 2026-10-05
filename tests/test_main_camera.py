@@ -293,6 +293,7 @@ def test_deep_sky_capture_live_stacks_drifting_stars(tmp_path):
     from astro.pointing.coords import radec_to_altaz
 
     start = time.monotonic()
+
     def clock():
         return EVENING + timedelta(seconds=time.monotonic() - start)
     alt, az = radec_to_altaz(299.90, 22.72, WPB, EVENING)  # M27; scope fixed, sky drifts

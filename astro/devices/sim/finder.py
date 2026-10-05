@@ -29,6 +29,7 @@ class SimFinderCamera:
 
     def set_gain(self, gain: int) -> None:
         self.gain = gain
+
     def set_roi(self, roi: Roi | None) -> None: ...
 
     def temperature_c(self) -> float | None:

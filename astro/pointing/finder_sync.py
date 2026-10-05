@@ -30,6 +30,7 @@ def log_solution(sol: Solution) -> None:
         "scale_arcsec_px": round(sol.scale_arcsec_px, 2), "matches": sol.matches,
         "false_prob": sol.false_prob, "rmse_arcsec": round(sol.rmse_arcsec, 1)}})
 
+
 # Robust noise: sigma = MAD / Phi^-1(3/4) for Gaussian noise (the familiar 1.4826).
 MAD_TO_SIGMA = 1 / norm.ppf(0.75)
 DETECT_SIGMA = 5.0  # a star is a blob brighter than background + 5 sigma

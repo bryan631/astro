@@ -21,6 +21,7 @@ def safe_name(name: str) -> str:
     """A target name as a file name part: "Barnard's Star" -> "Barnards_Star"."""
     return re.sub(r"[^A-Za-z0-9_-]", "", name.replace(" ", "_")) or "target"
 
+
 ROI_PX = 512  # square planet ROI, sensor pixels
 RECENTER_EVERY = 50  # frames between drift checks
 RECENTER_FRACTION = 0.25  # re-center when the planet drifts this far from the ROI center
