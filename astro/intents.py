@@ -12,7 +12,7 @@ from dataclasses import dataclass
 class Intent:
     name: str  # goto, stop, next, tonight, capture, stop_capture, focus, finder_focus, sync,
     # where, barlow_on, barlow_off, location, horizon_start, horizon_mark, setup, ready, skip,
-    # describe
+    # describe, collimate
     target: str | None = None
 
 
@@ -28,6 +28,7 @@ _PATTERNS = [
     ("barlow_off", r"\b(barlow (is )?(off|out)|(took|take|removed?) (out )?the barlow)\b"),
     ("stop", r"^(stop|halt|hold|freeze|that's it|done)\b"),
     ("next", r"\b(next|another one|something else)\b"),
+    ("collimate", r"\b(collimat\w*)\b"),
     ("finder_focus", r"\b(focus (the )?finder|finder focus)\b"),
     ("focus", r"\bfocus\b"),
     ("sync", r"\b(sync|align|plate ?solve|find (out )?where (we are|i am|it is) pointing)\b"),

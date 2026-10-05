@@ -36,5 +36,7 @@
 - Lost? Say **"Sync"** or **"Where am I pointing?"**
 - Did you put in or take out the Barlow? Say **"Barlow in"** or **"Barlow out."**
 - Moved the telescope to a new place? Say **"Use my location."**
+- Stars look like smudges even when focused? Say **"Check the collimation."** Turn the
+  focus knob until a bright star is a donut, then turn the mirror screws as it says.
 - Tap **Beeps** to hear beeps that speed up as you get closer.
 - The screen is red to protect your night vision. Tap **Day mode** to change it.
