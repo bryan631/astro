@@ -24,7 +24,7 @@ fi
 scripts/install-voice.sh  # whisper.cpp, Piper, ffmpeg
 sudo usermod -aG dialout,video "$USER"  # the encoder board's serial port
 # SVBony cameras (f266:*) need a udev rule for non-root USB access.
-echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="f266", MODE="0666"' | sudo tee /etc/udev/rules.d/90-ckusb.rules >/dev/null
+echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="f266", GROUP="video", MODE="0660"' | sudo tee /etc/udev/rules.d/90-ckusb.rules >/dev/null
 sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=usb
 command -v tailscale >/dev/null || curl -fsSL https://tailscale.com/install.sh | sh
 sudo tailscale up --ssh  # prints a login link the first time
