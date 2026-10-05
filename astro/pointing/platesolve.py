@@ -17,13 +17,14 @@ from numpy.lib.stride_tricks import sliding_window_view
 from PIL import Image
 from scipy import ndimage
 
-FINDER_FOV_DEG = 10.4  # horizontal; measured by the first real-sky solve (optics math said ~11)
+# Horizontal; measured by the first real-sky solve (astro.optics for 1280 px x 31"/px said ~11).
+FINDER_FOV_DEG = 10.4
 # A hot pixel stands this far (ADU) above all 8 neighbors while those neighbors stay near the
 # local background; starlight always lifts the neighbors. 20 ADU flags 15 pixels on a capped
 # SV905C frame at gain 1000 and spares stars.
 HOT_PIXEL_ADU = 20
 _RING = np.ones((3, 3), bool)
-_RING[1, 1] = False  # horizontal, from astro.optics for 1280 px x 31"/px
+_RING[1, 1] = False  # the 8 neighbors
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,11 @@ class FinderSolver:
     def __init__(self, fov_deg: float = FINDER_FOV_DEG):
         self.fov = fov_deg
         self._t3 = tetra3.Tetra3()  # loads the bundled 14 MB database
+
+    @property
+    def star_table(self) -> np.ndarray:
+        """The solver's star catalog (the simulated finder renders the sky from it)."""
+        return self._t3.star_table
 
     def solve(self, image: np.ndarray, bayer: bool = True, max_false_prob: float = 1e-5,
               timeout_ms: int = 2000, binned: int = 1) -> Solution | None:

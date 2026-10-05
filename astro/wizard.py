@@ -6,14 +6,12 @@ location (tablet GPS) -> first sync -> two more syncs elsewhere (refines the mou
 
 from collections.abc import Callable
 
+from astro.messages import say
+from astro.pointing.finder_sync import LOOSE_SYNC_ARCMIN
+
 SYNC_STEPS = 3
-GOOD_ALIGNMENT_ARCMIN = 10.0
 
 Reply = list[dict]
-
-
-def say(text: str) -> dict:
-    return {"type": "say", "text": text}
 
 
 class SetupWizard:
@@ -83,7 +81,7 @@ class SetupWizard:
         n, rms = self.alignment()
         if rms is None or n < 3:
             return "Got it."
-        quality = "good" if rms <= GOOD_ALIGNMENT_ARCMIN else "still a bit rough"
+        quality = "good" if rms <= LOOSE_SYNC_ARCMIN else "still a bit rough"
         return f"Got it. The alignment is {quality}, about {rms:.0f} arcminutes."
 
     def _horizon_prompt(self) -> str:

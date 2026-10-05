@@ -1,8 +1,12 @@
-"""Optics math for the main and finder cameras."""
+"""Optics math for the main and finder cameras.
+
+Reference math: runtime code uses the measured or derived numbers (noted next to each
+constant, e.g. FINDER_FOV_DEG, MIN_MOTION_DEG), and the tests check them against this."""
 
 import math
 
 SIDEREAL_ARCSEC_PER_S = 15.04
+MAIN_SENSOR_PX = (3856, 2180)  # SV705C full frame (width, height)
 
 
 def plate_scale(pixel_um: float, focal_mm: float) -> float:

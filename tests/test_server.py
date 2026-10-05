@@ -201,6 +201,7 @@ def test_slow_answer_says_let_me_think(monkeypatch):
     monkeypatch.setattr(server, "THINKING_AFTER_S", 0.1)
     session, _ = server.build_session()
     monkeypatch.setattr(server, "build_session", lambda: (session, None))
+
     def slow(self, text):
         _time.sleep(0.4)
         return [{"type": "say", "text": "here you go"}]
@@ -260,6 +261,8 @@ def test_sim_world_resets_after_the_last_tablet_leaves(monkeypatch):
         ws.receive_json()
         first = server._sim_hub
     assert server._sim_hub is None and first is not None
+
+
 def test_token_gates_pages_and_socket(monkeypatch):
     from starlette.websockets import WebSocketDisconnect
 

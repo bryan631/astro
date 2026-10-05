@@ -95,7 +95,7 @@ class MountModel:
         def residuals(x: np.ndarray) -> np.ndarray:
             self._set(x)
             return np.concatenate(
-                [_vec(*self.to_sky(s.enc_alt_deg, s.enc_az_deg)) - t for s, t in zip(self.syncs, targets)]
+                [_vec(*self.to_sky(s.enc_alt_deg, s.enc_az_deg)) - t for s, t in zip(self.syncs, targets, strict=True)]
             )
 
         # Robust loss: one bad sync can't drag the fit, so it stands out to be dropped.

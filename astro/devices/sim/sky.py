@@ -23,7 +23,7 @@ def render(star_table, ra_deg, dec_deg, roll_deg, fov_deg, size=(640, 480), seed
     rng = np.random.default_rng(seed)
     img = rng.normal(20, 3, (h, w))
     yy, xx = np.mgrid[0:h, 0:w]
-    for x, y, m in zip(px, py, mag[keep]):
+    for x, y, m in zip(px, py, mag[keep], strict=True):
         if -5 < x < w + 5 and -5 < y < h + 5:
             flux = 3000 * 10 ** (-0.4 * (m - 3))
             x0, x1, y0, y1 = int(max(x - 6, 0)), int(min(x + 7, w)), int(max(y - 6, 0)), int(min(y + 7, h))

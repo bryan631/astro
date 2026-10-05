@@ -21,3 +21,7 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
+
+[tool.ruff.lint]
+extend-select = ["E", "W", "I", "B", "UP"]
+ignore = ["E501"]  # long lines are judged in review: wrapping URLs and tables hurts more

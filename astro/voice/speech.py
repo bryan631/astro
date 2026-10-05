@@ -29,7 +29,6 @@ def audio_ctx(seconds: float) -> int:
     return int(min(WHISPER_FULL_CTX, max(WHISPER_MIN_CTX, seconds * CTX_MARGIN * 50)))
 
 
-
 def _tool(env_bin: str, env_model: str) -> tuple[str, str] | None:
     binary, model = os.environ.get(env_bin, ""), os.environ.get(env_model, "")
     if binary and model and shutil.which(binary) and Path(model).exists():
