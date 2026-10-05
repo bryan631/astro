@@ -11,7 +11,8 @@ MCU -> host:  POS <az_counts> <alt_counts>          (20 Hz)
 Host -> MCU:  HEAT <channel 0|1> <percent 0-100>
               ZERO                                  (encoder counts to 0)
               VER?
-              PING                                  (heartbeat; heaters off after 10 s without one)
+              PING                                  (heartbeat; heaters off after 10 s with
+                                                     neither a PING nor a HEAT)
 """
 
 import math

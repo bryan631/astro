@@ -5,6 +5,8 @@ Scripts: `scripts/hwcheck/` (`enumerate.py`, `checklist.py`). SDK lives in `~/sd
 
 ## Cameras (SV705C main, SV905C2 finder)
 
+The finder reports itself as SV905C2 over USB; the requirements call it SV905C (same camera).
+
 | Check | SV705C | SV905C2 |
 |---|---|---|
 | Appears in `lsusb` (f266:9a0a) | pass | pass |

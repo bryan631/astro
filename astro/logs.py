@@ -11,7 +11,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-KEEP = 20  # server runs (files) to keep
+KEEP = 20  # server runs (files) to keep: R1's "sessions" are server runs
 LOG_DIR = Path("data/logs")
 
 
