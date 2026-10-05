@@ -15,7 +15,7 @@ id = "M45"
 category = "cluster"
 ra = 56.75
 dec = 24.12
-note = "The Seven Sisters; wider than the eyepiece, beautiful in the finder."
+note = "The Seven Sisters; about 2 degrees across, so a picture shows the brightest few."
 
 [[target]]
 name = "Beehive Cluster"

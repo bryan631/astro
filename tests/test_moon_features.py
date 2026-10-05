@@ -19,7 +19,7 @@ def test_first_quarter_shows_the_central_line():
 
 def test_waxing_crescent_shows_the_east_and_waning_the_west():
     assert names(45)[0] in ("Mare Crisium", "Petavius")  # terminator at +45
-    assert "Aristarchus" in names(305)  # waning: sunset line at -35, just east of it
+    assert "Aristarchus" in names(305)  # waning: sunset line at -35, just west of it
 
 
 def test_plan_lists_moon_features_and_goto_aims_at_the_moon():

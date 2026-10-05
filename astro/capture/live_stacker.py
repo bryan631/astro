@@ -92,7 +92,7 @@ class LiveStacker:
                 if stack.add(self.camera.capture()):
                     live.frames, skips_in_a_row = stack.status.frames_added, 0
                 else:
-                    live.skipped, skips_in_a_row = live.skipped + 1, skips_in_a_row + 1
+                    live.skipped, skips_in_a_row = stack.status.frames_skipped, skips_in_a_row + 1
                     if skips_in_a_row >= MAX_SKIPS_IN_A_ROW:
                         live.error = ("I lost the stars, maybe clouds, or the target drifted out "
                                       "of view, so I stopped stacking.")
