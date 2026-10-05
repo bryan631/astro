@@ -1,7 +1,7 @@
 import numpy as np
 from astropy.io import fits
 
-from astro.process.finish import balance_color, finish, remove_gradient, save_fits
+from astro.process.finish import balance_color, denoise, finish, remove_gradient, save_fits
 
 
 def field(rng, size=256):
@@ -62,3 +62,12 @@ def test_a_bright_nebula_keeps_its_color():
 def test_flat_frame_is_left_alone():
     flat = np.full((32, 32, 3), 7.0)
     assert np.array_equal(balance_color(flat), flat)
+
+
+def test_denoise_smooths_sky_and_keeps_stars():
+    rng = np.random.default_rng(6)
+    rgb = 10 + rng.normal(0, 2, (64, 64, 3))
+    rgb[32, 32] += 200  # a star
+    out = denoise(rgb)
+    assert out[:20, :20].std() < rgb[:20, :20].std() / 2
+    assert out[32, 32].mean() > 0.9 * rgb[32, 32].mean()
