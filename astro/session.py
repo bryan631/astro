@@ -206,7 +206,7 @@ class Session:
         if intent is not None and intent.name in ("setup", "ready", "skip"):
             return self._wizard_command(intent.name)
         if intent is None:
-            return [say("Sorry, I didn't catch that. Try 'what's good tonight' or 'go to Saturn'.")]
+            return [say("Sorry, I didn't catch that. Say 'what's good tonight' or 'go to Saturn'.")]
         if intent.name == "goto":
             name = match_name(intent.target or "", self.names())
             return self.goto(name) if name else [say(f"I don't know {intent.target}.")]
@@ -394,7 +394,7 @@ class Session:
         if clouds is not None and clouds >= CLOUDY_PCT:
             sky = f"It looks about {clouds:.0f} percent cloudy, so it may come and go. "
         return [say(f"{when}{sky}{best.name} is the best. {best.note} "
-                    f"Other good ones: {others}. Say 'go to' a name, or 'next'.")]
+                    f"Other good ones: {others}. Say 'go to' and a name, or say 'next'.")]
 
     def tonight_by_category(self) -> str:
         """Compact text for the agent: best target per category, local times."""

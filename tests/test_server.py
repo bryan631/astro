@@ -241,6 +241,15 @@ def test_handsfree_needs_the_wake_word():
         assert "go to pizza" in receive_until(ws, "heard")
 
 
+def test_handsfree_hints_name_the_wake_word():
+    with TestClient(server.app).websocket_connect("/ws") as ws:
+        ws.send_json({"type": "text", "text": "blah blah"})
+        assert "Say 'what's good tonight'" in receive_until(ws, "say")
+        ws.send_json({"type": "handsfree", "on": True})
+        ws.send_json({"type": "text", "text": "blah blah"})
+        assert "Say 'Astro, what's good tonight' or 'Astro, go to Saturn'" in receive_until(ws, "say")
+
+
 def test_save_utterance_keeps_audio_and_transcript(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "UTTERANCES", tmp_path)
     server.save_utterance(b"RIFFxxxx", "astro stop", True)

@@ -37,7 +37,7 @@ from astro.pointing.mount_model import MountModel
 from astro.pointing.platesolve import FinderSolver
 from astro.session import Session, utcnow
 from astro.voice.speech import Stt, Tts
-from astro.wake import strip_wake
+from astro.wake import add_wake, strip_wake
 
 ROOT = Path(__file__).resolve().parents[1]
 SIM = os.environ.get("ASTRO_SIM") == "1"
@@ -186,6 +186,7 @@ class Hub:
         self.agent = Agent(session)
         self.user = SimUser() if scope else None
         self.clients: set[WebSocket] = set()
+        self.handsfree: set[WebSocket] = set()  # tablets in hands-free mode: hints name the wake word
         self._loop: asyncio.Task | None = None
         self._sender: asyncio.Task | None = None
         self._outbox: asyncio.Queue[dict | None] = asyncio.Queue()
@@ -201,6 +202,7 @@ class Hub:
 
     def leave(self, socket: WebSocket) -> None:
         self.clients.discard(socket)
+        self.handsfree.discard(socket)
         if not self.clients:
             for task in (self._loop, self._sender):
                 if task is not None:
@@ -224,6 +226,8 @@ class Hub:
             if msg["type"] in LOGGED:
                 log.info(msg["type"], extra={"data": {k: v for k, v in msg.items() if k != "type"}})
             audio = None
+            if msg["type"] == "say" and self.handsfree:  # one shared session: text and audio agree
+                msg = {**msg, "text": add_wake(msg["text"])}
             if msg["type"] == "say" and tts.available():
                 try:
                     audio = await asyncio.to_thread(tts.synthesize, msg["text"])
@@ -396,6 +400,7 @@ async def handle_message(hub: Hub, socket: WebSocket, conn: dict, msg: dict) -> 
     request_id = int(data["id"]) if data.get("id") is not None else None
     if data.get("type") == "handsfree":
         conn["handsfree"], conn["armed_until"] = bool(data.get("on")), 0.0
+        (hub.handsfree.add if conn["handsfree"] else hub.handsfree.discard)(socket)
     elif data.get("type") == "text":
         if data.get("spoken"):  # the browser's own recognizer
             await handle_spoken(hub, socket, conn, data["text"])
