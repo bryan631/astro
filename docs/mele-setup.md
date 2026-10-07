@@ -32,8 +32,8 @@ Power off: a short press of the power button shuts down cleanly (logind `HandleP
 - [ ] Mele BIOS: power on after AC loss, so plugging it in boots it.
 - [ ] Tablet: Tailscale app (owner's Google login), key expiry disabled, Android Always-on VPN,
       app added to the home screen, mic and location allowed.
-- [ ] Tablet: Chrome Remote Desktop (or similar), so the developer can see the tablet's screen when
-      debugging remotely.
+- [ ] Tablet: a way for the developer to see its screen when debugging remotely, e.g. `scrcpy` over
+      adb wireless debugging across the tailnet. Verify it before the trip.
 - [ ] Offline test: tablet and Mele on a phone hotspot with mobile data off; does the app load
       and does voice work? (see dev-runbook, "Field use")
 - [ ] Full sim session on the Mele through the tablet: voice -> plan -> guide -> capture -> image.
@@ -44,8 +44,10 @@ Power off: a short press of the power button shuts down cleanly (logind `HandleP
 
 ## Remote notes (from the first bring-up)
 
-- The dev box runs Tailscale in userspace mode: plain `ssh mele` fails, use `tailscale ssh astro@mele`. The user is the Mele's Linux account, not the Tailscale login; "tailnet policy does not permit you to SSH as user X" usually means account X doesn't exist on the Mele.
+- The dev box runs Tailscale in userspace mode: plain `ssh mele` fails, use `tailscale ssh astro@mele`. The user is the Mele's Linux account, not the Tailscale login; "tailnet policy does not permit you to SSH as user X" means either the Tailscale SSH policy doesn't allow login as X or account X doesn't exist on the Mele; check both.
 - Field WiFi lives in `/etc/netplan/60-wifi.yaml` (mode 600): the Pixel hotspot, used when Ethernet is unplugged. Add networks there while Ethernet is connected. Both links are `optional` so boot doesn't wait for one.
+- Open the web UI with the full `https://mele.<tailnet>.ts.net:8443/` (Chrome drops the scheme otherwise). The cert covers the name only, so the raw Tailscale IP shows a certificate warning and breaks the mic.
+- Field WiFi so far: Pixel hotspot, plus dad's `netgear30` (2.4 GHz only) and `NETGEAR30` (2.4 and 5 GHz). Prefer `NETGEAR30`; dropping the `netgear30` entry is pending.
 - `astro` needs `video` (cameras), `dialout` (MCU serial) and the SDK in `/home/astro/sdk`.
 - Optional: passwordless sudo for that user (`/etc/sudoers.d/<user>`) lets Claude run installs unattended, but it means any session on that account has root. The Mele is reachable only over your tailnet; drop the file when the bring-up is done.
 - `scripts/setup.sh --minipc` needs HTTPS certificates enabled in the Tailscale admin console (DNS), or it stops at the cert step.
