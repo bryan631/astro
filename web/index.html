@@ -216,7 +216,7 @@ const loadScript = src => new Promise((ok, fail) => {
 });
 function setupHandsFree(Rec) {
   const btn = document.getElementById("hands"), vstate = document.getElementById("vstate");
-  const TAIL_MS = 600, VAD = "vendor/vad/";
+  const TAIL_MS = 600, VAD = "/vendor/vad/";  // absolute: onnxruntime import()s its module from here
   let on = false, stream = null, micVad = null, recog = null, hearing = false, tainted = false, lastSpoke = 0;
   const speaking = () => speechSynthesis.speaking || (player && !player.paused && !player.ended);
   const states = {waiting: "Say “Astro…”", hearing: "Hearing you…", armed: "Listening for your command",
