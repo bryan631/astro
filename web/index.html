@@ -19,8 +19,22 @@
   #talk { touch-action: none; }  /* a press is never a scroll (which cancels it) */
   #talk.listening { background: var(--dim); }
   /* Night: pictures in dim red too, so they don't spoil dark-adapted eyes. */
-  body:not(.day) #live, body:not(.day) #gallery img {
+  body:not(.day) #live, body:not(.day) #gallery img, body:not(.day) #camimg {
     filter: grayscale(1) sepia(1) saturate(5) hue-rotate(-50deg) brightness(.6); }
+  /* Hands-free state: text, dot and border weight differ, so it reads in dim red at night. */
+  #vstate { font-size: 28px; padding: 8px 20px; border: 2px solid var(--dim); border-radius: 999px; }
+  #vstate::before { content: "\25CB  "; }
+  #vstate[data-s="hearing"], #vstate[data-s="armed"] { border-color: var(--fg); border-width: 5px; }
+  #vstate[data-s="armed"]::before, #vstate[data-s="hearing"]::before { content: "\25CF  "; }
+  #vstate[data-s="speaking"] { border-style: dashed; border-color: var(--fg); }
+  #vstate[data-s="speaking"]::before { content: "\25B6  "; }
+  #heard { font-size: 24px; min-height: 1.3em; opacity: .8; }
+  #views button.on { border-color: var(--fg); border-width: 4px; }
+  #camview { width: 100%; max-width: 900px; text-align: center; }
+  #camimg { width: 100%; border: 2px solid var(--dim); border-radius: 12px; }
+  #camcap { font-size: 20px; opacity: .8; }
+  #debugbox { width: 100%; max-width: 900px; font: 20px/1.35 ui-monospace, monospace; white-space: pre-wrap;
+              border: 2px solid var(--dim); border-radius: 12px; padding: 12px; margin: 0; }
   #typed { display: flex; gap: 8px; width: 100%; max-width: 600px; }
   #typed input, button.small { font-size: 24px; padding: 12px; background: var(--bg); color: var(--fg);
           border: 2px solid var(--dim); border-radius: 12px; }
@@ -33,29 +47,43 @@
 </style>
 </head>
 <body>
-  <div id="said">Say "what's good tonight?"</div>
+  <div id="said">Hold the button and say "what's good tonight?"</div>
   <div id="arrow" hidden>&#x2191;</div>
   <div id="dist"></div>
   <img id="live" hidden alt="live stack">
   <button id="talk">Hold to talk</button>
+  <button id="hands" class="small">Hands-free: off</button>
+  <div id="vstate" hidden></div>
+  <div id="heard"></div>
   <form id="typed"><input id="text" placeholder="or type here" autocomplete="off"><button class="small">Send</button></form>
+  <div id="views"><button class="small" data-v="finder">Finder</button> <button class="small" data-v="main">Main camera</button> <button class="small" data-v="debug">Debug</button> <button class="small" id="vid" hidden>Live video</button></div>
+  <div id="camview" hidden><img id="camimg" alt="camera view"><div id="camcap"></div></div>
+  <pre id="debugbox" hidden></pre>
   <div><button class="small" id="mode">Day mode</button> <button class="small" id="pics">Pictures</button> <button class="small" id="beeps">Beeps off</button></div>
   <div id="gallery" hidden></div>
 <script>
-const said = document.getElementById("said"), arrow = document.getElementById("arrow"),
+const HINT = `Hold the button and say "what's good tonight?"`;
+const heardEl = document.getElementById("heard"), said = document.getElementById("said"), arrow = document.getElementById("arrow"),
       dist = document.getElementById("dist"), talk = document.getElementById("talk");
-let ws, serverStt = false, serverTts = false, player = null;
+let ws, unavailable = false, armedUntil = 0, handsOn = false, serverStt = false, serverTts = false, player = null;
 const pending = [];  // sent while reconnecting: delivered once the socket is back
 function connect() {
   ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
   ws.binaryType = "blob";
-  ws.onopen = () => { while (pending.length) ws.send(pending.shift()); };
+  ws.onopen = () => { if (handsOn) wsSend(JSON.stringify({type: "handsfree", on: true}));
+    while (pending.length) ws.send(pending.shift()); };
   ws.onmessage = e => typeof e.data === "string" ? handle(JSON.parse(e.data)) : play(e.data);
-  ws.onclose = () => setTimeout(connect, 1000);
+  ws.onclose = () => setTimeout(connect, unavailable ? 10000 : 1000);  // slow retries while the hardware is down
 }
+function report(text) {  // show a browser-side failure and tell the server (remote support reads its log)
+  heardEl.textContent = text; wsSend(JSON.stringify({type: "client_log", text}));
+}
+addEventListener("error", e => report(`Page error: ${e.message}`));
+addEventListener("unhandledrejection", e => report(`Page error: ${e.reason && e.reason.message || e.reason}`));
 function stopAudio() { speechSynthesis.cancel(); if (player) player.pause(); }
 function play(blob) {  // server (Piper) speech; newest cue wins
-  stopAudio(); player = new Audio(URL.createObjectURL(blob)); player.play();
+  stopAudio(); player = new Audio(URL.createObjectURL(blob));
+  player.play().catch(e => report(`The browser blocked speech: ${e.message}`));
 }
 function speak(text) {
   if (serverTts) return;  // audio arrives separately as a binary message
@@ -63,8 +91,17 @@ function speak(text) {
   const u = new SpeechSynthesisUtterance(text); u.rate = 0.95; speechSynthesis.speak(u);
 }
 function handle(m) {
-  if (m.type === "hello") { serverStt = m.server_stt; serverTts = m.server_tts; setupTalk(); }
-  if (m.type === "heard") said.textContent = `“${m.text}”`;
+  if (m.type === "unavailable") {  // startup failed: show the error, say it once
+    said.textContent = m.text;
+    if (!unavailable) speak("The telescope isn't ready.");
+    unavailable = true;
+  }
+  if (m.type === "notice") said.textContent = m.text;  // a button's answer: shown, not spoken
+  if (m.type === "view") setView(m.what === "none" ? "" : m.what, !!m.video);
+  if (m.type === "hello") { unavailable = false; serverStt = m.server_stt; serverTts = m.server_tts; setupTalk(); }
+  if (m.type === "heard") { armedUntil = 0; said.textContent = `“${m.text}”`; heardEl.textContent = `Command: “${m.text}”`; }
+  if (m.type === "ignored") heardEl.textContent = `Heard, no “Astro”: “${m.text}”`;
+  if (m.type === "armed") armedUntil = performance.now() + m.seconds * 1000;
   if (m.type === "get_location") sendLocation(m.id);
   if (m.type === "picture" && !document.getElementById("gallery").hidden) showPictures();
   if (m.type === "live") {  // live stack preview: same file, rewritten as frames are added
@@ -94,6 +131,7 @@ function handle(m) {
 }
 // Tablet GPS for the observing site (setup, or "use my location"). Needs HTTPS.
 function wsSend(data) { ws && ws.readyState === WebSocket.OPEN ? ws.send(data) : pending.push(data); }
+function liveSend(data) { if (ws && ws.readyState === WebSocket.OPEN) ws.send(data); }  // hands-free speech: stale once the link is back
 function sendLocation(id) {  // echo the request id so stale answers can be ignored
   if (!navigator.geolocation) {
     wsSend(JSON.stringify({type: "location_error", id, message: "This browser has no location service."}));
@@ -173,6 +211,7 @@ function setupTalk() {
   } else {
     talk.textContent = "Type below"; talk.disabled = true; return;
   }
+  setupHandsFree(Rec);
   let pressed = false;
   talk.addEventListener("pointerdown", async e => {
     e.preventDefault(); stopAudio(); listen(true); pressed = true;
@@ -186,8 +225,125 @@ function setupTalk() {
   for (const ev of ["pointerup", "pointerleave", "pointercancel"])
     talk.addEventListener(ev, () => { pressed = false; stop(); });
 }
+// Live camera views and the debug panel: the page polls what the server last captured.
+let view = "", viewTimer = null, camUrl = null;
+let videoOn = false;
+function setView(what, video = false) {
+  view = what; videoOn = video; clearTimeout(viewTimer);
+  const isCam = what === "finder" || what === "main";
+  const img = document.getElementById("camimg"), vid = document.getElementById("vid");
+  img.removeAttribute("src");  // drops a running stream, so the server sees nobody watching
+  vid.hidden = !isCam; vid.textContent = video ? "Stop video" : "Live video";
+  document.getElementById("camview").hidden = !isCam;
+  if (video && isCam) {
+    img.src = `/api/camera/${what}.mjpg`;
+    document.getElementById("camcap").textContent = `${what}: live video`;
+    document.querySelectorAll("#views button[data-v]").forEach(b => b.classList.toggle("on", b.dataset.v === what));
+    document.getElementById("debugbox").hidden = true;
+    return;
+  }
+  document.getElementById("debugbox").hidden = what !== "debug";
+  document.querySelectorAll("#views button").forEach(b => b.classList.toggle("on", b.dataset.v === what));
+  if (what) pollView();
+}
+// Buttons are silent: the server answers only with the view (spoken requests are spoken to).
+const video = (camera, then) => wsSend(JSON.stringify({type: "video", camera, then}));
+document.getElementById("vid").onclick = () => videoOn ? video(null, view) : video(view);
+document.querySelectorAll("#views button[data-v]").forEach(b => b.onclick = () => {
+  const next = view === b.dataset.v ? "" : b.dataset.v;
+  if (videoOn) video(null, next || "none"); else setView(next);  // video runs until switched off
+});
+function formatDebug(info) {
+  return Object.entries(info).map(([section, vals]) => section.toUpperCase() + "\n" +
+    Object.entries(vals).map(([k, v]) => `  ${k}: ${JSON.stringify(v)}`).join("\n")).join("\n\n");
+}
+async function pollView() {
+  const what = view;
+  if (!what) return;
+  try {
+    if (what === "debug") {
+      const r = await fetch("/api/debug");
+      document.getElementById("debugbox").textContent = r.ok ? formatDebug(await r.json()) : `No debug info: ${await r.text()}`;
+    } else {
+      const r = await fetch(`/api/camera/${what}.jpg?n=${Date.now()}`);
+      if (r.ok && view === what) {
+        const url = URL.createObjectURL(await r.blob());
+        document.getElementById("camimg").src = url;
+        if (camUrl) URL.revokeObjectURL(camUrl);
+        camUrl = url;
+        document.getElementById("camcap").textContent = `${what}: frame ${r.headers.get("X-Frame-Age")} s old`;
+      } else if (!r.ok) document.getElementById("camcap").textContent = `${what}: no frame yet`;
+    }
+  } catch (e) { report(`View failed: ${e.message}`); }
+  if (view === what) viewTimer = setTimeout(pollView, what === "debug" ? 1000 : 1500);
+}
+// Hands-free (half-duplex): listen continuously, ignore the mic while the telescope is speaking.
+// Short commands only. Silero VAD (scripts/install-vad.sh) finds each utterance whatever the mic
+// level; the browser's gain control and noise suppression clean the signal first.
+const loadScript = src => new Promise((ok, fail) => {
+  const el = Object.assign(document.createElement("script"), {src, onload: ok, onerror: () => fail(new Error(`${src} missing; run scripts/install-vad.sh`))});
+  document.head.append(el);
+});
+function setupHandsFree(Rec) {
+  const btn = document.getElementById("hands"), vstate = document.getElementById("vstate");
+  const TAIL_MS = 600, MAX_UTTERANCE_S = 6, VAD = "/vendor/vad/";  // absolute: onnxruntime import()s its module from here
+  let on = false, stream = null, micVad = null, recog = null, wakeLock = null, hearing = false, tainted = false, lastSpoke = 0;
+  const speaking = () => speechSynthesis.speaking || (player && !player.paused && !player.ended);
+  const states = {waiting: "Say “Astro…”", hearing: "Hearing you…", armed: "Listening for your command",
+                  speaking: "Speaking…"};
+  setInterval(() => {
+    if (speaking()) lastSpoke = performance.now();
+    const s = !on ? "" : speaking() ? "speaking" : hearing ? "hearing" : performance.now() < armedUntil ? "armed" : "waiting";
+    vstate.hidden = !on; vstate.dataset.s = s; vstate.textContent = states[s] || "";
+    if (on) talk.classList.toggle("listening", s === "hearing");  // hold-to-talk owns the class otherwise
+  }, 100);
+  const quiet = () => !speaking() && performance.now() - lastSpoke > TAIL_MS;
+  async function enable() {
+    if (serverStt && navigator.mediaDevices) {
+      stream = stream || await navigator.mediaDevices.getUserMedia(
+        {audio: {autoGainControl: true, noiseSuppression: true, echoCancellation: true}});
+      if (!window.vad) { await loadScript(VAD + "ort.wasm.min.js"); await loadScript(VAD + "bundle.min.js"); }
+      micVad = await vad.MicVAD.new({
+        getStream: async () => stream, baseAssetPath: VAD, onnxWASMBasePath: VAD, model: "v5",
+        preSpeechPadMs: 300, redemptionMs: 700, minSpeechMs: 300,  // pre-roll keeps the first word
+        onSpeechStart: () => { hearing = true; tainted = !quiet(); },  // started over our own voice
+        onVADMisfire: () => { hearing = false; },
+        onSpeechEnd: audio => {
+          hearing = false;
+          if (!tainted && quiet() && audio.length < MAX_UTTERANCE_S * 16000) liveSend(new Blob([vad.utils.encodeWAV(audio)], {type: "audio/wav"}));
+        },
+      });
+      micVad.start();
+    } else if (Rec) {  // Chrome's recognizer: continuous, restarted when it ends
+      recog = new Rec(); recog.lang = "en-US"; recog.continuous = true;
+      recog.onresult = e => { const r = e.results[e.results.length - 1];
+        if (r.isFinal && quiet()) liveSend(JSON.stringify({type: "text", text: r[0].transcript, spoken: true})); };
+      recog.onend = () => { if (on) try { recog.start(); } catch {} };
+      recog.start();
+    }
+  }
+  async function disable() {  // also after a failed enable: never leave the microphone on
+    if (micVad) { await micVad.destroy(); micVad = null; }
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+    hearing = false;
+    if (recog) { recog.onend = null; recog.stop(); recog = null; }
+    talk.classList.remove("listening");
+  }
+  btn.onclick = async () => {
+    on = !on;
+    try { if (on) await enable(); else await disable(); }
+    catch (err) { on = false; await disable().catch(() => {}); said.textContent = `I can't use the microphone: ${err.message}. Type below.`; }
+    handsOn = on; armedUntil = 0; wsSend(JSON.stringify({type: "handsfree", on}));
+    btn.textContent = `Hands-free: ${on ? "on" : "off"}`; talk.disabled = on;
+    if (on) said.textContent = "Say “Astro, what's good tonight?”";  // the hint changes with the mode
+    else if (said.textContent.startsWith("Say “Astro")) said.textContent = HINT;
+    if (on && navigator.wakeLock) navigator.wakeLock.request("screen")  // keep the tablet awake
+      .then(l => { wakeLock = l; l.onrelease = () => { if (wakeLock === l) wakeLock = null; }; }).catch(() => {});
+  };
+}
 connect();
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");  // installable (V1)
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").then(r => r.update());  // installable (V1); check for a new build on every load
 </script>
 </body>
 </html>

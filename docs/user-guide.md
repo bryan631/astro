@@ -4,6 +4,10 @@
 
 1. Turn on the telescope box. Wait one minute.
 2. Open **Astro** on the tablet. **Hold the big circle** and talk. Let go when you finish.
+   Or tap **Hands-free** and start each command with **"Astro"**, like **"Astro, what's good
+   tonight?"**. You can say just **"Astro"**, wait for the screen to say it's listening, then
+   give the command. It ignores speech that doesn't start with "Astro", and it doesn't listen
+   while it is talking. The screen shows what it heard.
 3. If the stars look blurry on the finder, say **"Focus the finder"** and turn its focus
    ring slowly until it says **"that's the sharpest."** Then say **"Done."**
 4. Say **"Set up the telescope."** It walks you through each step. Say **"Ready"** when
@@ -38,5 +42,9 @@
 - Moved the telescope to a new place? Say **"Use my location."**
 - Stars look like smudges even when focused? Say **"Check the collimation."** Turn the
   focus knob until a bright star is a donut, then turn the mirror screws as it says.
+- Is the cap off, the focus close? Tap **Finder** or **Main camera** to see its last picture,
+  then **Live video** to watch it move. The video keeps going until you tap **Stop video**,
+  say **"Stop the video,"** or ask it to go somewhere. Or say **"Live video of the finder."**
+- Tap **Debug** to see the time, where it thinks it's pointing, and the camera settings.
 - Tap **Beeps** to hear beeps that speed up as you get closer.
 - The screen is red to protect your night vision. Tap **Day mode** to change it.

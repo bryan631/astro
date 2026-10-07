@@ -1,4 +1,7 @@
+import json
 import os
+import threading
+import time
 
 os.environ["ASTRO_SIM"] = "1"
 os.environ["ANTHROPIC_API_KEY"] = ""  # tests never call the real API
@@ -221,13 +224,220 @@ def test_bad_message_is_spoken_and_keeps_the_connection():
         assert "I don't know pizza." in receive_until(ws, "say")  # still connected
 
 
-def test_hardware_startup_failure_is_spoken(monkeypatch):
+def test_handsfree_needs_the_wake_word():
+    def spoken(ws, text):
+        ws.send_json({"type": "text", "text": text, "spoken": True})
+
+    with TestClient(server.app).websocket_connect("/ws") as ws:
+        ws.send_json({"type": "handsfree", "on": True})
+        spoken(ws, "go to pizza")
+        assert "go to pizza" in receive_until(ws, "ignored")
+        spoken(ws, "Astro")  # wake word alone: the next utterance is the command
+        receive_until(ws, "armed")
+        spoken(ws, "go to pizza")
+        assert "go to pizza" in receive_until(ws, "heard")
+        spoken(ws, "Astro, go to pizza")  # wake word and command together
+        assert "go to pizza" in receive_until(ws, "heard")
+        ws.send_json({"type": "handsfree", "on": False})
+        spoken(ws, "go to pizza")  # no wake word needed once off
+        assert "go to pizza" in receive_until(ws, "heard")
+
+
+def test_handsfree_hints_name_the_wake_word():
+    with TestClient(server.app).websocket_connect("/ws") as ws:
+        ws.send_json({"type": "text", "text": "blah blah"})
+        assert "Say 'what's good tonight'" in receive_until(ws, "say")
+        ws.send_json({"type": "handsfree", "on": True})
+        ws.send_json({"type": "text", "text": "blah blah"})
+        assert "Say 'Astro, what's good tonight' or 'Astro, go to Saturn'" in receive_until(ws, "say")
+
+
+def test_pages_revalidate():
+    assert TestClient(server.app).get("/").headers["cache-control"] == "no-cache"
+
+
+def test_service_worker_is_stamped_with_the_build():
+    r = TestClient(server.app).get("/sw.js")
+    assert r.text.startswith('const BUILD = "') and "skipWaiting" in r.text
+    assert r.headers["cache-control"] == "no-cache"
+
+
+def test_handsfree_ignores_the_same_command_while_it_answers():
+    def spoken(ws, text):
+        ws.send_json({"type": "text", "text": text, "spoken": True})
+
+    with TestClient(server.app).websocket_connect("/ws") as ws:
+        ws.send_json({"type": "handsfree", "on": True})
+        spoken(ws, "Astro, go to pizza. Astro, go to pizza.")  # whisper said it twice: one command
+        assert "go to pizza" in receive_until(ws, "heard")
+        server.get_hub().speaking_until = time.monotonic() + 60  # still reading the answer
+        spoken(ws, "Astro, go to pizza")
+        assert "go to pizza" in receive_until(ws, "ignored")
+        spoken(ws, "Astro, stop")  # a different command always gets through
+        assert "stop" in receive_until(ws, "heard")
+
+
+def test_handsfree_transcription_failure_is_silent(monkeypatch):
+    def broken(audio):
+        raise RuntimeError("whisper died")
+
+    monkeypatch.setattr(server.stt, "transcribe", broken)
+    with TestClient(server.app).websocket_connect("/ws") as ws:
+        ws.send_json({"type": "handsfree", "on": True})
+        ws.send_bytes(b"audio")
+        receive_until(ws, "ignored")  # no spoken apology for background noise
+        ws.send_json({"type": "handsfree", "on": False})
+        ws.send_bytes(b"audio")
+        assert "something went wrong" in receive_until(ws, "say")  # but a button press is told
+
+
+def test_handsfree_empty_transcript_is_silent(monkeypatch):
+    monkeypatch.setattr(server.stt, "transcribe", lambda audio: "")
+    with TestClient(server.app).websocket_connect("/ws") as ws:
+        ws.send_json({"type": "handsfree", "on": True})
+        ws.send_bytes(b"audio")
+        receive_until(ws, "ignored")  # noise whisper heard as nothing: no "didn't hear anything"
+
+
+def test_client_log_reaches_the_server_log(caplog):
+    with TestClient(server.app).websocket_connect("/ws") as ws:
+        ws.send_json({"type": "client_log", "text": "The browser blocked speech"})
+        ws.send_json({"type": "text", "text": "stop"})  # a later reply proves it was handled
+        receive_until(ws, "say")
+    assert any(r.getMessage() == "client" for r in caplog.records)
+
+
+def test_camera_and_debug_views():
+    client = TestClient(server.app)
+    with client.websocket_connect("/ws"):  # starts the simulated hub
+        hub = server.get_hub()
+        assert client.get("/api/camera/finder.jpg").status_code == 404  # nothing captured yet
+        hub.session.finder.camera.capture()
+        r = client.get("/api/camera/finder.jpg")
+        assert r.status_code == 200 and r.content[:2] == b"\xff\xd8" and "x-frame-age" in r.headers
+        assert client.get("/api/camera/other.jpg").status_code == 404
+        info = client.get("/api/debug").json()
+        assert {"time", "site", "pointing", "finder_camera", "guidance", "system"} <= info.keys()
+        assert info["finder_camera"]["frame_px"] is not None
+        ws_msgs = hub.session.handle("show me the finder")
+        assert ws_msgs[0] == {"type": "view", "what": "finder"}
+
+
+def test_live_video_starts_stops_and_restores_the_camera():
+    with TestClient(server.app).websocket_connect("/ws"):
+        session = server.get_hub().session
+        cam = session.finder.camera
+        before = (cam.exposure_s, cam.gain)
+        out = session.handle("live video of the finder")
+        assert out[0] == {"type": "view", "what": "finder", "video": True}
+        assert cam.exposure_s != before[0]
+        t0 = cam.last_at
+        end = time.monotonic() + 5
+        while cam.last_at == t0 and time.monotonic() < end:
+            time.sleep(0.05)
+        assert cam.last_at != t0  # frames keep coming
+        out = session.handle("stop the video")
+        assert out[0] == {"type": "view", "what": "finder"}
+        assert (cam.exposure_s, cam.gain) == before
+        assert "no video" in session.handle("stop the video")[0]["text"]
+
+
+def test_video_runs_through_unrelated_commands_until_stopped():
+    with TestClient(server.app).websocket_connect("/ws"):
+        session = server.get_hub().session
+        session.handle("live video of the finder")
+        session.handle("barlow in")  # doesn't need a camera
+        assert session.video_active("finder")
+        assert session.handle("stop")[0] == {"type": "view", "what": "finder"}  # nothing else running
+        session.handle("live video of the finder")
+        session.handle("go to Saturn")  # guidance needs the camera back
+        assert session.video_now() is None
+
+
+def test_main_video_leaves_the_finder_solving_and_a_failed_start_unpauses():
+    with TestClient(server.app).websocket_connect("/ws"):
+        session = server.get_hub().session
+        session.finder.paused = threading.Event()  # as the plate-solve tracker has
+        session.handle("live video of the main camera")
+        assert session.video_active("main") and not session.finder.paused.is_set()
+        session.handle("stop the video")
+
+        def broken(s):
+            raise RuntimeError("camera unplugged")
+
+        cam = session.finder.camera._camera
+        real, cam.set_exposure = cam.set_exposure, broken
+        try:
+            with pytest.raises(RuntimeError):
+                session.handle("live video of the finder")
+        finally:
+            cam.set_exposure = real
+        assert not session.finder.paused.is_set() and session.video_now() is None
+
+
+def test_video_buttons_are_silent_and_a_reload_shows_the_video():
+    def until_view(ws):
+        kinds = []
+        while True:
+            msg = ws.receive()
+            if not msg.get("text"):
+                continue  # speech audio
+            if (m := json.loads(msg["text"]))["type"] == "view":
+                break
+            kinds.append(m["type"])
+        assert not {"say", "notice"} & set(kinds)
+        return m
+
+    client = TestClient(server.app)
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "video", "camera": "finder"})
+        assert until_view(ws) == {"type": "view", "what": "finder", "video": True}
+        with client.websocket_connect("/ws") as ws2:  # another tablet, or this one reloaded
+            assert until_view(ws2) == {"type": "view", "what": "finder", "video": True}
+        ws.send_json({"type": "video", "camera": None, "then": "debug"})
+        assert until_view(ws) == {"type": "view", "what": "debug"}
+        assert server.get_hub().session.video_now() is None
+        ws.send_json({"type": "text", "text": "barlow in"})
+        assert "Barlow" in receive_until(ws, "say")  # the first thing spoken is this answer
+
+
+def test_video_stream_serves_motion_jpeg():
+    import asyncio
+
+    async def two_frames():
+        response = await server.api_camera_stream("finder")
+        parts = []
+        async for part in response.body_iterator:
+            parts.append(part)
+            if len(parts) == 2:
+                break
+        await response.body_iterator.aclose()
+        return response, parts
+
+    with TestClient(server.app).websocket_connect("/ws"):
+        session = server.get_hub().session
+        session.handle("live video of the finder")
+        response, parts = asyncio.run(two_frames())
+        assert response.media_type.startswith("multipart/x-mixed-replace")
+        assert all(b"Content-Type: image/jpeg" in p and b"\xff\xd8" in p for p in parts)
+        session.handle("stop the video")
+
+
+def test_save_utterance_keeps_audio_and_transcript(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "UTTERANCES", tmp_path)
+    server.save_utterance(b"RIFFxxxx", "astro stop", True)
+    (wav,) = tmp_path.glob("*.wav")
+    assert wav.read_bytes() == b"RIFFxxxx"
+    assert json.loads(wav.with_suffix(".json").read_text()) == {"heard": "astro stop", "handsfree": True}
+
+
+def test_hardware_startup_failure_is_reported(monkeypatch):
     def broken():
         raise RuntimeError("SV905C not found")
 
     monkeypatch.setattr(server, "get_hub", broken)
     with TestClient(server.app).websocket_connect("/ws") as ws:
-        assert "isn't ready: SV905C not found" in receive_until(ws, "say")
+        assert "isn't ready: SV905C not found" in receive_until(ws, "unavailable")
 
 
 def test_state_updates_coalesce_while_events_keep_order():

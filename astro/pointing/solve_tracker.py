@@ -32,6 +32,7 @@ class SolveTracker:
         self._last_reason = "I haven't looked at the sky yet."
         self._camera_lock = threading.Lock()  # one capture at a time (tracker vs focus coach)
         self._stop = threading.Event()
+        self.paused = threading.Event()  # live video owns the camera: don't solve meanwhile
         self._thread = threading.Thread(target=self._loop, daemon=True)
 
     def start(self) -> "SolveTracker":
@@ -73,6 +74,10 @@ class SolveTracker:
     def reset(self, site: Site) -> None:
         self.site, self.synced = site, False
 
+    @property
+    def camera_lock(self) -> threading.Lock:
+        return self._camera_lock
+
     def _solve_once(self) -> tuple[bool, str]:
         with self._camera_lock:
             raw, when = self.camera.capture(), self.clock()  # the solve can take ~2 s
@@ -92,6 +97,9 @@ class SolveTracker:
 
     def _loop(self) -> None:
         while not self._stop.is_set():
+            if self.paused.is_set():
+                self._stop.wait(0.2)
+                continue
             if self.safety and self.safety():  # e.g. daytime: don't expose, just wait
                 self._stop.wait(SAFETY_IDLE_S)
                 continue

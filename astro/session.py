@@ -4,6 +4,7 @@
 messages for the tablet: {"type": "say", "text": ...} and {"type": "state", ...}.
 """
 
+import os
 import threading
 import time
 from collections.abc import Callable
@@ -19,13 +20,15 @@ from astro.capture.collimation import CENTERED as COLLIMATED
 from astro.capture.collimation import CollimationCoach, Donut, analyze
 from astro.capture.focus import FocusCoach, laplacian_variance
 from astro.capture.live_stacker import LiveStacker
+from astro.capture.live_view import LiveView
 from astro.capture.recorder import CaptureRefused, Recorder, prune
 from astro.capture.roi import brightest_blob, roi_around
-from astro.devices.base import Camera
+from astro.devices.base import Camera, Roi
+from astro.devices.tap import tap
 from astro.guidance.centering import CALIBRATED, Centerer
 from astro.guidance.engine import CueLimiter, DirectionLearner, Guide, wrap180
 from astro.intents import Intent, match_name, parse
-from astro.messages import say
+from astro.messages import notice, say
 from astro.optics import MAIN_SENSOR_PX
 from astro.planner.catalog import load_targets
 from astro.planner.horizon import HorizonMask
@@ -42,6 +45,14 @@ from astro.wizard import SetupWizard
 
 Clock = Callable[[], datetime]
 TARGET_REFRESH_S = 1.0  # targets drift ~15"/s, so re-resolve their alt/az once a second
+# Live video for checking cap, focus and framing: exposure s, gain, centre crop (the main
+# camera's full frame is too slow to stream; a 1280x720 crop ran at ~47 fps on the checkout).
+VIDEO = {"finder": (0.1, 400, False), "main": (0.02, 200, True)}
+VIDEO_EXPOSURE = {"finder": (0.01, 0.5), "main": (0.002, 0.2)}  # auto-exposure limits, seconds
+VIDEO_CROP = (1280, 720)
+# Commands that leave live video running; anything else needs a camera (or might) and ends it.
+KEEPS_VIDEO = {"describe", "barlow_on", "barlow_off", "location", "horizon_start",
+               "horizon_mark", "stop_capture", "stop"}
 FOCUS_STEP_S = 1.0  # one finder focus measurement per second while coaching
 MIN_FOCUS_SAMPLES = 3  # focus readings before "done" counts (else the gate was never checked)
 CENTER_STEP_S = 0.5  # main-camera centering cue rate
@@ -85,6 +96,9 @@ class Session:
                  on_calibration_change: Callable[[dict], None] | None = None):
         """Pointing comes from `finder` (encoders + mount model + plate solving), or, for
         tests without a finder, from `position()` returning true (alt, az)."""
+        if finder is not None and hasattr(finder, "camera"):
+            finder.camera = tap(finder.camera)  # the tablet can show the last frame of each
+        main_camera = tap(main_camera)
         self.site, self.clock, self.finder = site, clock, finder
         self.on_site_change = on_site_change  # e.g. persist the GPS fix, update simulators
         self.horizon = horizon or HorizonMask()  # treeline for the planner
@@ -116,6 +130,8 @@ class Session:
         self._collimation_at = -1e9
         self._focus_mode = ""  # "finder" or "main"
         self.main_camera, self.main_sensor = main_camera, main_sensor
+        self._video: tuple[str, LiveView] | None = None  # live video in progress: (camera, loop)
+        self._video_announce = True  # started by voice: its end is spoken too
         self.barlow = False
         self.main_focus_ok = False  # pre-flight gate: reset per session and on Barlow change
         self.record_seconds = RECORD_SECONDS
@@ -203,10 +219,13 @@ class Session:
         if intent is not None and intent.name in ("ready", "skip") and not self.wizard_active:
             # Outside setup, "okay" is conversation, and "next step" just means "next".
             intent = Intent("next") if "next" in text.lower() else None
+        if intent is not None and not intent.name.startswith(("view_", "video_")) \
+                and intent.name not in KEEPS_VIDEO:
+            self.stop_video()  # the command wants the camera
         if intent is not None and intent.name in ("setup", "ready", "skip"):
             return self._wizard_command(intent.name)
         if intent is None:
-            return [say("Sorry, I didn't catch that. Try 'what's good tonight' or 'go to Saturn'.")]
+            return [say("Sorry, I didn't catch that. Say 'what's good tonight' or 'go to Saturn'.")]
         if intent.name == "goto":
             name = match_name(intent.target or "", self.names())
             return self.goto(name) if name else [say(f"I don't know {intent.target}.")]
@@ -221,10 +240,31 @@ class Session:
             "horizon_start": self.start_horizon, "horizon_mark": self.mark_horizon,
             "location": self.request_location, "where": self.where,
             "collimate": self.start_collimation,
+            "video_finder": lambda: self.start_video("finder"),
+            "video_main": lambda: self.start_video("main"), "video_stop": self._video_stop,
+            "view_finder": lambda: self.show("finder"), "view_main": lambda: self.show("main"),
+            "view_debug": lambda: self.show("debug"), "view_hide": lambda: self.show("none"),
         }.get(intent.name)
         if command is None:
             return [say(f"{intent.name.replace('_', ' ').capitalize()} isn't ready yet.")]
         return command()
+
+    def _video_stop(self) -> list[dict]:
+        name = self.stop_video()
+        return [{"type": "view", "what": name}, say("OK, video stopped.")] if name else [
+            say("There's no video running.")]
+
+    def video(self, name: str | None, then: str | None = None) -> list[dict]:
+        """The page's Live video button: start video of `name`, or stop it and show `then`.
+        Silent: only a spoken or typed request is answered aloud."""
+        if name not in (None, *VIDEO) or then not in (None, "finder", "main", "debug", "none"):
+            return []
+        with self._lock:
+            if name is None:
+                stopped = self.stop_video()
+                return [{"type": "view", "what": then or stopped or "none"}]
+            return [notice(m["text"]) if m["type"] == "say" else m
+                    for m in self.start_video(name, announce=False)]
 
     def _stop(self) -> list[dict]:
         """'Stop' (or 'done') ends whatever is going on, most specific first."""
@@ -246,6 +286,8 @@ class Session:
             return [say("OK, focus is set.")]
         if self._camera_busy():  # "stop" while taking a picture ends the picture
             return self._stop_capture()
+        if self._video is not None:  # nothing else is going on (guidance ends the video)
+            return self._video_stop()
         self.target, self.guide, self._centering = None, None, False
         return [say("Stopped.")]
 
@@ -336,6 +378,7 @@ class Session:
         return any(job is not None and job.busy for job in (self.recorder, self.stacker))
 
     def goto(self, name: str) -> list[dict]:
+        self.stop_video()  # guidance needs the cameras (the agent comes here directly)
         if self._camera_busy():
             return [say("I'm taking a picture. Say stop first, then we can move.")]
         pre: list[dict] = []
@@ -394,7 +437,7 @@ class Session:
         if clouds is not None and clouds >= CLOUDY_PCT:
             sky = f"It looks about {clouds:.0f} percent cloudy, so it may come and go. "
         return [say(f"{when}{sky}{best.name} is the best. {best.note} "
-                    f"Other good ones: {others}. Say 'go to' a name, or 'next'.")]
+                    f"Other good ones: {others}.")]
 
     def tonight_by_category(self) -> str:
         """Compact text for the agent: best target per category, local times."""
@@ -404,6 +447,114 @@ class Session:
         if clouds is not None:
             lines.append(f"cloud cover: about {clouds:.0f}%")
         return "\n".join(lines) or "Nothing good is up right now."
+
+    # --- what the tablet can look at ------------------------------------------------------
+    def camera(self, name: str):
+        """The named camera (finder or main), which keeps its last frame, or None."""
+        return getattr(self.finder, "camera", None) if name == "finder" else self.main_camera
+
+    def camera_frame(self, name: str):
+        """(raw frame, bayer, age in s) the named camera last captured, or None."""
+        cam = self.camera(name)
+        if cam is None or getattr(cam, "last", None) is None:
+            return None
+        return cam.last, cam.bayer, time.monotonic() - cam.last_at
+
+    def start_video(self, name: str, announce: bool = True) -> list[dict]:
+        cam = self.camera(name)
+        if cam is None:
+            return [say(f"There's no {name} camera connected.")]
+        if (self._camera_busy() or self._focus_coach or self._collimation or self._centering
+                or self.guide is not None):
+            return [say("Let me finish what I'm doing first. Say stop, then ask for the video.")]
+        if reason := self.exposure_safety():
+            return [say(f"I can't run the camera right now: {reason}.")]
+        self.stop_video()
+        exposure, gain, crop = VIDEO[name]
+        roi = None
+        if crop:
+            w, h = self.main_sensor
+            roi = Roi((w - VIDEO_CROP[0]) // 4 * 2, (h - VIDEO_CROP[1]) // 4 * 2, *VIDEO_CROP)
+        pause = getattr(self.finder, "paused", None) if name == "finder" else None
+        if pause is not None:  # the plate-solve tracker leaves the finder camera alone
+            pause.set()
+        lock = getattr(self.finder, "camera_lock", None) if name == "finder" else None
+        try:
+            self._video = (name, LiveView(cam, exposure, gain, roi, lock, self.exposure_safety,
+                                               VIDEO_EXPOSURE[name]).start())
+        finally:
+            if self._video is None and pause is not None:  # it didn't start: solve again
+                pause.clear()
+        self._video_announce = announce
+        return [{"type": "view", "what": name, "video": True},
+                *([say(f"Showing live video of the {name} camera.")] if announce else [])]
+
+    def stop_video(self) -> str | None:
+        """End live video and give the camera back. Returns which camera it was, or None."""
+        if self._video is None:
+            return None
+        name, loop = self._video
+        self._video = None
+        loop.stop()
+        if name == "finder" and hasattr(self.finder, "paused"):
+            self.finder.paused.clear()
+        return name
+
+    def video_active(self, name: str) -> bool:
+        return self._video is not None and self._video[0] == name and self._video[1].running
+
+    def video_now(self) -> str | None:
+        """The camera live video is running on, so a page that (re)connects shows it."""
+        return self._video[0] if self._video is not None else None
+
+    def show(self, what: str) -> list[dict]:
+        self.stop_video()
+        if what == "main" and self.main_camera is None:
+            return [say("There's no main camera connected.")]
+        if what == "finder" and self.finder is None:
+            return [say("There's no finder camera connected.")]
+        words = {"finder": "the finder", "main": "the main camera", "debug": "the details",
+                 "none": "nothing"}
+        return [{"type": "view", "what": what}, say(f"Showing {words[what]}.")]
+
+    def debug_info(self) -> dict:
+        """Everything the engineer would ask for, as sections of plain values (no camera calls:
+        the SDK isn't safe to query while another thread captures)."""
+        now = self.clock()
+        info: dict = {"time": {"utc": now.isoformat(timespec="seconds"),
+                               "local": now.astimezone().isoformat(timespec="seconds")},
+                      "site": {"lat": self.site.lat_deg, "lon": self.site.lon_deg,
+                               "elevation_m": self.site.elevation_m}}
+        f = self.finder
+        if f is not None:
+            alt, az = self.position()
+            syncs, rms = f.alignment()
+            pointing = {"alt_deg": round(alt, 2), "az_deg": round(az, 2), "synced": f.synced,
+                        "syncs": syncs, "model_rms_arcmin": rms}
+            if (age := getattr(f, "fix_age", None)) is not None and f.synced:
+                pointing["fix_age_s"] = round(age(), 1)  # seconds since the last good solve
+            info["pointing"] = pointing
+            if (counts := getattr(f, "raw_counts", None)) is not None:
+                try:
+                    az_c, alt_c = counts()
+                    info["encoders"] = {"az_counts": az_c, "alt_counts": alt_c}
+                except (OSError, RuntimeError, ValueError) as e:  # a dead serial port must not hide the rest
+                    info["encoders"] = {"error": str(e)}
+            if (sol := f.last_solution) is not None:
+                info["plate_solve"] = {k: round(v, 3) if isinstance(v, float) else v
+                                       for k, v in asdict(sol).items()}
+                info["plate_solve"]["confidence"] = round(sol.confidence, 1)
+        for name, cam in (("finder", getattr(f, "camera", None)), ("main", self.main_camera)):
+            if cam is not None:
+                frame = self.camera_frame(name)
+                info[f"{name}_camera"] = {
+                    "exposure_s": cam.exposure_s, "gain": cam.gain,
+                    "frame_px": list(frame[0].shape[::-1]) if frame else None,
+                    "frame_age_s": round(frame[2], 1) if frame else None}
+        info["guidance"] = {"target": self.target, "guiding": self.guide is not None,
+                            "centering": self._centering, "holding": self._holding}
+        info["system"] = {"load_1_5_15": [round(x, 2) for x in os.getloadavg()]}
+        return info
 
     def where(self) -> list[dict]:
         if self.finder is not None and not self.finder.synced:
@@ -423,6 +574,11 @@ class Session:
             return self._tick(t)
 
     def _tick(self, t: float) -> list[dict]:
+        if self._video is not None and not self._video[1].running:  # the exposure gate ended it
+            reason = self._video[1].stopped_because or "the camera stopped"
+            tell = say if self._video_announce else notice
+            name = self.stop_video()
+            return [{"type": "view", "what": name}, tell(f"Stopping the video: {reason}.")]
         rec = self.recorder.current if self.recorder else None
         if rec is not None and rec.done.is_set() and not self._announced_done:
             self._announced_done = True

@@ -22,6 +22,7 @@ if [ "${1:-}" != "--minipc" ]; then
 fi
 
 scripts/install-voice.sh  # whisper.cpp, Piper, ffmpeg
+scripts/install-vad.sh    # browser voice detection for hands-free mode
 sudo usermod -aG dialout,video "$USER"  # the encoder board's serial port
 # SVBony cameras (f266:*) need a udev rule for non-root USB access.
 echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="f266", GROUP="video", MODE="0660"' | sudo tee /etc/udev/rules.d/90-ckusb.rules >/dev/null

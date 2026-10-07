@@ -87,6 +87,7 @@ def build_pointing(cfg: dict, solver: FinderSolver, site: Site, clock: Callable[
         return alt.to_degrees(alt_counts), az.to_degrees(az_counts)
 
     finder = FinderSync(finder_cam, solver, MountModel(), encoders, site, clock)
+    finder.raw_counts = source.counts  # shown in the debug view
     finder.encoder_age = source.position_age  # session stops guiding on frozen counts
     if hasattr(source, "on_reboot"):
         source.on_reboot = lambda: finder.reset(finder.site)  # counts reset: model is wrong
