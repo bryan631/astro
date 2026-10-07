@@ -48,6 +48,7 @@ TARGET_REFRESH_S = 1.0  # targets drift ~15"/s, so re-resolve their alt/az once 
 # Live video for checking cap, focus and framing: exposure s, gain, centre crop (the main
 # camera's full frame is too slow to stream; a 1280x720 crop ran at ~47 fps on the checkout).
 VIDEO = {"finder": (0.1, 400, False), "main": (0.02, 200, True)}
+VIDEO_EXPOSURE = {"finder": (0.01, 0.5), "main": (0.002, 0.2)}  # auto-exposure limits, seconds
 VIDEO_CROP = (1280, 720)
 FOCUS_STEP_S = 1.0  # one finder focus measurement per second while coaching
 MIN_FOCUS_SAMPLES = 3  # focus readings before "done" counts (else the gate was never checked)
@@ -457,7 +458,8 @@ class Session:
         if hasattr(self.finder, "paused"):  # the plate-solve tracker leaves the camera alone
             self.finder.paused.set()
         lock = getattr(self.finder, "camera_lock", None) if name == "finder" else None
-        self._video = (name, LiveView(cam, exposure, gain, roi, lock, self.exposure_safety).start())
+        self._video = (name, LiveView(cam, exposure, gain, roi, lock, self.exposure_safety,
+                                           VIDEO_EXPOSURE[name]).start())
         return [{"type": "view", "what": name, "video": True},
                 say(f"Showing live video of the {name} camera.")]
 

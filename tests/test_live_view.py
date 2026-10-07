@@ -1,5 +1,7 @@
 import time
 
+import numpy as np
+
 from astro.capture import live_view
 from astro.capture.live_view import LiveView
 from astro.devices.base import Roi
@@ -54,3 +56,32 @@ def test_stops_when_nobody_is_watching(monkeypatch):
     assert wait_for(lambda: not view.running)
     assert view.stopped_because is None
     view.stop()
+
+
+class SceneCam(Cam):
+    """A scene `light` bright: pixel value = light * exposure, so exposure decides the picture."""
+
+    def __init__(self, light):
+        super().__init__()
+        self.light = light
+
+    def capture(self):
+        super().capture()
+        return np.full((64, 64), min(255, self.light * self.exposure_s), np.uint8)
+
+
+def test_auto_exposure_brightens_a_dim_scene_and_dims_a_bright_one():
+    dim, bright = SceneCam(light=200), SceneCam(light=20000)  # 0.1 s: 20 vs 255
+    views = [LiveView(c, 0.1, 400, exposure_range=(0.01, 0.5)).start() for c in (dim, bright)]
+    assert wait_for(lambda: 60 <= dim.exposure_s * dim.light <= 255 and dim.exposure_s > 0.1)
+    assert wait_for(lambda: bright.exposure_s < 0.05)
+    for v in views:
+        v.stop()
+
+
+def test_auto_exposure_stops_at_the_limit_for_a_capped_lens():
+    capped = SceneCam(light=0)
+    view = LiveView(capped, 0.1, 400, exposure_range=(0.01, 0.5)).start()
+    assert wait_for(lambda: capped.exposure_s == 0.5)
+    view.stop()
+    assert capped.exposure_s == 0.8  # the camera's own setting is back
