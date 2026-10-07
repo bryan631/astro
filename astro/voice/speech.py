@@ -17,6 +17,7 @@ import threading
 import wave
 from pathlib import Path
 
+PROMPT = "Astro, go to Jupiter. Astro, stop."  # biases whisper towards the wake word and commands
 CUE_CACHE = 256  # distinct phrases kept as audio
 WAV_BYTES_PER_S = 16000 * 2  # ffmpeg output: 16 kHz mono 16-bit
 # Whisper encodes a fixed 30 s window (1500 audio frames) unless told otherwise; a short
@@ -53,7 +54,8 @@ class Stt:
             subprocess.run(["ffmpeg", "-loglevel", "error", "-i", src, "-ar", "16000", "-ac", "1", wav],
                            check=True, timeout=20)
             ctx = audio_ctx(wav.stat().st_size / WAV_BYTES_PER_S)
-            out = subprocess.run([binary, "-m", model, "-f", wav, "-nt", "-np", "-ac", str(ctx)],
+            out = subprocess.run([binary, "-m", model, "-f", wav, "-nt", "-np", "-ac", str(ctx),
+                                  "--prompt", PROMPT],
                                  check=True, capture_output=True, text=True, timeout=30)
         return " ".join(out.stdout.split())
 
