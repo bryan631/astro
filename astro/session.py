@@ -394,7 +394,7 @@ class Session:
         if clouds is not None and clouds >= CLOUDY_PCT:
             sky = f"It looks about {clouds:.0f} percent cloudy, so it may come and go. "
         return [say(f"{when}{sky}{best.name} is the best. {best.note} "
-                    f"Other good ones: {others}. Say 'go to' and a name, or say 'next'.")]
+                    f"Other good ones: {others}.")]
 
     def tonight_by_category(self) -> str:
         """Compact text for the agent: best target per category, local times."""
