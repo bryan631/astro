@@ -19,7 +19,7 @@ What it checks on the Mele:
 |---|---|---|
 | network | default route, WiFi name, internet, Tailscale | a route; `NETGEAR30` or the Pixel hotspot (or Ethernet) |
 | devices | SVBony cameras (`lsusb -d f266:`), MCU serial port, `astro` groups | 2 cameras; `/dev/ttyUSB0` or `ttyACM0` for the MCU; `video`, `dialout` |
-| service | `astro` service, web on :8443, errors in the last 15 min, cert expiry | active, 200, none, > 7 days |
+| service | `astro` service, web on :8443, errors in the last 15 min, cert expiry | active, 200 (401 when `ASTRO_TOKEN` is set; HTTP if there's no cert), none, > 7 days |
 | system | free disk, load | > 2 GB |
 
 ## Symptoms

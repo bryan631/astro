@@ -10,6 +10,12 @@ ok()   { printf '  ok    %s\n' "$*"; }
 fail() { printf '  FAIL  %s\n' "$*"; fails=$((fails + 1)); }
 warn() { printf '  warn  %s\n' "$*"; }
 t() { timeout 10 "$@" 2>/dev/null; }  # nothing here may hang the check
+web() {  # <host>: ok when the app answers, over HTTPS or (no cert) HTTP; 401 = ASTRO_TOKEN is set
+  local code
+  code=$(t curl -sk -o /dev/null -w '%{http_code}' "https://$1:$PORT/")
+  [ "$code" = 000 ] || [ -z "$code" ] && code=$(t curl -s -o /dev/null -w '%{http_code}' "http://$1:$PORT/")
+  case $code in 200|401) ok "web $1:$PORT ($code)";; *) fail "web $1:$PORT answered '${code:-nothing}': service down?";; esac
+}
 
 remote() {  # from the dev machine: can we reach the Mele at all?
   local host=$1
@@ -17,8 +23,7 @@ remote() {  # from the dev machine: can we reach the Mele at all?
   if t tailscale ping -c 1 "$host" >/dev/null; then ok "tailnet ping $host"
   else fail "tailnet ping $host: Mele off, no network, or Tailscale down on either side"; fi
   local name; name=$(t tailscale status --json | sed -n "s/.*\"DNSName\": *\"\($host\.[^\"]*\)\.\".*/\1/p" | head -1)
-  local code; code=$(t curl -sk -o /dev/null -w '%{http_code}' "https://${name:-$host}:$PORT/")
-  [ "$code" = 200 ] && ok "web https://$name:$PORT/" || fail "web https://${name:-$host}:$PORT/ answered '${code:-nothing}': service down?"
+  web "${name:-$host}"
   echo "== on $host (if SSH prints a login link, open it: this waits 5 min)"
   timeout 300 tailscale ssh "astro@$host" 'bash -s' < "$0"
   local rc=$?
@@ -44,10 +49,12 @@ local_checks() {
 
   echo "== service"
   [ "$(t systemctl is-active astro)" = active ] && ok "astro service active" || fail "astro service not active: journalctl -u astro -n 50"
-  local code; code=$(t curl -sk -o /dev/null -w '%{http_code}' "https://localhost:$PORT/")
-  [ "$code" = 200 ] && ok "web on :$PORT" || fail "web on :$PORT answered '${code:-nothing}'"
-  local errs; errs=$(t journalctl -u astro --since "-15 min" --no-pager | grep -ciE 'error|traceback')
-  [ "${errs:-0}" -eq 0 ] && ok "no errors in the last 15 min of logs" || warn "$errs error lines in 15 min: journalctl -u astro --since -15min"
+  web localhost
+  local log
+  if log=$(t journalctl -u astro --since "-15 min" --no-pager -q); then
+    local errs; errs=$(grep -ciE 'error|traceback' <<<"$log")
+    [ "$errs" -eq 0 ] && ok "no errors in the last 15 min of logs" || warn "$errs error lines in 15 min: journalctl -u astro --since -15min"
+  else warn "can't read the service log (not in group systemd-journal or adm?)"; fi
   local cert; cert=$(ls ~astro/astro/certs/*.crt 2>/dev/null | head -1)
   if [ -n "$cert" ]; then
     openssl x509 -checkend 604800 -noout -in "$cert" >/dev/null && ok "cert valid > 7 days" || warn "cert expires within 7 days: scripts/tailscale-cert.sh"
@@ -60,5 +67,5 @@ local_checks() {
 }
 
 if [ $# -gt 0 ]; then remote "$1"; else local_checks; fi
-echo "== $fails failure(s)"
+echo "== ${1:+total: }$fails failure(s)"
 exit "$fails"
