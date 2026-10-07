@@ -19,7 +19,7 @@
   #talk { touch-action: none; }  /* a press is never a scroll (which cancels it) */
   #talk.listening { background: var(--dim); }
   /* Night: pictures in dim red too, so they don't spoil dark-adapted eyes. */
-  body:not(.day) #live, body:not(.day) #gallery img {
+  body:not(.day) #live, body:not(.day) #gallery img, body:not(.day) #camimg {
     filter: grayscale(1) sepia(1) saturate(5) hue-rotate(-50deg) brightness(.6); }
   /* Hands-free state: text, dot and border weight differ, so it reads in dim red at night. */
   #vstate { font-size: 28px; padding: 8px 20px; border: 2px solid var(--dim); border-radius: 999px; }
@@ -29,6 +29,12 @@
   #vstate[data-s="speaking"] { border-style: dashed; border-color: var(--fg); }
   #vstate[data-s="speaking"]::before { content: "\25B6  "; }
   #heard { font-size: 24px; min-height: 1.3em; opacity: .8; }
+  #views button.on { border-color: var(--fg); border-width: 4px; }
+  #camview { width: 100%; max-width: 900px; text-align: center; }
+  #camimg { width: 100%; border: 2px solid var(--dim); border-radius: 12px; }
+  #camcap { font-size: 20px; opacity: .8; }
+  #debugbox { width: 100%; max-width: 900px; font: 20px/1.35 ui-monospace, monospace; white-space: pre-wrap;
+              border: 2px solid var(--dim); border-radius: 12px; padding: 12px; margin: 0; }
   #typed { display: flex; gap: 8px; width: 100%; max-width: 600px; }
   #typed input, button.small { font-size: 24px; padding: 12px; background: var(--bg); color: var(--fg);
           border: 2px solid var(--dim); border-radius: 12px; }
@@ -50,6 +56,9 @@
   <div id="vstate" hidden></div>
   <div id="heard"></div>
   <form id="typed"><input id="text" placeholder="or type here" autocomplete="off"><button class="small">Send</button></form>
+  <div id="views"><button class="small" data-v="finder">Finder</button> <button class="small" data-v="main">Main camera</button> <button class="small" data-v="debug">Debug</button></div>
+  <div id="camview" hidden><img id="camimg" alt="camera view"><div id="camcap"></div></div>
+  <pre id="debugbox" hidden></pre>
   <div><button class="small" id="mode">Day mode</button> <button class="small" id="pics">Pictures</button> <button class="small" id="beeps">Beeps off</button></div>
   <div id="gallery" hidden></div>
 <script>
@@ -87,6 +96,7 @@ function handle(m) {
     if (!unavailable) speak("The telescope isn't ready.");
     unavailable = true;
   }
+  if (m.type === "view") setView(m.what === "none" ? "" : m.what);
   if (m.type === "hello") { unavailable = false; serverStt = m.server_stt; serverTts = m.server_tts; setupTalk(); }
   if (m.type === "heard") { armedUntil = 0; said.textContent = `“${m.text}”`; heardEl.textContent = `Command: “${m.text}”`; }
   if (m.type === "ignored") heardEl.textContent = `Heard, no “Astro”: “${m.text}”`;
@@ -212,6 +222,40 @@ function setupTalk() {
   });
   for (const ev of ["pointerup", "pointerleave", "pointercancel"])
     talk.addEventListener(ev, () => { pressed = false; stop(); });
+}
+// Live camera views and the debug panel: the page polls what the server last captured.
+let view = "", viewTimer = null, camUrl = null;
+function setView(what) {
+  view = what; clearTimeout(viewTimer);
+  document.getElementById("camview").hidden = !(what === "finder" || what === "main");
+  document.getElementById("debugbox").hidden = what !== "debug";
+  document.querySelectorAll("#views button").forEach(b => b.classList.toggle("on", b.dataset.v === what));
+  if (what) pollView();
+}
+document.querySelectorAll("#views button").forEach(b => b.onclick = () => setView(view === b.dataset.v ? "" : b.dataset.v));
+function formatDebug(info) {
+  return Object.entries(info).map(([section, vals]) => section.toUpperCase() + "\n" +
+    Object.entries(vals).map(([k, v]) => `  ${k}: ${JSON.stringify(v)}`).join("\n")).join("\n\n");
+}
+async function pollView() {
+  const what = view;
+  if (!what) return;
+  try {
+    if (what === "debug") {
+      const r = await fetch("/api/debug");
+      document.getElementById("debugbox").textContent = r.ok ? formatDebug(await r.json()) : `No debug info: ${await r.text()}`;
+    } else {
+      const r = await fetch(`/api/camera/${what}.jpg?n=${Date.now()}`);
+      if (r.ok && view === what) {
+        const url = URL.createObjectURL(await r.blob());
+        document.getElementById("camimg").src = url;
+        if (camUrl) URL.revokeObjectURL(camUrl);
+        camUrl = url;
+        document.getElementById("camcap").textContent = `${what}: frame ${r.headers.get("X-Frame-Age")} s old`;
+      } else if (!r.ok) document.getElementById("camcap").textContent = `${what}: no frame yet`;
+    }
+  } catch (e) { report(`View failed: ${e.message}`); }
+  if (view === what) viewTimer = setTimeout(pollView, what === "debug" ? 1000 : 1500);
 }
 // Hands-free (half-duplex): listen continuously, ignore the mic while the telescope is speaking.
 // Short commands only. Silero VAD (scripts/install-vad.sh) finds each utterance whatever the mic
