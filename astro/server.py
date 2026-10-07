@@ -9,11 +9,14 @@ import contextlib
 import functools
 import hashlib
 import hmac
+import io
 import json
 import logging
 import os
+import re
 import threading
 import time
+import wave
 from collections.abc import Callable
 from pathlib import Path
 
@@ -38,7 +41,7 @@ from astro.pointing.mount_model import MountModel
 from astro.pointing.platesolve import FinderSolver
 from astro.session import Session, utcnow
 from astro.voice.speech import Stt, Tts
-from astro.wake import add_wake, strip_wake
+from astro.wake import add_wake, collapse_repeats, strip_wake
 
 ROOT = Path(__file__).resolve().parents[1]
 SIM = os.environ.get("ASTRO_SIM") == "1"
@@ -187,6 +190,7 @@ class Hub:
         self.agent = Agent(session)
         self.user = SimUser() if scope else None
         self.clients: set[WebSocket] = set()
+        self.speaking_until = 0.0  # monotonic time the last queued reply finishes playing
         self.handsfree: set[WebSocket] = set()  # tablets in hands-free mode: hints name the wake word
         self._loop: asyncio.Task | None = None
         self._sender: asyncio.Task | None = None
@@ -232,6 +236,7 @@ class Hub:
             if msg["type"] == "say" and tts.available():
                 try:
                     audio = await asyncio.to_thread(tts.synthesize, msg["text"])
+                    self.speaking_until = max(self.speaking_until, time.monotonic()) + wav_seconds(audio)
                 except Exception:  # the words still go out as text
                     log.exception("speech synthesis failed")
             to = list(self.clients)
@@ -334,7 +339,7 @@ async def ws(socket: WebSocket) -> None:
     await socket.send_json({"type": "hello", "server_stt": stt.available(),
                             "server_tts": tts.available()})
     hub.join(socket)
-    conn = {"handsfree": False, "armed_until": 0.0}  # per-tablet voice mode
+    conn = {"handsfree": False, "armed_until": 0.0, "last": ""}  # per-tablet voice mode
     if not site_store.has_saved(ROOT):  # setup: first run at this installation
         for out in hub.session.request_location():
             await hub.broadcast(_for(out, socket))
@@ -356,6 +361,11 @@ async def ws(socket: WebSocket) -> None:
             _sim_hub = None  # the next tablet starts a fresh simulated world
 
 
+def wav_seconds(audio: bytes) -> float:
+    with wave.open(io.BytesIO(audio)) as w:
+        return w.getnframes() / w.getframerate()
+
+
 def save_utterance(audio: bytes, text: str, handsfree: bool) -> None:
     """Keep the recording and what whisper heard: real audio to score voice changes against."""
     UTTERANCES.mkdir(parents=True, exist_ok=True)
@@ -368,6 +378,7 @@ def save_utterance(audio: bytes, text: str, handsfree: bool) -> None:
 async def handle_spoken(hub: Hub, socket: WebSocket, conn: dict, text: str) -> None:
     """Speech from the tablet. In hands-free mode only "Astro ..." (or the utterance right after
     a bare "Astro") is a command; anything else is shown but ignored."""
+    text = collapse_repeats(text)
     if conn["handsfree"]:
         now = time.monotonic()
         command = strip_wake(text)
@@ -381,6 +392,11 @@ async def handle_spoken(hub: Hub, socket: WebSocket, conn: dict, text: str) -> N
             await socket.send_json({"type": "armed", "seconds": ARMED_S})
             return
         conn["armed_until"] = 0.0
+        same = re.sub(r"\W+", " ", command).strip().lower()
+        if same == conn["last"] and now < hub.speaking_until:  # the same command while it answers
+            await socket.send_json({"type": "ignored", "text": text})
+            return
+        conn["last"] = same
         text = command
     await hub.handle_text(socket, text)
 

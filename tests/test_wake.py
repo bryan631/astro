@@ -1,6 +1,6 @@
 import pytest
 
-from astro.wake import add_wake, strip_wake
+from astro.wake import add_wake, collapse_repeats, strip_wake
 
 
 @pytest.mark.parametrize("text, want", [
@@ -26,3 +26,14 @@ def test_strip_wake(text, want):
 ])
 def test_add_wake(text, want):
     assert add_wake(text) == want
+
+
+@pytest.mark.parametrize("text, want", [
+    ("Astro, what's good tonight? Astro, what's good tonight?", "Astro, what's good tonight?"),
+    ("what's good tonight? Astro, what's good tonight?", "what's good tonight?"),
+    ("Astro. Astro.", "Astro."),
+    ("Go to Saturn. Go to Saturn", "Go to Saturn."),
+    ("Next. Stop.", "Next. Stop."),
+])
+def test_collapse_repeats(text, want):
+    assert collapse_repeats(text).rstrip(".?") == want.rstrip(".?")

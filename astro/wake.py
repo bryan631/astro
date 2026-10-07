@@ -10,6 +10,20 @@ _INSTRUCTS = re.compile(r"\b(say|try)\b", re.IGNORECASE)
 _QUOTED = re.compile(r"(?<!\w)'(.+?)'(?!\w)")  # 'go to Saturn', but not the apostrophe in "what's"
 
 
+def _same(text: str) -> str:
+    """A sentence reduced for comparing: no wake word, case or punctuation."""
+    return re.sub(r"\W+", " ", strip_wake(text) or text).strip().lower()
+
+
+def collapse_repeats(text: str) -> str:
+    """Whisper often says a short phrase twice ("Astro, stop. Astro, stop."): keep one."""
+    kept: list[str] = []
+    for sentence in _SENTENCE.split(text.strip()):
+        if not kept or _same(sentence) != _same(kept[-1]):
+            kept.append(sentence)
+    return " ".join(kept)
+
+
 def add_wake(text: str) -> str:
     """Hands-free: spoken instructions name the wake word. "Say 'next'." -> "Say 'Astro, next'."."""
     def sentence(s: str) -> str:

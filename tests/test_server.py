@@ -1,5 +1,6 @@
 import json
 import os
+import time
 
 os.environ["ASTRO_SIM"] = "1"
 os.environ["ANTHROPIC_API_KEY"] = ""  # tests never call the real API
@@ -258,6 +259,21 @@ def test_service_worker_is_stamped_with_the_build():
     r = TestClient(server.app).get("/sw.js")
     assert r.text.startswith('const BUILD = "') and "skipWaiting" in r.text
     assert r.headers["cache-control"] == "no-cache"
+
+
+def test_handsfree_ignores_the_same_command_while_it_answers():
+    def spoken(ws, text):
+        ws.send_json({"type": "text", "text": text, "spoken": True})
+
+    with TestClient(server.app).websocket_connect("/ws") as ws:
+        ws.send_json({"type": "handsfree", "on": True})
+        spoken(ws, "Astro, go to pizza. Astro, go to pizza.")  # whisper said it twice: one command
+        assert "go to pizza" in receive_until(ws, "heard")
+        server.get_hub().speaking_until = time.monotonic() + 60  # still reading the answer
+        spoken(ws, "Astro, go to pizza")
+        assert "go to pizza" in receive_until(ws, "ignored")
+        spoken(ws, "Astro, stop")  # a different command always gets through
+        assert "stop" in receive_until(ws, "heard")
 
 
 def test_save_utterance_keeps_audio_and_transcript(tmp_path, monkeypatch):
