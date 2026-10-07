@@ -207,61 +207,53 @@ function setupTalk() {
     talk.addEventListener(ev, () => { pressed = false; stop(); });
 }
 // Hands-free (half-duplex): listen continuously, ignore the mic while the telescope is speaking.
-// Short commands only: an utterance is a burst of speech ended by 0.7 s of quiet.
+// Short commands only. Silero VAD (scripts/install-vad.sh) finds each utterance whatever the mic
+// level; the browser's gain control and noise suppression clean the signal first.
+const loadScript = src => new Promise((ok, fail) => {
+  const el = Object.assign(document.createElement("script"), {src, onload: ok, onerror: () => fail(new Error(`${src} missing; run scripts/install-vad.sh`))});
+  document.head.append(el);
+});
 function setupHandsFree(Rec) {
   const btn = document.getElementById("hands"), vstate = document.getElementById("vstate");
-  const LEVEL = 0.03, QUIET_MS = 700, MIN_MS = 300, MAX_MS = 8000, TAIL_MS = 600;
-  let on = false, stream = null, timer = null, lastSpoke = 0, rec = null, t0 = 0, quietSince = 0;
+  const TAIL_MS = 600, VAD = "vendor/vad/";
+  let on = false, stream = null, micVad = null, recog = null, hearing = false, tainted = false, lastSpoke = 0;
   const speaking = () => speechSynthesis.speaking || (player && !player.paused && !player.ended);
-  async function loop(analyser) {
-    const buf = new Float32Array(analyser.fftSize);
-    timer = setInterval(() => {
-      analyser.getFloatTimeDomainData(buf);
-      const loud = Math.sqrt(buf.reduce((s, x) => s + x * x, 0) / buf.length) > LEVEL, now = performance.now();
-      if (speaking()) { lastSpoke = now; if (rec) rec.abort = true, rec.stop(); return; }
-      if (!rec && loud && now - lastSpoke > TAIL_MS) begin(now);
-      else if (rec) {
-        if (loud) quietSince = 0; else quietSince = quietSince || now;
-        if ((quietSince && now - quietSince > QUIET_MS) || now - t0 > MAX_MS) rec.stop();
-      }
-    }, 50);
-  }
-  function begin(now) {
-    const chunks = []; t0 = now; quietSince = 0;
-    rec = new MediaRecorder(stream);
-    rec.ondataavailable = e => chunks.push(e.data);
-    rec.onstop = () => {
-      const r = rec, ms = (quietSince || performance.now()) - t0;  // speech length, without the trailing quiet
-      rec = null; listenDot(false);
-      if (!r.abort && ms > MIN_MS) wsSend(new Blob(chunks, {type: r.mimeType}));
-    };
-    rec.start(); listenDot(true);
-  }
   const states = {waiting: "Say “Astro…”", hearing: "Hearing you…", armed: "Listening for your command",
                   speaking: "Speaking…"};
   setInterval(() => {
-    const s = !on ? "" : speaking() ? "speaking" : rec ? "hearing" : performance.now() < armedUntil ? "armed" : "waiting";
+    if (speaking()) lastSpoke = performance.now();
+    const s = !on ? "" : speaking() ? "speaking" : hearing ? "hearing" : performance.now() < armedUntil ? "armed" : "waiting";
     vstate.hidden = !on; vstate.dataset.s = s; vstate.textContent = states[s] || "";
+    talk.classList.toggle("listening", s === "hearing");
   }, 100);
-  const listenDot = v => talk.classList.toggle("listening", v);
+  const quiet = () => !speaking() && performance.now() - lastSpoke > TAIL_MS;
   async function enable() {
     if (serverStt && navigator.mediaDevices) {
-      stream = stream || await navigator.mediaDevices.getUserMedia({audio: true});
-      const ctx = new AudioContext(), an = ctx.createAnalyser();
-      ctx.createMediaStreamSource(stream).connect(an);
-      handsCtx = ctx; loop(an);
+      stream = stream || await navigator.mediaDevices.getUserMedia(
+        {audio: {autoGainControl: true, noiseSuppression: true, echoCancellation: true}});
+      if (!window.vad) { await loadScript(VAD + "ort.wasm.min.js"); await loadScript(VAD + "bundle.min.js"); }
+      micVad = await vad.MicVAD.new({
+        getStream: async () => stream, baseAssetPath: VAD, onnxWASMBasePath: VAD, model: "v5",
+        preSpeechPadMs: 300, redemptionMs: 700, minSpeechMs: 300,  // pre-roll keeps the first word
+        onSpeechStart: () => { hearing = true; tainted = !quiet(); },  // started over our own voice
+        onVADMisfire: () => { hearing = false; },
+        onSpeechEnd: audio => {
+          hearing = false;
+          if (!tainted && quiet()) wsSend(new Blob([vad.utils.encodeWAV(audio)], {type: "audio/wav"}));
+        },
+      });
+      micVad.start();
     } else if (Rec) {  // Chrome's recognizer: continuous, restarted when it ends
       recog = new Rec(); recog.lang = "en-US"; recog.continuous = true;
       recog.onresult = e => { const r = e.results[e.results.length - 1];
-        if (r.isFinal && !speaking()) wsSend(JSON.stringify({type: "text", text: r[0].transcript, spoken: true})); };
+        if (r.isFinal && quiet()) wsSend(JSON.stringify({type: "text", text: r[0].transcript, spoken: true})); };
       recog.onend = () => { if (on) try { recog.start(); } catch {} };
       recog.start();
     }
   }
-  let handsCtx = null, recog = null;
   function disable() {
-    clearInterval(timer); if (rec) { rec.abort = true; rec.stop(); }
-    if (handsCtx) handsCtx.close(); handsCtx = null;
+    if (micVad) { micVad.destroy(); micVad = null; }
+    hearing = false;
     if (recog) { recog.onend = null; recog.stop(); recog = null; }
   }
   btn.onclick = async () => {
