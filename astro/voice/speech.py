@@ -20,9 +20,10 @@ from pathlib import Path
 PROMPT = "Astro, go to Jupiter. Astro, stop."  # biases whisper towards the wake word and commands
 CUE_CACHE = 256  # distinct phrases kept as audio
 WAV_BYTES_PER_S = 16000 * 2  # ffmpeg output: 16 kHz mono 16-bit
-# Whisper encodes a fixed 30 s window (1500 audio frames) unless told otherwise; a short
-# command needs only its own length: ~1.24 s -> ~0.4 s per command on this CPU.
-WHISPER_FULL_CTX, WHISPER_MIN_CTX, CTX_MARGIN = 1500, 256, 1.5
+# Whisper encodes a fixed 30 s window (1500 audio frames) unless told otherwise. A window
+# trimmed to the command saves time, but a tight one (floor 256, margin 1.5) made whisper repeat
+# short phrases (8 of 28 generated clips); floor 512 and margin 3 gave 0 of 28.
+WHISPER_FULL_CTX, WHISPER_MIN_CTX, CTX_MARGIN = 1500, 512, 3.0
 
 
 def audio_ctx(seconds: float) -> int:
