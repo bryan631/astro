@@ -426,7 +426,9 @@ async def handle_message(hub: Hub, socket: WebSocket, conn: dict, msg: dict) -> 
         return
     data = json.loads(msg["text"])
     request_id = int(data["id"]) if data.get("id") is not None else None
-    if data.get("type") == "handsfree":
+    if data.get("type") == "client_log":  # a failure inside the tablet's browser
+        log.warning("client", extra={"data": {"text": str(data.get("text", ""))[:300]}})
+    elif data.get("type") == "handsfree":
         conn["handsfree"], conn["armed_until"] = bool(data.get("on")), 0.0
         (hub.handsfree.add if conn["handsfree"] else hub.handsfree.discard)(socket)
     elif data.get("type") == "text":

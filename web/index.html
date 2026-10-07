@@ -66,9 +66,15 @@ function connect() {
   ws.onmessage = e => typeof e.data === "string" ? handle(JSON.parse(e.data)) : play(e.data);
   ws.onclose = () => setTimeout(connect, unavailable ? 10000 : 1000);  // slow retries while the hardware is down
 }
+function report(text) {  // show a browser-side failure and tell the server (remote support reads its log)
+  heardEl.textContent = text; wsSend(JSON.stringify({type: "client_log", text}));
+}
+addEventListener("error", e => report(`Page error: ${e.message}`));
+addEventListener("unhandledrejection", e => report(`Page error: ${e.reason && e.reason.message || e.reason}`));
 function stopAudio() { speechSynthesis.cancel(); if (player) player.pause(); }
 function play(blob) {  // server (Piper) speech; newest cue wins
-  stopAudio(); player = new Audio(URL.createObjectURL(blob)); player.play();
+  stopAudio(); player = new Audio(URL.createObjectURL(blob));
+  player.play().catch(e => report(`The browser blocked speech: ${e.message}`));
 }
 function speak(text) {
   if (serverTts) return;  // audio arrives separately as a binary message

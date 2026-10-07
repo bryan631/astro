@@ -290,6 +290,14 @@ def test_handsfree_transcription_failure_is_silent(monkeypatch):
         assert "something went wrong" in receive_until(ws, "say")  # but a button press is told
 
 
+def test_client_log_reaches_the_server_log(caplog):
+    with TestClient(server.app).websocket_connect("/ws") as ws:
+        ws.send_json({"type": "client_log", "text": "The browser blocked speech"})
+        ws.send_json({"type": "text", "text": "stop"})  # a later reply proves it was handled
+        receive_until(ws, "say")
+    assert any(r.getMessage() == "client" for r in caplog.records)
+
+
 def test_save_utterance_keeps_audio_and_transcript(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "UTTERANCES", tmp_path)
     server.save_utterance(b"RIFFxxxx", "astro stop", True)
