@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 import time
 
 os.environ["ASTRO_SIM"] = "1"
@@ -290,6 +291,14 @@ def test_handsfree_transcription_failure_is_silent(monkeypatch):
         assert "something went wrong" in receive_until(ws, "say")  # but a button press is told
 
 
+def test_handsfree_empty_transcript_is_silent(monkeypatch):
+    monkeypatch.setattr(server.stt, "transcribe", lambda audio: "")
+    with TestClient(server.app).websocket_connect("/ws") as ws:
+        ws.send_json({"type": "handsfree", "on": True})
+        ws.send_bytes(b"audio")
+        receive_until(ws, "ignored")  # noise whisper heard as nothing: no "didn't hear anything"
+
+
 def test_client_log_reaches_the_server_log(caplog):
     with TestClient(server.app).websocket_connect("/ws") as ws:
         ws.send_json({"type": "client_log", "text": "The browser blocked speech"})
@@ -343,6 +352,27 @@ def test_video_runs_through_unrelated_commands_until_stopped():
         session.handle("live video of the finder")
         session.handle("go to Saturn")  # guidance needs the camera back
         assert session.video_now() is None
+
+
+def test_main_video_leaves_the_finder_solving_and_a_failed_start_unpauses():
+    with TestClient(server.app).websocket_connect("/ws"):
+        session = server.get_hub().session
+        session.finder.paused = threading.Event()  # as the plate-solve tracker has
+        session.handle("live video of the main camera")
+        assert session.video_active("main") and not session.finder.paused.is_set()
+        session.handle("stop the video")
+
+        def broken(s):
+            raise RuntimeError("camera unplugged")
+
+        cam = session.finder.camera._camera
+        real, cam.set_exposure = cam.set_exposure, broken
+        try:
+            with pytest.raises(RuntimeError):
+                session.handle("live video of the finder")
+        finally:
+            cam.set_exposure = real
+        assert not session.finder.paused.is_set() and session.video_now() is None
 
 
 def test_video_buttons_are_silent_and_a_reload_shows_the_video():

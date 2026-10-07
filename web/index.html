@@ -131,6 +131,7 @@ function handle(m) {
 }
 // Tablet GPS for the observing site (setup, or "use my location"). Needs HTTPS.
 function wsSend(data) { ws && ws.readyState === WebSocket.OPEN ? ws.send(data) : pending.push(data); }
+function liveSend(data) { if (ws && ws.readyState === WebSocket.OPEN) ws.send(data); }  // hands-free speech: stale once the link is back
 function sendLocation(id) {  // echo the request id so stale answers can be ignored
   if (!navigator.geolocation) {
     wsSend(JSON.stringify({type: "location_error", id, message: "This browser has no location service."}));
@@ -286,7 +287,7 @@ const loadScript = src => new Promise((ok, fail) => {
 function setupHandsFree(Rec) {
   const btn = document.getElementById("hands"), vstate = document.getElementById("vstate");
   const TAIL_MS = 600, MAX_UTTERANCE_S = 6, VAD = "/vendor/vad/";  // absolute: onnxruntime import()s its module from here
-  let on = false, stream = null, micVad = null, recog = null, hearing = false, tainted = false, lastSpoke = 0;
+  let on = false, stream = null, micVad = null, recog = null, wakeLock = null, hearing = false, tainted = false, lastSpoke = 0;
   const speaking = () => speechSynthesis.speaking || (player && !player.paused && !player.ended);
   const states = {waiting: "Say “Astro…”", hearing: "Hearing you…", armed: "Listening for your command",
                   speaking: "Speaking…"};
@@ -309,33 +310,36 @@ function setupHandsFree(Rec) {
         onVADMisfire: () => { hearing = false; },
         onSpeechEnd: audio => {
           hearing = false;
-          if (!tainted && quiet() && audio.length < MAX_UTTERANCE_S * 16000) wsSend(new Blob([vad.utils.encodeWAV(audio)], {type: "audio/wav"}));
+          if (!tainted && quiet() && audio.length < MAX_UTTERANCE_S * 16000) liveSend(new Blob([vad.utils.encodeWAV(audio)], {type: "audio/wav"}));
         },
       });
       micVad.start();
     } else if (Rec) {  // Chrome's recognizer: continuous, restarted when it ends
       recog = new Rec(); recog.lang = "en-US"; recog.continuous = true;
       recog.onresult = e => { const r = e.results[e.results.length - 1];
-        if (r.isFinal && quiet()) wsSend(JSON.stringify({type: "text", text: r[0].transcript, spoken: true})); };
+        if (r.isFinal && quiet()) liveSend(JSON.stringify({type: "text", text: r[0].transcript, spoken: true})); };
       recog.onend = () => { if (on) try { recog.start(); } catch {} };
       recog.start();
     }
   }
-  function disable() {
-    if (micVad) { micVad.destroy(); micVad = null; }
+  async function disable() {  // also after a failed enable: never leave the microphone on
+    if (micVad) { await micVad.destroy(); micVad = null; }
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
     hearing = false;
     if (recog) { recog.onend = null; recog.stop(); recog = null; }
     talk.classList.remove("listening");
   }
   btn.onclick = async () => {
     on = !on;
-    try { if (on) await enable(); else disable(); }
-    catch (err) { on = false; said.textContent = `I can't use the microphone: ${err.message}. Type below.`; }
+    try { if (on) await enable(); else await disable(); }
+    catch (err) { on = false; await disable().catch(() => {}); said.textContent = `I can't use the microphone: ${err.message}. Type below.`; }
     handsOn = on; armedUntil = 0; wsSend(JSON.stringify({type: "handsfree", on}));
     btn.textContent = `Hands-free: ${on ? "on" : "off"}`; talk.disabled = on;
     if (on) said.textContent = "Say “Astro, what's good tonight?”";  // the hint changes with the mode
     else if (said.textContent.startsWith("Say “Astro")) said.textContent = HINT;
-    if (on && navigator.wakeLock) navigator.wakeLock.request("screen").catch(() => {});  // keep the tablet awake
+    if (on && navigator.wakeLock) navigator.wakeLock.request("screen")  // keep the tablet awake
+      .then(l => { wakeLock = l; l.onrelease = () => { if (wakeLock === l) wakeLock = null; }; }).catch(() => {});
   };
 }
 connect();

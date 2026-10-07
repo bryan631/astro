@@ -5,6 +5,7 @@
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", e => e.waitUntil((async () => {
   await self.clients.claim();
-  for (const c of await self.clients.matchAll({type: "window"})) c.navigate(c.url);
+  const pages = await self.clients.matchAll({type: "window"});
+  await Promise.all(pages.map(c => c.navigate(c.url).catch(() => {})));
 })()));
 self.addEventListener("fetch", e => e.respondWith(fetch(e.request, {cache: "no-cache"})));

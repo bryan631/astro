@@ -23,7 +23,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.websockets import WebSocketDisconnected  # raised when sending to a closed socket
+from starlette.websockets import WebSocketState
 
 from astro import calibration_store, logs, site_store
 from astro.agent import Agent
@@ -167,6 +167,9 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:  # also on errors/cancellation: never leave heaters, cameras or the solver running
+        for hub in (_sim_hub, _real_hub):
+            if hub is not None:
+                hub.session.stop_video()  # its thread captures until stopped: before closing
         close_hardware()
 
 
@@ -363,9 +366,11 @@ async def ws(socket: WebSocket) -> None:
                 break
             try:  # one bad message must not drop the tablet
                 await handle_message(hub, socket, conn, msg)
-            except (WebSocketDisconnect, WebSocketDisconnected):
-                break  # the tablet left (reload, restart) mid-answer: nothing to apologise to
+            except WebSocketDisconnect:
+                break
             except Exception:
+                if WebSocketState.DISCONNECTED in (socket.client_state, socket.application_state):
+                    break  # the tablet left (reload, restart) mid-answer: nothing to apologise to
                 log.exception("message failed")
                 await hub.broadcast({"type": "say", "text": SORRY})
     except WebSocketDisconnect:
@@ -373,6 +378,7 @@ async def ws(socket: WebSocket) -> None:
     finally:
         hub.leave(socket)
         if hub is _sim_hub and not hub.clients:
+            hub.session.stop_video()  # no orphan capture thread
             _sim_hub = None  # the next tablet starts a fresh simulated world
 
 
@@ -431,6 +437,8 @@ async def handle_message(hub: Hub, socket: WebSocket, conn: dict, msg: dict) -> 
             save_utterance(msg["bytes"], text, conn["handsfree"])
         if text:
             await handle_spoken(hub, socket, conn, text)
+        elif conn["handsfree"]:  # background noise: stay quiet
+            await socket.send_json({"type": "ignored", "text": ""})
         else:
             await hub.broadcast({"type": "say", "text": "Sorry, I didn't hear anything."})
         return

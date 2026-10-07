@@ -475,11 +475,16 @@ class Session:
         if crop:
             w, h = self.main_sensor
             roi = Roi((w - VIDEO_CROP[0]) // 4 * 2, (h - VIDEO_CROP[1]) // 4 * 2, *VIDEO_CROP)
-        if hasattr(self.finder, "paused"):  # the plate-solve tracker leaves the camera alone
-            self.finder.paused.set()
+        pause = getattr(self.finder, "paused", None) if name == "finder" else None
+        if pause is not None:  # the plate-solve tracker leaves the finder camera alone
+            pause.set()
         lock = getattr(self.finder, "camera_lock", None) if name == "finder" else None
-        self._video = (name, LiveView(cam, exposure, gain, roi, lock, self.exposure_safety,
-                                           VIDEO_EXPOSURE[name]).start())
+        try:
+            self._video = (name, LiveView(cam, exposure, gain, roi, lock, self.exposure_safety,
+                                               VIDEO_EXPOSURE[name]).start())
+        finally:
+            if self._video is None and pause is not None:  # it didn't start: solve again
+                pause.clear()
         self._video_announce = announce
         return [{"type": "view", "what": name, "video": True},
                 *([say(f"Showing live video of the {name} camera.")] if announce else [])]
@@ -491,7 +496,7 @@ class Session:
         name, loop = self._video
         self._video = None
         loop.stop()
-        if hasattr(self.finder, "paused"):
+        if name == "finder" and hasattr(self.finder, "paused"):
             self.finder.paused.clear()
         return name
 

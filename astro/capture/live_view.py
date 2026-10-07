@@ -34,11 +34,18 @@ class LiveView:
         self._thread = threading.Thread(target=self._run, daemon=True)
 
     def start(self) -> "LiveView":
-        self.camera.set_exposure(self.exposure_s)
-        self.camera.set_gain(self.gain)
-        if self.roi is not None:
-            self.camera.set_roi(self.roi)
-        self._thread.start()
+        """Apply the video settings (under the lock: the tracker may be mid-capture) and run.
+        If that fails, the camera's settings are put back before the error goes on."""
+        try:
+            with self.lock:
+                self.camera.set_exposure(self.exposure_s)
+                self.camera.set_gain(self.gain)
+                if self.roi is not None:
+                    self.camera.set_roi(self.roi)
+            self._thread.start()
+        except Exception:
+            self.stop()
+            raise
         return self
 
     @property
@@ -50,10 +57,11 @@ class LiveView:
         self._stop.set()
         if self._thread.is_alive() and threading.current_thread() is not self._thread:
             self._thread.join()
-        self.camera.set_exposure(self._saved[0])
-        self.camera.set_gain(self._saved[1])
-        if self.roi is not None:
-            self.camera.set_roi(None)
+        with self.lock:
+            self.camera.set_exposure(self._saved[0])
+            self.camera.set_gain(self._saved[1])
+            if self.roi is not None:
+                self.camera.set_roi(None)
 
     def _run(self) -> None:
         while not self._stop.is_set():
