@@ -4,6 +4,7 @@
 messages for the tablet: {"type": "say", "text": ...} and {"type": "state", ...}.
 """
 
+import os
 import threading
 import time
 from collections.abc import Callable
@@ -22,6 +23,7 @@ from astro.capture.live_stacker import LiveStacker
 from astro.capture.recorder import CaptureRefused, Recorder, prune
 from astro.capture.roi import brightest_blob, roi_around
 from astro.devices.base import Camera
+from astro.devices.tap import tap
 from astro.guidance.centering import CALIBRATED, Centerer
 from astro.guidance.engine import CueLimiter, DirectionLearner, Guide, wrap180
 from astro.intents import Intent, match_name, parse
@@ -85,6 +87,9 @@ class Session:
                  on_calibration_change: Callable[[dict], None] | None = None):
         """Pointing comes from `finder` (encoders + mount model + plate solving), or, for
         tests without a finder, from `position()` returning true (alt, az)."""
+        if finder is not None and hasattr(finder, "camera"):
+            finder.camera = tap(finder.camera)  # the tablet can show the last frame of each
+        main_camera = tap(main_camera)
         self.site, self.clock, self.finder = site, clock, finder
         self.on_site_change = on_site_change  # e.g. persist the GPS fix, update simulators
         self.horizon = horizon or HorizonMask()  # treeline for the planner
@@ -221,6 +226,8 @@ class Session:
             "horizon_start": self.start_horizon, "horizon_mark": self.mark_horizon,
             "location": self.request_location, "where": self.where,
             "collimate": self.start_collimation,
+            "view_finder": lambda: self.show("finder"), "view_main": lambda: self.show("main"),
+            "view_debug": lambda: self.show("debug"), "view_hide": lambda: self.show("none"),
         }.get(intent.name)
         if command is None:
             return [say(f"{intent.name.replace('_', ' ').capitalize()} isn't ready yet.")]
@@ -404,6 +411,62 @@ class Session:
         if clouds is not None:
             lines.append(f"cloud cover: about {clouds:.0f}%")
         return "\n".join(lines) or "Nothing good is up right now."
+
+    # --- what the tablet can look at ------------------------------------------------------
+    def camera_frame(self, name: str):
+        """(raw frame, bayer, age in s) the named camera last captured, or None."""
+        cam = getattr(self.finder, "camera", None) if name == "finder" else self.main_camera
+        if cam is None or getattr(cam, "last", None) is None:
+            return None
+        return cam.last, cam.bayer, time.monotonic() - cam.last_at
+
+    def show(self, what: str) -> list[dict]:
+        if what == "main" and self.main_camera is None:
+            return [say("There's no main camera connected.")]
+        if what == "finder" and self.finder is None:
+            return [say("There's no finder camera connected.")]
+        words = {"finder": "the finder", "main": "the main camera", "debug": "the details",
+                 "none": "nothing"}
+        return [{"type": "view", "what": what}, say(f"Showing {words[what]}.")]
+
+    def debug_info(self) -> dict:
+        """Everything the engineer would ask for, as sections of plain values (no camera calls:
+        the SDK isn't safe to query while another thread captures)."""
+        now = self.clock()
+        info: dict = {"time": {"utc": now.isoformat(timespec="seconds"),
+                               "local": now.astimezone().isoformat(timespec="seconds")},
+                      "site": {"lat": self.site.lat_deg, "lon": self.site.lon_deg,
+                               "elevation_m": self.site.elevation_m}}
+        f = self.finder
+        if f is not None:
+            alt, az = self.position()
+            syncs, rms = f.alignment()
+            pointing = {"alt_deg": round(alt, 2), "az_deg": round(az, 2), "synced": f.synced,
+                        "syncs": syncs, "model_rms_arcmin": rms}
+            if (age := getattr(f, "fix_age", None)) is not None:
+                pointing["fix_age_s"] = round(age(), 1)
+            info["pointing"] = pointing
+            if (counts := getattr(f, "raw_counts", None)) is not None:
+                try:
+                    az_c, alt_c = counts()
+                    info["encoders"] = {"az_counts": az_c, "alt_counts": alt_c}
+                except (OSError, RuntimeError, ValueError) as e:  # a dead serial port must not hide the rest
+                    info["encoders"] = {"error": str(e)}
+            if (sol := f.last_solution) is not None:
+                info["plate_solve"] = {k: round(v, 3) if isinstance(v, float) else v
+                                       for k, v in asdict(sol).items()}
+                info["plate_solve"]["confidence"] = round(sol.confidence, 1)
+        for name, cam in (("finder", getattr(f, "camera", None)), ("main", self.main_camera)):
+            if cam is not None:
+                frame = self.camera_frame(name)
+                info[f"{name}_camera"] = {
+                    "exposure_s": cam.exposure_s, "gain": cam.gain,
+                    "frame_px": list(frame[0].shape[::-1]) if frame else None,
+                    "frame_age_s": round(frame[2], 1) if frame else None}
+        info["guidance"] = {"target": self.target, "guiding": self.guide is not None,
+                            "centering": self._centering, "holding": self._holding}
+        info["system"] = {"load_1_5_15": [round(x, 2) for x in os.getloadavg()]}
+        return info
 
     def where(self) -> list[dict]:
         if self.finder is not None and not self.finder.synced:

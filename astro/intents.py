@@ -12,7 +12,7 @@ from dataclasses import dataclass
 class Intent:
     name: str  # goto, stop, next, tonight, capture, stop_capture, focus, finder_focus, sync,
     # where, barlow_on, barlow_off, location, horizon_start, horizon_mark, setup, ready, skip,
-    # describe, collimate
+    # describe, collimate, view_finder, view_main, view_debug, view_hide
     target: str | None = None
 
 
@@ -31,6 +31,11 @@ _PATTERNS = [
     ("collimate", r"\b(collimat\w*)\b"),
     ("finder_focus", r"\b(focus (the )?finder|finder focus)\b"),
     ("focus", r"\bfocus\b"),
+    # Views, before "goto": "show me the finder" must not look for a target named finder.
+    ("view_finder", r"\b(show|open|view|see|display)( me)?( the)?( live)? finder\b|\bfinder (view|camera|image)\b"),
+    ("view_main", r"\b(show|open|view|see|display)( me)?( the)?( live)? (main|big|telescope) (camera|view|image)\b|\bmain (camera|view)\b"),
+    ("view_debug", r"\b(show|open|view|display)( me)?( the)? (debug|diagnostics?|details?)\b|^debug\b"),
+    ("view_hide", r"^(hide|close|clear)\b|\b(hide|close)( the)? (camera|cameras|debug|details?|views?|picture)\b"),
     ("sync", r"\b(sync|align|plate ?solve|find (out )?where (we are|i am|it is) pointing)\b"),
     ("horizon_mark", r"^(mark|mark it|mark this|here)\b"),
     ("location", r"\b(set|update|use|get|find) (my |our |the )?(location|position|gps)\b"),

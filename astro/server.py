@@ -20,7 +20,7 @@ import wave
 from collections.abc import Callable
 from pathlib import Path
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnected  # raised when sending to a closed socket
@@ -40,6 +40,7 @@ from astro.pointing.coords import Site
 from astro.pointing.finder_sync import FinderSync
 from astro.pointing.mount_model import MountModel
 from astro.pointing.platesolve import FinderSolver
+from astro.process.view import jpeg
 from astro.session import Session, utcnow
 from astro.voice.speech import Stt, Tts
 from astro.wake import add_wake, collapse_repeats, strip_wake
@@ -453,6 +454,29 @@ def gallery() -> list[str]:
     """Processed pictures, newest first."""
     files = sorted(GALLERY.glob("*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
     return [p.name for p in files]
+
+
+@app.get("/api/debug")
+def api_debug() -> dict:
+    try:
+        return get_hub().session.debug_info()
+    except Exception as e:  # hardware not up: the page shows why
+        raise HTTPException(503, str(e)) from e
+
+
+@app.get("/api/camera/{name}.jpg")
+def api_camera(name: str) -> Response:
+    """The named camera's last frame (finder or main), as the page's live view polls it."""
+    if name not in ("finder", "main"):
+        raise HTTPException(404)
+    try:
+        frame = get_hub().session.camera_frame(name)
+    except Exception as e:
+        raise HTTPException(503, str(e)) from e
+    if frame is None:
+        raise HTTPException(404, "no frame yet")
+    raw, bayer, age = frame
+    return Response(jpeg(raw, bayer), media_type="image/jpeg", headers={"X-Frame-Age": f"{age:.1f}"})
 
 
 @app.get("/sw.js")

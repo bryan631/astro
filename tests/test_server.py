@@ -298,6 +298,22 @@ def test_client_log_reaches_the_server_log(caplog):
     assert any(r.getMessage() == "client" for r in caplog.records)
 
 
+def test_camera_and_debug_views():
+    client = TestClient(server.app)
+    with client.websocket_connect("/ws"):  # starts the simulated hub
+        hub = server.get_hub()
+        assert client.get("/api/camera/finder.jpg").status_code == 404  # nothing captured yet
+        hub.session.finder.camera.capture()
+        r = client.get("/api/camera/finder.jpg")
+        assert r.status_code == 200 and r.content[:2] == b"\xff\xd8" and "x-frame-age" in r.headers
+        assert client.get("/api/camera/other.jpg").status_code == 404
+        info = client.get("/api/debug").json()
+        assert {"time", "site", "pointing", "finder_camera", "guidance", "system"} <= info.keys()
+        assert info["finder_camera"]["frame_px"] is not None
+        ws_msgs = hub.session.handle("show me the finder")
+        assert ws_msgs[0] == {"type": "view", "what": "finder"}
+
+
 def test_save_utterance_keeps_audio_and_transcript(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "UTTERANCES", tmp_path)
     server.save_utterance(b"RIFFxxxx", "astro stop", True)

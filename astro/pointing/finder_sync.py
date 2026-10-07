@@ -134,6 +134,7 @@ class FinderSync:
         self.encoder_boots: Callable[[], int] | None = None
         # Seconds since the encoders last reported (None if not tracked, e.g. simulators).
         self.encoder_age: Callable[[], float] | None = None
+        self.raw_counts: Callable[[], tuple[int, int]] | None = None  # (az, alt), debug view only
         # Exposure gate (spoken reason or None); the session installs its exposure_safety.
         self.safety: Callable[[], str | None] | None = None
 

@@ -64,3 +64,17 @@ def test_messier_spellings(spoken):
 ])
 def test_describe_intent(text, expected):
     assert parse(text) == expected
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("show me the finder", "view_finder"),
+    ("show the main camera", "view_main"),
+    ("show me the live main view", "view_main"),
+    ("show the debug", "view_debug"),
+    ("hide the camera", "view_hide"),
+    ("hide", "view_hide"),
+    ("focus the finder", "finder_focus"),  # still a focus command
+    ("show me Saturn", "goto"),
+])
+def test_view_commands(text, expected):
+    assert parse(text).name == expected
