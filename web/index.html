@@ -225,7 +225,7 @@ function setupHandsFree(Rec) {
     if (speaking()) lastSpoke = performance.now();
     const s = !on ? "" : speaking() ? "speaking" : hearing ? "hearing" : performance.now() < armedUntil ? "armed" : "waiting";
     vstate.hidden = !on; vstate.dataset.s = s; vstate.textContent = states[s] || "";
-    talk.classList.toggle("listening", s === "hearing");
+    if (on) talk.classList.toggle("listening", s === "hearing");  // hold-to-talk owns the class otherwise
   }, 100);
   const quiet = () => !speaking() && performance.now() - lastSpoke > TAIL_MS;
   async function enable() {
@@ -256,6 +256,7 @@ function setupHandsFree(Rec) {
     if (micVad) { micVad.destroy(); micVad = null; }
     hearing = false;
     if (recog) { recog.onend = null; recog.stop(); recog = null; }
+    talk.classList.remove("listening");
   }
   btn.onclick = async () => {
     on = !on;
