@@ -56,7 +56,7 @@ local_checks() {
   echo "== system"
   local free; free=$(df -P ~astro | awk 'NR==2 {print int($4/1048576)}')
   [ "${free:-0}" -ge 2 ] && ok "disk: ${free} GB free" || fail "disk: ${free} GB free: prune data/"
-  ok "load: $(cut -d' ' -f1-3 /proc/loadavg), up $(uptime -p 2>/dev/null)"
+  ok "load: $(cut -d' ' -f1-3 /proc/loadavg), $(uptime -p 2>/dev/null)"
 }
 
 if [ $# -gt 0 ]; then remote "$1"; else local_checks; fi
