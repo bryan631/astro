@@ -25,7 +25,7 @@ What it checks on the Mele:
 ## Symptoms
 
 **`tailscale ssh` prints "Tailscale SSH requires an additional check" and a link.** The SSH policy
-re-checks the login periodically. Open the link, approve, run again. The web UI keeps working
+re-checks the login periodically. Open the link while the command waits (each attempt makes a new link); it carries on once approved. The web UI keeps working
 meanwhile.
 
 **Tailnet ping fails.** The Mele is off, has no network, or Tailscale is down on either side.

@@ -19,8 +19,8 @@ remote() {  # from the dev machine: can we reach the Mele at all?
   local name; name=$(t tailscale status --json | sed -n "s/.*\"DNSName\": *\"\($host\.[^\"]*\)\.\".*/\1/p" | head -1)
   local code; code=$(t curl -sk -o /dev/null -w '%{http_code}' "https://${name:-$host}:$PORT/")
   [ "$code" = 200 ] && ok "web https://$name:$PORT/" || fail "web https://${name:-$host}:$PORT/ answered '${code:-nothing}': service down?"
-  echo "== on $host (if SSH asks to authenticate, open the printed link, then run again)"
-  timeout 60 tailscale ssh "astro@$host" 'bash -s' < "$0"
+  echo "== on $host (if SSH prints a login link, open it: this waits 5 min)"
+  timeout 300 tailscale ssh "astro@$host" 'bash -s' < "$0"
   local rc=$?
   if [ $rc -eq 124 ] || [ $rc -eq 255 ]; then fail "ssh astro@$host (exit $rc)"; else fails=$((fails + rc)); fi
 }
