@@ -20,7 +20,9 @@ Tailscale SSH needs no keys. In the Tailscale admin console, disable key expiry 
 
 ## Florida (dad's place)
 
-The Mele logs in with the owner's Google account, so dad needs no Tailscale account. He powers it on and plugs in Ethernet.
+The Mele logs in with the owner's Google account, so dad needs no Tailscale account. He just powers it on: it joins his WiFi (`NETGEAR30`) by itself. Ethernet works too.
+
+Cables: one of the Mele's USB-C ports is power-only. Power goes there; the MCU goes on the other USB-C (data) port. If the MCU's light is on but it doesn't show up as a serial port, it's on the power-only port or on a charge-only cable.
 
 To give him access too, in the Tailscale admin console go to Machines -> `mele` -> Share and send him the link. He signs in with his own account. Don't share the Google login.
 
