@@ -38,6 +38,7 @@
   <div id="dist"></div>
   <img id="live" hidden alt="live stack">
   <button id="talk">Hold to talk</button>
+  <button id="hands" class="small">Hands-free: off</button>
   <form id="typed"><input id="text" placeholder="or type here" autocomplete="off"><button class="small">Send</button></form>
   <div><button class="small" id="mode">Day mode</button> <button class="small" id="pics">Pictures</button> <button class="small" id="beeps">Beeps off</button></div>
   <div id="gallery" hidden></div>
@@ -178,6 +179,7 @@ function setupTalk() {
   } else {
     talk.textContent = "Type below"; talk.disabled = true; return;
   }
+  setupHandsFree(Rec);
   let pressed = false;
   talk.addEventListener("pointerdown", async e => {
     e.preventDefault(); stopAudio(); listen(true); pressed = true;
@@ -190,6 +192,66 @@ function setupTalk() {
   });
   for (const ev of ["pointerup", "pointerleave", "pointercancel"])
     talk.addEventListener(ev, () => { pressed = false; stop(); });
+}
+// Hands-free (half-duplex): listen continuously, ignore the mic while the telescope is speaking.
+// Short commands only: an utterance is a burst of speech ended by 0.7 s of quiet.
+function setupHandsFree(Rec) {
+  const btn = document.getElementById("hands");
+  const LEVEL = 0.03, QUIET_MS = 700, MIN_MS = 300, MAX_MS = 8000, TAIL_MS = 600;
+  let on = false, stream = null, timer = null, lastSpoke = 0, rec = null, t0 = 0, quietSince = 0;
+  const speaking = () => speechSynthesis.speaking || (player && !player.paused && !player.ended);
+  async function loop(analyser) {
+    const buf = new Float32Array(analyser.fftSize);
+    timer = setInterval(() => {
+      analyser.getFloatTimeDomainData(buf);
+      const loud = Math.sqrt(buf.reduce((s, x) => s + x * x, 0) / buf.length) > LEVEL, now = performance.now();
+      if (speaking()) { lastSpoke = now; if (rec) rec.abort = true, rec.stop(); return; }
+      if (!rec && loud && now - lastSpoke > TAIL_MS) begin(now);
+      else if (rec) {
+        if (loud) quietSince = 0; else quietSince = quietSince || now;
+        if ((quietSince && now - quietSince > QUIET_MS) || now - t0 > MAX_MS) rec.stop();
+      }
+    }, 50);
+  }
+  function begin(now) {
+    const chunks = []; t0 = now; quietSince = 0;
+    rec = new MediaRecorder(stream);
+    rec.ondataavailable = e => chunks.push(e.data);
+    rec.onstop = () => {
+      const r = rec, ms = (quietSince || performance.now()) - t0;  // speech length, without the trailing quiet
+      rec = null; listenDot(false);
+      if (!r.abort && ms > MIN_MS) wsSend(new Blob(chunks, {type: r.mimeType}));
+    };
+    rec.start(); listenDot(true);
+  }
+  const listenDot = v => talk.classList.toggle("listening", v);
+  async function enable() {
+    if (serverStt && navigator.mediaDevices) {
+      stream = stream || await navigator.mediaDevices.getUserMedia({audio: true});
+      const ctx = new AudioContext(), an = ctx.createAnalyser();
+      ctx.createMediaStreamSource(stream).connect(an);
+      handsCtx = ctx; loop(an);
+    } else if (Rec) {  // Chrome's recognizer: continuous, restarted when it ends
+      recog = new Rec(); recog.lang = "en-US"; recog.continuous = true;
+      recog.onresult = e => { const r = e.results[e.results.length - 1];
+        if (r.isFinal && !speaking()) send(r[0].transcript); };
+      recog.onend = () => { if (on) try { recog.start(); } catch {} };
+      recog.start();
+    }
+  }
+  let handsCtx = null, recog = null;
+  function disable() {
+    clearInterval(timer); if (rec) { rec.abort = true; rec.stop(); }
+    if (handsCtx) handsCtx.close(); handsCtx = null;
+    if (recog) { recog.onend = null; recog.stop(); recog = null; }
+  }
+  btn.onclick = async () => {
+    on = !on;
+    try { if (on) await enable(); else disable(); }
+    catch (err) { on = false; said.textContent = `I can't use the microphone: ${err.message}. Type below.`; }
+    btn.textContent = `Hands-free: ${on ? "on" : "off"}`; talk.disabled = on;
+    if (on && navigator.wakeLock) navigator.wakeLock.request("screen").catch(() => {});  // keep the tablet awake
+  };
 }
 connect();
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");  // installable (V1)
