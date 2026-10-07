@@ -314,6 +314,25 @@ def test_camera_and_debug_views():
         assert ws_msgs[0] == {"type": "view", "what": "finder"}
 
 
+def test_live_video_starts_stops_and_restores_the_camera():
+    with TestClient(server.app).websocket_connect("/ws"):
+        session = server.get_hub().session
+        cam = session.finder.camera
+        before = (cam.exposure_s, cam.gain)
+        out = session.handle("live video of the finder")
+        assert out[0] == {"type": "view", "what": "finder", "video": True}
+        assert cam.exposure_s != before[0]
+        t0 = cam.last_at
+        end = time.monotonic() + 5
+        while cam.last_at == t0 and time.monotonic() < end:
+            time.sleep(0.05)
+        assert cam.last_at != t0  # frames keep coming
+        out = session.handle("stop the video")
+        assert out[0] == {"type": "view", "what": "finder"}
+        assert (cam.exposure_s, cam.gain) == before
+        assert "no video" in session.handle("stop the video")[0]["text"]
+
+
 def test_save_utterance_keeps_audio_and_transcript(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "UTTERANCES", tmp_path)
     server.save_utterance(b"RIFFxxxx", "astro stop", True)

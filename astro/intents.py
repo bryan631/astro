@@ -12,12 +12,16 @@ from dataclasses import dataclass
 class Intent:
     name: str  # goto, stop, next, tonight, capture, stop_capture, focus, finder_focus, sync,
     # where, barlow_on, barlow_off, location, horizon_start, horizon_mark, setup, ready, skip,
-    # describe, collimate, view_finder, view_main, view_debug, view_hide
+    # describe, collimate, view_finder, view_main, view_debug, view_hide,
+    # video_finder, video_main, video_stop
     target: str | None = None
 
 
 # Order matters: specific phrases before general ones.
 _PATTERNS = [
+    ("video_stop", r"\b(stop|end|turn off|hide) (the )?(live )?video\b|\bvideo off\b"),
+    ("video_finder", r"\b(live )?video (of |from )?(the )?finder\b|\bfinder (live )?video\b|\blive finder\b"),
+    ("video_main", r"\b(live )?video (of |from )?(the )?(main|big|telescope)\b|\b(main|big) (camera )?(live )?video\b|\blive (main|video)\b"),
     ("stop", r"\b(stop|finish|end|done with)( the)? horizon( walk)?\b"),  # ends a walk
     ("horizon_start", r"\b(start|begin|do|record|calibrate)( the)? horizon( walk)?\b"),
     ("setup", r"\b(set ?up|setup)( the)?( telescope| scope)?\b|\bcalibrate( the)? (telescope|scope)\b"),
