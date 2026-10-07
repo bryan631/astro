@@ -19,6 +19,7 @@ jobs:
 
   pytest:
     runs-on: ubuntu-latest
+    timeout-minutes: 5  # normally ~2 min: a hung test fails fast
     strategy:
       matrix:
         python: ["3.11", "3.12", "3.14"]  # dev box; Ubuntu 24.04 and 26.04 on the MiniPC
