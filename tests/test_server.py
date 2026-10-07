@@ -276,6 +276,20 @@ def test_handsfree_ignores_the_same_command_while_it_answers():
         assert "stop" in receive_until(ws, "heard")
 
 
+def test_handsfree_transcription_failure_is_silent(monkeypatch):
+    def broken(audio):
+        raise RuntimeError("whisper died")
+
+    monkeypatch.setattr(server.stt, "transcribe", broken)
+    with TestClient(server.app).websocket_connect("/ws") as ws:
+        ws.send_json({"type": "handsfree", "on": True})
+        ws.send_bytes(b"audio")
+        receive_until(ws, "ignored")  # no spoken apology for background noise
+        ws.send_json({"type": "handsfree", "on": False})
+        ws.send_bytes(b"audio")
+        assert "something went wrong" in receive_until(ws, "say")  # but a button press is told
+
+
 def test_save_utterance_keeps_audio_and_transcript(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "UTTERANCES", tmp_path)
     server.save_utterance(b"RIFFxxxx", "astro stop", True)

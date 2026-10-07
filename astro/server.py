@@ -23,6 +23,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.websockets import WebSocketDisconnected  # raised when sending to a closed socket
 
 from astro import calibration_store, logs, site_store
 from astro.agent import Agent
@@ -350,6 +351,8 @@ async def ws(socket: WebSocket) -> None:
                 break
             try:  # one bad message must not drop the tablet
                 await handle_message(hub, socket, conn, msg)
+            except (WebSocketDisconnect, WebSocketDisconnected):
+                break  # the tablet left (reload, restart) mid-answer: nothing to apologise to
             except Exception:
                 log.exception("message failed")
                 await hub.broadcast({"type": "say", "text": SORRY})
@@ -404,7 +407,14 @@ async def handle_spoken(hub: Hub, socket: WebSocket, conn: dict, text: str) -> N
 async def handle_message(hub: Hub, socket: WebSocket, conn: dict, msg: dict) -> None:
     session = hub.session
     if msg.get("bytes"):  # recorded speech from the tablet
-        text = await asyncio.to_thread(stt.transcribe, msg["bytes"])
+        try:
+            text = await asyncio.to_thread(stt.transcribe, msg["bytes"])
+        except Exception:
+            if not conn["handsfree"]:
+                raise  # the tablet's own press: tell them it failed
+            log.exception("transcription failed")  # hands-free hears background noise: stay quiet
+            await socket.send_json({"type": "ignored", "text": ""})
+            return
         if os.environ.get("ASTRO_SAVE_AUDIO") == "1":
             save_utterance(msg["bytes"], text, conn["handsfree"])
         if text:
