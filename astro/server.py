@@ -308,6 +308,7 @@ async def require_token(request: Request, call_next):
     if not _allowed(request):
         return PlainTextResponse("Open the link with the access token.", status_code=401)
     response = await call_next(request)
+    response.headers["Cache-Control"] = "no-cache"  # revalidate (ETag) so a tablet never keeps an old page
     if token := request.query_params.get("token"):
         response.set_cookie("astro_token", token, httponly=True,
                             secure=request.url.scheme == "https",

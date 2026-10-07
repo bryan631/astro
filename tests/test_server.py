@@ -250,6 +250,10 @@ def test_handsfree_hints_name_the_wake_word():
         assert "Say 'Astro, what's good tonight' or 'Astro, go to Saturn'" in receive_until(ws, "say")
 
 
+def test_pages_revalidate():
+    assert TestClient(server.app).get("/").headers["cache-control"] == "no-cache"
+
+
 def test_save_utterance_keeps_audio_and_transcript(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "UTTERANCES", tmp_path)
     server.save_utterance(b"RIFFxxxx", "astro stop", True)
