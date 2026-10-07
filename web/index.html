@@ -21,6 +21,14 @@
   /* Night: pictures in dim red too, so they don't spoil dark-adapted eyes. */
   body:not(.day) #live, body:not(.day) #gallery img {
     filter: grayscale(1) sepia(1) saturate(5) hue-rotate(-50deg) brightness(.6); }
+  /* Hands-free state: text, dot and border weight differ, so it reads in dim red at night. */
+  #vstate { font-size: 28px; padding: 8px 20px; border: 2px solid var(--dim); border-radius: 999px; }
+  #vstate::before { content: "\25CB  "; }
+  #vstate[data-s="hearing"], #vstate[data-s="armed"] { border-color: var(--fg); border-width: 5px; }
+  #vstate[data-s="armed"]::before, #vstate[data-s="hearing"]::before { content: "\25CF  "; }
+  #vstate[data-s="speaking"] { border-style: dashed; border-color: var(--fg); }
+  #vstate[data-s="speaking"]::before { content: "\25B6  "; }
+  #heard { font-size: 24px; min-height: 1.3em; opacity: .8; }
   #typed { display: flex; gap: 8px; width: 100%; max-width: 600px; }
   #typed input, button.small { font-size: 24px; padding: 12px; background: var(--bg); color: var(--fg);
           border: 2px solid var(--dim); border-radius: 12px; }
@@ -39,18 +47,21 @@
   <img id="live" hidden alt="live stack">
   <button id="talk">Hold to talk</button>
   <button id="hands" class="small">Hands-free: off</button>
+  <div id="vstate" hidden></div>
+  <div id="heard"></div>
   <form id="typed"><input id="text" placeholder="or type here" autocomplete="off"><button class="small">Send</button></form>
   <div><button class="small" id="mode">Day mode</button> <button class="small" id="pics">Pictures</button> <button class="small" id="beeps">Beeps off</button></div>
   <div id="gallery" hidden></div>
 <script>
-const said = document.getElementById("said"), arrow = document.getElementById("arrow"),
+const heardEl = document.getElementById("heard"), said = document.getElementById("said"), arrow = document.getElementById("arrow"),
       dist = document.getElementById("dist"), talk = document.getElementById("talk");
-let ws, unavailable = false, serverStt = false, serverTts = false, player = null;
+let ws, unavailable = false, armedUntil = 0, handsOn = false, serverStt = false, serverTts = false, player = null;
 const pending = [];  // sent while reconnecting: delivered once the socket is back
 function connect() {
   ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
   ws.binaryType = "blob";
-  ws.onopen = () => { while (pending.length) ws.send(pending.shift()); };
+  ws.onopen = () => { if (handsOn) wsSend(JSON.stringify({type: "handsfree", on: true}));
+    while (pending.length) ws.send(pending.shift()); };
   ws.onmessage = e => typeof e.data === "string" ? handle(JSON.parse(e.data)) : play(e.data);
   ws.onclose = () => setTimeout(connect, unavailable ? 10000 : 1000);  // slow retries while the hardware is down
 }
@@ -70,7 +81,9 @@ function handle(m) {
     unavailable = true;
   }
   if (m.type === "hello") { unavailable = false; serverStt = m.server_stt; serverTts = m.server_tts; setupTalk(); }
-  if (m.type === "heard") said.textContent = `“${m.text}”`;
+  if (m.type === "heard") { armedUntil = 0; said.textContent = `“${m.text}”`; heardEl.textContent = `Command: “${m.text}”`; }
+  if (m.type === "ignored") heardEl.textContent = `Heard, no “Astro”: “${m.text}”`;
+  if (m.type === "armed") armedUntil = performance.now() + m.seconds * 1000;
   if (m.type === "get_location") sendLocation(m.id);
   if (m.type === "picture" && !document.getElementById("gallery").hidden) showPictures();
   if (m.type === "live") {  // live stack preview: same file, rewritten as frames are added
@@ -196,7 +209,7 @@ function setupTalk() {
 // Hands-free (half-duplex): listen continuously, ignore the mic while the telescope is speaking.
 // Short commands only: an utterance is a burst of speech ended by 0.7 s of quiet.
 function setupHandsFree(Rec) {
-  const btn = document.getElementById("hands");
+  const btn = document.getElementById("hands"), vstate = document.getElementById("vstate");
   const LEVEL = 0.03, QUIET_MS = 700, MIN_MS = 300, MAX_MS = 8000, TAIL_MS = 600;
   let on = false, stream = null, timer = null, lastSpoke = 0, rec = null, t0 = 0, quietSince = 0;
   const speaking = () => speechSynthesis.speaking || (player && !player.paused && !player.ended);
@@ -224,6 +237,12 @@ function setupHandsFree(Rec) {
     };
     rec.start(); listenDot(true);
   }
+  const states = {waiting: "Say “Astro…”", hearing: "Hearing you…", armed: "Listening for your command",
+                  speaking: "Speaking…"};
+  setInterval(() => {
+    const s = !on ? "" : speaking() ? "speaking" : rec ? "hearing" : performance.now() < armedUntil ? "armed" : "waiting";
+    vstate.hidden = !on; vstate.dataset.s = s; vstate.textContent = states[s] || "";
+  }, 100);
   const listenDot = v => talk.classList.toggle("listening", v);
   async function enable() {
     if (serverStt && navigator.mediaDevices) {
@@ -234,7 +253,7 @@ function setupHandsFree(Rec) {
     } else if (Rec) {  // Chrome's recognizer: continuous, restarted when it ends
       recog = new Rec(); recog.lang = "en-US"; recog.continuous = true;
       recog.onresult = e => { const r = e.results[e.results.length - 1];
-        if (r.isFinal && !speaking()) send(r[0].transcript); };
+        if (r.isFinal && !speaking()) wsSend(JSON.stringify({type: "text", text: r[0].transcript, spoken: true})); };
       recog.onend = () => { if (on) try { recog.start(); } catch {} };
       recog.start();
     }
@@ -249,6 +268,7 @@ function setupHandsFree(Rec) {
     on = !on;
     try { if (on) await enable(); else disable(); }
     catch (err) { on = false; said.textContent = `I can't use the microphone: ${err.message}. Type below.`; }
+    handsOn = on; armedUntil = 0; wsSend(JSON.stringify({type: "handsfree", on}));
     btn.textContent = `Hands-free: ${on ? "on" : "off"}`; talk.disabled = on;
     if (on && navigator.wakeLock) navigator.wakeLock.request("screen").catch(() => {});  // keep the tablet awake
   };

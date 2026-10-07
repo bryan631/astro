@@ -37,11 +37,13 @@ from astro.pointing.mount_model import MountModel
 from astro.pointing.platesolve import FinderSolver
 from astro.session import Session, utcnow
 from astro.voice.speech import Stt, Tts
+from astro.wake import strip_wake
 
 ROOT = Path(__file__).resolve().parents[1]
 SIM = os.environ.get("ASTRO_SIM") == "1"
 OFFLINE = os.environ.get("ASTRO_OFFLINE") == "1"  # no forecast fetches (tests, field hotspot)
 TICK_S = 0.1
+ARMED_S = 8.0  # after the wake word alone, how long the next utterance counts as the command
 THINKING_AFTER_S = 1.0  # say "Let me think." if an answer takes longer than this
 SORRY = "Sorry, something went wrong. Please try that again."
 
@@ -325,6 +327,7 @@ async def ws(socket: WebSocket) -> None:
     await socket.send_json({"type": "hello", "server_stt": stt.available(),
                             "server_tts": tts.available()})
     hub.join(socket)
+    conn = {"handsfree": False, "armed_until": 0.0}  # per-tablet voice mode
     if not site_store.has_saved(ROOT):  # setup: first run at this installation
         for out in hub.session.request_location():
             await hub.broadcast(_for(out, socket))
@@ -334,7 +337,7 @@ async def ws(socket: WebSocket) -> None:
             if msg["type"] == "websocket.disconnect":
                 break
             try:  # one bad message must not drop the tablet
-                await handle_message(hub, socket, msg)
+                await handle_message(hub, socket, conn, msg)
             except Exception:
                 log.exception("message failed")
                 await hub.broadcast({"type": "say", "text": SORRY})
@@ -346,12 +349,32 @@ async def ws(socket: WebSocket) -> None:
             _sim_hub = None  # the next tablet starts a fresh simulated world
 
 
-async def handle_message(hub: Hub, socket: WebSocket, msg: dict) -> None:
+async def handle_spoken(hub: Hub, socket: WebSocket, conn: dict, text: str) -> None:
+    """Speech from the tablet. In hands-free mode only "Astro ..." (or the utterance right after
+    a bare "Astro") is a command; anything else is shown but ignored."""
+    if conn["handsfree"]:
+        now = time.monotonic()
+        command = strip_wake(text)
+        if command is None and now < conn["armed_until"]:
+            command = text
+        if command is None:
+            await socket.send_json({"type": "ignored", "text": text})
+            return
+        if not command:
+            conn["armed_until"] = now + ARMED_S
+            await socket.send_json({"type": "armed", "seconds": ARMED_S})
+            return
+        conn["armed_until"] = 0.0
+        text = command
+    await hub.handle_text(socket, text)
+
+
+async def handle_message(hub: Hub, socket: WebSocket, conn: dict, msg: dict) -> None:
     session = hub.session
     if msg.get("bytes"):  # recorded speech from the tablet
         text = await asyncio.to_thread(stt.transcribe, msg["bytes"])
         if text:
-            await hub.handle_text(socket, text)
+            await handle_spoken(hub, socket, conn, text)
         else:
             await hub.broadcast({"type": "say", "text": "Sorry, I didn't hear anything."})
         return
@@ -359,8 +382,13 @@ async def handle_message(hub: Hub, socket: WebSocket, msg: dict) -> None:
         return
     data = json.loads(msg["text"])
     request_id = int(data["id"]) if data.get("id") is not None else None
-    if data.get("type") == "text":
-        await hub.handle_text(socket, data["text"])
+    if data.get("type") == "handsfree":
+        conn["handsfree"], conn["armed_until"] = bool(data.get("on")), 0.0
+    elif data.get("type") == "text":
+        if data.get("spoken"):  # the browser's own recognizer
+            await handle_spoken(hub, socket, conn, data["text"])
+        else:
+            await hub.handle_text(socket, data["text"])
     elif data.get("type") == "location":
         log.info("location", extra={"data": {"accuracy_m": data.get("accuracy")}})
         alt = float(data["alt"]) if data.get("alt") is not None else None

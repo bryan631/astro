@@ -221,6 +221,25 @@ def test_bad_message_is_spoken_and_keeps_the_connection():
         assert "I don't know pizza." in receive_until(ws, "say")  # still connected
 
 
+def test_handsfree_needs_the_wake_word():
+    def spoken(ws, text):
+        ws.send_json({"type": "text", "text": text, "spoken": True})
+
+    with TestClient(server.app).websocket_connect("/ws") as ws:
+        ws.send_json({"type": "handsfree", "on": True})
+        spoken(ws, "go to pizza")
+        assert "go to pizza" in receive_until(ws, "ignored")
+        spoken(ws, "Astro")  # wake word alone: the next utterance is the command
+        receive_until(ws, "armed")
+        spoken(ws, "go to pizza")
+        assert "go to pizza" in receive_until(ws, "heard")
+        spoken(ws, "Astro, go to pizza")  # wake word and command together
+        assert "go to pizza" in receive_until(ws, "heard")
+        ws.send_json({"type": "handsfree", "on": False})
+        spoken(ws, "go to pizza")  # no wake word needed once off
+        assert "go to pizza" in receive_until(ws, "heard")
+
+
 def test_hardware_startup_failure_is_reported(monkeypatch):
     def broken():
         raise RuntimeError("SV905C not found")
