@@ -221,13 +221,13 @@ def test_bad_message_is_spoken_and_keeps_the_connection():
         assert "I don't know pizza." in receive_until(ws, "say")  # still connected
 
 
-def test_hardware_startup_failure_is_spoken(monkeypatch):
+def test_hardware_startup_failure_is_reported(monkeypatch):
     def broken():
         raise RuntimeError("SV905C not found")
 
     monkeypatch.setattr(server, "get_hub", broken)
     with TestClient(server.app).websocket_connect("/ws") as ws:
-        assert "isn't ready: SV905C not found" in receive_until(ws, "say")
+        assert "isn't ready: SV905C not found" in receive_until(ws, "unavailable")
 
 
 def test_state_updates_coalesce_while_events_keep_order():

@@ -44,14 +44,14 @@
 <script>
 const said = document.getElementById("said"), arrow = document.getElementById("arrow"),
       dist = document.getElementById("dist"), talk = document.getElementById("talk");
-let ws, serverStt = false, serverTts = false, player = null;
+let ws, unavailable = false, serverStt = false, serverTts = false, player = null;
 const pending = [];  // sent while reconnecting: delivered once the socket is back
 function connect() {
   ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
   ws.binaryType = "blob";
   ws.onopen = () => { while (pending.length) ws.send(pending.shift()); };
   ws.onmessage = e => typeof e.data === "string" ? handle(JSON.parse(e.data)) : play(e.data);
-  ws.onclose = () => setTimeout(connect, 1000);
+  ws.onclose = () => setTimeout(connect, unavailable ? 10000 : 1000);  // slow retries while the hardware is down
 }
 function stopAudio() { speechSynthesis.cancel(); if (player) player.pause(); }
 function play(blob) {  // server (Piper) speech; newest cue wins
@@ -63,7 +63,12 @@ function speak(text) {
   const u = new SpeechSynthesisUtterance(text); u.rate = 0.95; speechSynthesis.speak(u);
 }
 function handle(m) {
-  if (m.type === "hello") { serverStt = m.server_stt; serverTts = m.server_tts; setupTalk(); }
+  if (m.type === "unavailable") {  // startup failed: show the error, say it once
+    said.textContent = m.text;
+    if (!unavailable) speak("The telescope isn't ready.");
+    unavailable = true;
+  }
+  if (m.type === "hello") { unavailable = false; serverStt = m.server_stt; serverTts = m.server_tts; setupTalk(); }
   if (m.type === "heard") said.textContent = `“${m.text}”`;
   if (m.type === "get_location") sendLocation(m.id);
   if (m.type === "picture" && !document.getElementById("gallery").hidden) showPictures();

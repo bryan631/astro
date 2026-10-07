@@ -319,7 +319,7 @@ async def ws(socket: WebSocket) -> None:
         hub = get_hub()
     except Exception as e:  # e.g. a camera not plugged in: say so instead of a dead page
         log.exception("startup failed")
-        await socket.send_json({"type": "say", "text": f"The telescope isn't ready: {e}"})
+        await socket.send_json({"type": "unavailable", "text": f"The telescope isn't ready: {e}"})
         await socket.close()
         return
     await socket.send_json({"type": "hello", "server_stt": stt.available(),
