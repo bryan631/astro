@@ -41,7 +41,7 @@
 </style>
 </head>
 <body>
-  <div id="said">Say "what's good tonight?"</div>
+  <div id="said">Hold the button and say "what's good tonight?"</div>
   <div id="arrow" hidden>&#x2191;</div>
   <div id="dist"></div>
   <img id="live" hidden alt="live stack">
@@ -53,6 +53,7 @@
   <div><button class="small" id="mode">Day mode</button> <button class="small" id="pics">Pictures</button> <button class="small" id="beeps">Beeps off</button></div>
   <div id="gallery" hidden></div>
 <script>
+const HINT = `Hold the button and say "what's good tonight?"`;
 const heardEl = document.getElementById("heard"), said = document.getElementById("said"), arrow = document.getElementById("arrow"),
       dist = document.getElementById("dist"), talk = document.getElementById("talk");
 let ws, unavailable = false, armedUntil = 0, handsOn = false, serverStt = false, serverTts = false, player = null;
@@ -262,6 +263,8 @@ function setupHandsFree(Rec) {
     catch (err) { on = false; said.textContent = `I can't use the microphone: ${err.message}. Type below.`; }
     handsOn = on; armedUntil = 0; wsSend(JSON.stringify({type: "handsfree", on}));
     btn.textContent = `Hands-free: ${on ? "on" : "off"}`; talk.disabled = on;
+    if (on) said.textContent = "Say “Astro, what's good tonight?”";  // the hint changes with the mode
+    else if (said.textContent.startsWith("Say “Astro")) said.textContent = HINT;
     if (on && navigator.wakeLock) navigator.wakeLock.request("screen").catch(() => {});  // keep the tablet awake
   };
 }
