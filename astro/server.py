@@ -301,6 +301,15 @@ def get_hub() -> Hub:
     return _real_hub
 
 
+def running_hub() -> Hub:
+    """The hub a tablet already started. The camera and debug views never start the hardware
+    themselves: they run on worker threads, and two starts would open each camera twice."""
+    hub = _sim_hub if SIM else _real_hub
+    if hub is None:
+        raise HTTPException(503, "The telescope isn't started yet: open the page first.")
+    return hub
+
+
 def _allowed(conn: Request | WebSocket) -> bool:
     """Optional shared token (ASTRO_TOKEN) for public WiFi: open the app once as
     https://.../?token=..., and a cookie remembers it. Unset: anyone on the network."""
@@ -341,6 +350,8 @@ async def ws(socket: WebSocket) -> None:
     await socket.send_json({"type": "hello", "server_stt": stt.available(),
                             "server_tts": tts.available()})
     hub.join(socket)
+    if name := hub.session.video_now():  # video keeps running across reloads: show it again
+        await socket.send_json({"type": "view", "what": name, "video": True})
     conn = {"handsfree": False, "armed_until": 0.0, "last": ""}  # per-tablet voice mode
     if not site_store.has_saved(ROOT):  # setup: first run at this installation
         for out in hub.session.request_location():
@@ -432,6 +443,9 @@ async def handle_message(hub: Hub, socket: WebSocket, conn: dict, msg: dict) -> 
     elif data.get("type") == "handsfree":
         conn["handsfree"], conn["armed_until"] = bool(data.get("on")), 0.0
         (hub.handsfree.add if conn["handsfree"] else hub.handsfree.discard)(socket)
+    elif data.get("type") == "video":  # the Live video button: answered silently
+        for out in await asyncio.to_thread(session.video, data.get("camera"), data.get("then")):
+            await hub.broadcast(out)
     elif data.get("type") == "text":
         if data.get("spoken"):  # the browser's own recognizer
             await handle_spoken(hub, socket, conn, data["text"])
@@ -458,10 +472,7 @@ def gallery() -> list[str]:
 
 @app.get("/api/debug")
 def api_debug() -> dict:
-    try:
-        return get_hub().session.debug_info()
-    except Exception as e:  # hardware not up: the page shows why
-        raise HTTPException(503, str(e)) from e
+    return running_hub().session.debug_info()
 
 
 @app.get("/api/camera/{name}.jpg")
@@ -469,10 +480,7 @@ def api_camera(name: str) -> Response:
     """The named camera's last frame (finder or main), as the page's live view polls it."""
     if name not in ("finder", "main"):
         raise HTTPException(404)
-    try:
-        frame = get_hub().session.camera_frame(name)
-    except Exception as e:
-        raise HTTPException(503, str(e)) from e
+    frame = running_hub().session.camera_frame(name)
     if frame is None:
         raise HTTPException(404, "no frame yet")
     raw, bayer, age = frame
@@ -481,13 +489,10 @@ def api_camera(name: str) -> Response:
 
 @app.get("/api/camera/{name}.mjpg")
 async def api_camera_stream(name: str) -> StreamingResponse:
-    """Live video: every new frame of the camera as motion JPEG. Watching keeps the preview alive."""
+    """Live video: every new frame of the camera as motion JPEG, while the video runs."""
     if name not in ("finder", "main"):
         raise HTTPException(404)
-    try:
-        session = get_hub().session
-    except Exception as e:
-        raise HTTPException(503, str(e)) from e
+    session = running_hub().session
     cam = session.camera(name)
     if cam is None:
         raise HTTPException(404, "no such camera")
@@ -495,7 +500,6 @@ async def api_camera_stream(name: str) -> StreamingResponse:
     async def frames():
         seen = 0.0
         while session.video_active(name):  # the stream ends with the video
-            session.video_touch()
             if cam.last is not None and cam.last_at != seen:
                 seen = cam.last_at
                 data = await asyncio.to_thread(jpeg, cam.last, cam.bayer)

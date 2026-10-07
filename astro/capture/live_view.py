@@ -1,10 +1,9 @@
 """Live video of one camera, for checking that everything is right: cap off, focus close, framing.
 
-Runs only while someone is watching (the page's stream calls `touch`), uses a short exposure
-for speed, asks the exposure gate before every frame, and puts the camera's settings back.
+Runs until stopped (or the exposure gate says no), uses a short exposure for speed, asks the
+gate before every frame, and puts the camera's settings back.
 """
 import threading
-import time
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 
@@ -14,7 +13,6 @@ from astro.devices.base import Camera, Roi
 
 LOW_PEAK, HIGH_PEAK = 60, 220  # 8-bit brightest 0.5% of pixels: outside this, change the exposure
 STEP = 1.6  # exposure change per frame
-IDLE_STOP_S = 15.0  # nobody watching for this long: stop, so the camera isn't left in preview
 
 
 class LiveView:
@@ -32,7 +30,6 @@ class LiveView:
         self.allowed = allowed
         self.stopped_because: str | None = None  # a spoken reason, when the gate ended it
         self._saved = (camera.exposure_s, camera.gain)
-        self._viewed = time.monotonic()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
 
@@ -43,10 +40,6 @@ class LiveView:
             self.camera.set_roi(self.roi)
         self._thread.start()
         return self
-
-    def touch(self) -> None:
-        """Someone is watching."""
-        self._viewed = time.monotonic()
 
     @property
     def running(self) -> bool:
@@ -66,8 +59,6 @@ class LiveView:
         while not self._stop.is_set():
             if (reason := self.allowed()) is not None:
                 self.stopped_because = reason
-                return
-            if time.monotonic() - self._viewed > IDLE_STOP_S:
                 return
             try:
                 with self.lock:

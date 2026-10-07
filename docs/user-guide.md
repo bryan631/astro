@@ -42,5 +42,9 @@
 - Moved the telescope to a new place? Say **"Use my location."**
 - Stars look like smudges even when focused? Say **"Check the collimation."** Turn the
   focus knob until a bright star is a donut, then turn the mirror screws as it says.
+- Is the cap off, the focus close? Tap **Finder** or **Main camera** to see its last picture,
+  then **Live video** to watch it move. The video keeps going until you tap **Stop video**,
+  say **"Stop the video,"** or ask it to go somewhere. Or say **"Live video of the finder."**
+- Tap **Debug** to see the time, where it thinks it's pointing, and the camera settings.
 - Tap **Beeps** to hear beeps that speed up as you get closer.
 - The screen is red to protect your night vision. Tap **Day mode** to change it.

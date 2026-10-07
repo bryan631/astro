@@ -333,6 +333,44 @@ def test_live_video_starts_stops_and_restores_the_camera():
         assert "no video" in session.handle("stop the video")[0]["text"]
 
 
+def test_video_runs_through_unrelated_commands_until_stopped():
+    with TestClient(server.app).websocket_connect("/ws"):
+        session = server.get_hub().session
+        session.handle("live video of the finder")
+        session.handle("barlow in")  # doesn't need a camera
+        assert session.video_active("finder")
+        assert session.handle("stop")[0] == {"type": "view", "what": "finder"}  # nothing else running
+        session.handle("live video of the finder")
+        session.handle("go to Saturn")  # guidance needs the camera back
+        assert session.video_now() is None
+
+
+def test_video_buttons_are_silent_and_a_reload_shows_the_video():
+    def until_view(ws):
+        kinds = []
+        while True:
+            msg = ws.receive()
+            if not msg.get("text"):
+                continue  # speech audio
+            if (m := json.loads(msg["text"]))["type"] == "view":
+                break
+            kinds.append(m["type"])
+        assert not {"say", "notice"} & set(kinds)
+        return m
+
+    client = TestClient(server.app)
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "video", "camera": "finder"})
+        assert until_view(ws) == {"type": "view", "what": "finder", "video": True}
+        with client.websocket_connect("/ws") as ws2:  # another tablet, or this one reloaded
+            assert until_view(ws2) == {"type": "view", "what": "finder", "video": True}
+        ws.send_json({"type": "video", "camera": None, "then": "debug"})
+        assert until_view(ws) == {"type": "view", "what": "debug"}
+        assert server.get_hub().session.video_now() is None
+        ws.send_json({"type": "text", "text": "barlow in"})
+        assert "Barlow" in receive_until(ws, "say")  # the first thing spoken is this answer
+
+
 def test_video_stream_serves_motion_jpeg():
     import asyncio
 

@@ -2,7 +2,6 @@ import time
 
 import numpy as np
 
-from astro.capture import live_view
 from astro.capture.live_view import LiveView
 from astro.devices.base import Roi
 
@@ -48,14 +47,6 @@ def test_stops_with_the_reason_when_the_gate_says_no():
     assert view.stopped_because == "it's daytime"
     view.stop()
     assert cam.exposure_s == 0.8  # restored even after a gate stop
-
-
-def test_stops_when_nobody_is_watching(monkeypatch):
-    monkeypatch.setattr(live_view, "IDLE_STOP_S", 0.05)
-    view = LiveView(Cam(), 0.05, 600).start()
-    assert wait_for(lambda: not view.running)
-    assert view.stopped_because is None
-    view.stop()
 
 
 class SceneCam(Cam):

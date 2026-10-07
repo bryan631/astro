@@ -96,6 +96,7 @@ function handle(m) {
     if (!unavailable) speak("The telescope isn't ready.");
     unavailable = true;
   }
+  if (m.type === "notice") said.textContent = m.text;  // a button's answer: shown, not spoken
   if (m.type === "view") setView(m.what === "none" ? "" : m.what, !!m.video);
   if (m.type === "hello") { unavailable = false; serverStt = m.server_stt; serverTts = m.server_tts; setupTalk(); }
   if (m.type === "heard") { armedUntil = 0; said.textContent = `“${m.text}”`; heardEl.textContent = `Command: “${m.text}”`; }
@@ -244,8 +245,13 @@ function setView(what, video = false) {
   document.querySelectorAll("#views button").forEach(b => b.classList.toggle("on", b.dataset.v === what));
   if (what) pollView();
 }
-document.getElementById("vid").onclick = () => send(videoOn ? "stop the video" : `live video of the ${view}`);
-document.querySelectorAll("#views button[data-v]").forEach(b => b.onclick = () => setView(view === b.dataset.v ? "" : b.dataset.v));
+// Buttons are silent: the server answers only with the view (spoken requests are spoken to).
+const video = (camera, then) => wsSend(JSON.stringify({type: "video", camera, then}));
+document.getElementById("vid").onclick = () => videoOn ? video(null, view) : video(view);
+document.querySelectorAll("#views button[data-v]").forEach(b => b.onclick = () => {
+  const next = view === b.dataset.v ? "" : b.dataset.v;
+  if (videoOn) video(null, next || "none"); else setView(next);  // video runs until switched off
+});
 function formatDebug(info) {
   return Object.entries(info).map(([section, vals]) => section.toUpperCase() + "\n" +
     Object.entries(vals).map(([k, v]) => `  ${k}: ${JSON.stringify(v)}`).join("\n")).join("\n\n");

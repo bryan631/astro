@@ -28,7 +28,7 @@ from astro.devices.tap import tap
 from astro.guidance.centering import CALIBRATED, Centerer
 from astro.guidance.engine import CueLimiter, DirectionLearner, Guide, wrap180
 from astro.intents import Intent, match_name, parse
-from astro.messages import say
+from astro.messages import notice, say
 from astro.optics import MAIN_SENSOR_PX
 from astro.planner.catalog import load_targets
 from astro.planner.horizon import HorizonMask
@@ -50,6 +50,9 @@ TARGET_REFRESH_S = 1.0  # targets drift ~15"/s, so re-resolve their alt/az once 
 VIDEO = {"finder": (0.1, 400, False), "main": (0.02, 200, True)}
 VIDEO_EXPOSURE = {"finder": (0.01, 0.5), "main": (0.002, 0.2)}  # auto-exposure limits, seconds
 VIDEO_CROP = (1280, 720)
+# Commands that leave live video running; anything else needs a camera (or might) and ends it.
+KEEPS_VIDEO = {"describe", "barlow_on", "barlow_off", "location", "horizon_start",
+               "horizon_mark", "stop_capture", "stop"}
 FOCUS_STEP_S = 1.0  # one finder focus measurement per second while coaching
 MIN_FOCUS_SAMPLES = 3  # focus readings before "done" counts (else the gate was never checked)
 CENTER_STEP_S = 0.5  # main-camera centering cue rate
@@ -128,6 +131,7 @@ class Session:
         self._focus_mode = ""  # "finder" or "main"
         self.main_camera, self.main_sensor = main_camera, main_sensor
         self._video: tuple[str, LiveView] | None = None  # live video in progress: (camera, loop)
+        self._video_announce = True  # started by voice: its end is spoken too
         self.barlow = False
         self.main_focus_ok = False  # pre-flight gate: reset per session and on Barlow change
         self.record_seconds = RECORD_SECONDS
@@ -215,8 +219,9 @@ class Session:
         if intent is not None and intent.name in ("ready", "skip") and not self.wizard_active:
             # Outside setup, "okay" is conversation, and "next step" just means "next".
             intent = Intent("next") if "next" in text.lower() else None
-        if intent is not None and not intent.name.startswith(("view_", "video_")):
-            self.stop_video()  # anything else wants the camera
+        if intent is not None and not intent.name.startswith(("view_", "video_")) \
+                and intent.name not in KEEPS_VIDEO:
+            self.stop_video()  # the command wants the camera
         if intent is not None and intent.name in ("setup", "ready", "skip"):
             return self._wizard_command(intent.name)
         if intent is None:
@@ -249,6 +254,18 @@ class Session:
         return [{"type": "view", "what": name}, say("OK, video stopped.")] if name else [
             say("There's no video running.")]
 
+    def video(self, name: str | None, then: str | None = None) -> list[dict]:
+        """The page's Live video button: start video of `name`, or stop it and show `then`.
+        Silent: only a spoken or typed request is answered aloud."""
+        if name not in (None, *VIDEO) or then not in (None, "finder", "main", "debug", "none"):
+            return []
+        with self._lock:
+            if name is None:
+                stopped = self.stop_video()
+                return [{"type": "view", "what": then or stopped or "none"}]
+            return [notice(m["text"]) if m["type"] == "say" else m
+                    for m in self.start_video(name, announce=False)]
+
     def _stop(self) -> list[dict]:
         """'Stop' (or 'done') ends whatever is going on, most specific first."""
         if self.wizard is not None and self.wizard.active:
@@ -269,6 +286,8 @@ class Session:
             return [say("OK, focus is set.")]
         if self._camera_busy():  # "stop" while taking a picture ends the picture
             return self._stop_capture()
+        if self._video is not None:  # nothing else is going on (guidance ends the video)
+            return self._video_stop()
         self.target, self.guide, self._centering = None, None, False
         return [say("Stopped.")]
 
@@ -359,6 +378,7 @@ class Session:
         return any(job is not None and job.busy for job in (self.recorder, self.stacker))
 
     def goto(self, name: str) -> list[dict]:
+        self.stop_video()  # guidance needs the cameras (the agent comes here directly)
         if self._camera_busy():
             return [say("I'm taking a picture. Say stop first, then we can move.")]
         pre: list[dict] = []
@@ -440,8 +460,8 @@ class Session:
             return None
         return cam.last, cam.bayer, time.monotonic() - cam.last_at
 
-    def start_video(self, name: str) -> list[dict]:
-        cam = getattr(self.finder, "camera", None) if name == "finder" else self.main_camera
+    def start_video(self, name: str, announce: bool = True) -> list[dict]:
+        cam = self.camera(name)
         if cam is None:
             return [say(f"There's no {name} camera connected.")]
         if (self._camera_busy() or self._focus_coach or self._collimation or self._centering
@@ -460,8 +480,9 @@ class Session:
         lock = getattr(self.finder, "camera_lock", None) if name == "finder" else None
         self._video = (name, LiveView(cam, exposure, gain, roi, lock, self.exposure_safety,
                                            VIDEO_EXPOSURE[name]).start())
+        self._video_announce = announce
         return [{"type": "view", "what": name, "video": True},
-                say(f"Showing live video of the {name} camera.")]
+                *([say(f"Showing live video of the {name} camera.")] if announce else [])]
 
     def stop_video(self) -> str | None:
         """End live video and give the camera back. Returns which camera it was, or None."""
@@ -477,10 +498,9 @@ class Session:
     def video_active(self, name: str) -> bool:
         return self._video is not None and self._video[0] == name and self._video[1].running
 
-    def video_touch(self) -> None:
-        """The page's stream calls this: someone is watching, keep the camera running."""
-        if self._video is not None:
-            self._video[1].touch()
+    def video_now(self) -> str | None:
+        """The camera live video is running on, so a page that (re)connects shows it."""
+        return self._video[0] if self._video is not None else None
 
     def show(self, what: str) -> list[dict]:
         self.stop_video()
@@ -549,11 +569,11 @@ class Session:
             return self._tick(t)
 
     def _tick(self, t: float) -> list[dict]:
-        if self._video is not None and not self._video[1].running:  # the gate or idle ended it
-            reason = self._video[1].stopped_because
+        if self._video is not None and not self._video[1].running:  # the exposure gate ended it
+            reason = self._video[1].stopped_because or "the camera stopped"
+            tell = say if self._video_announce else notice
             name = self.stop_video()
-            return [{"type": "view", "what": name},
-                    *([say(f"Stopping the video: {reason}.")] if reason else [])]
+            return [{"type": "view", "what": name}, tell(f"Stopping the video: {reason}.")]
         rec = self.recorder.current if self.recorder else None
         if rec is not None and rec.done.is_set() and not self._announced_done:
             self._announced_done = True
