@@ -4,6 +4,10 @@
 
 1. Turn on the telescope box. Wait one minute.
 2. Open **Astro** on the tablet. **Hold the big circle** and talk. Let go when you finish.
+   Or tap **Hands-free** and start each command with **"Astro"**, like **"Astro, what's good
+   tonight?"**. You can say just **"Astro"**, wait for the screen to say it's listening, then
+   give the command. It ignores speech that doesn't start with "Astro", and it doesn't listen
+   while it is talking. The screen shows what it heard.
 3. If the stars look blurry on the finder, say **"Focus the finder"** and turn its focus
    ring slowly until it says **"that's the sharpest."** Then say **"Done."**
 4. Say **"Set up the telescope."** It walks you through each step. Say **"Ready"** when

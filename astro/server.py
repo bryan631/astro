@@ -60,6 +60,7 @@ def load_env(path: Path = ROOT / ".env") -> None:
 log = logging.getLogger("astro.server")
 LOGGED = {"say", "picture", "get_location"}  # not the 10 Hz "state" or "live" updates
 GALLERY = ROOT / "data" / "gallery"
+UTTERANCES = ROOT / "data" / "utterances"  # ASTRO_SAVE_AUDIO=1: what the tablet sent, to tune voice
 LIVE = ROOT / "data" / "live"  # live-stack previews while they build (not gallery pictures)
 
 # Module state: speech engines, and the shared hubs (one per process; see get_hub).
@@ -349,6 +350,15 @@ async def ws(socket: WebSocket) -> None:
             _sim_hub = None  # the next tablet starts a fresh simulated world
 
 
+def save_utterance(audio: bytes, text: str, handsfree: bool) -> None:
+    """Keep the recording and what whisper heard: real audio to score voice changes against."""
+    UTTERANCES.mkdir(parents=True, exist_ok=True)
+    stem = UTTERANCES / f"{time.strftime('%Y%m%d-%H%M%S')}-{int(time.time() * 1000) % 1000:03d}"
+    ext = "wav" if audio[:4] == b"RIFF" else "webm"
+    Path(f"{stem}.{ext}").write_bytes(audio)
+    Path(f"{stem}.json").write_text(json.dumps({"heard": text, "handsfree": handsfree}))
+
+
 async def handle_spoken(hub: Hub, socket: WebSocket, conn: dict, text: str) -> None:
     """Speech from the tablet. In hands-free mode only "Astro ..." (or the utterance right after
     a bare "Astro") is a command; anything else is shown but ignored."""
@@ -373,6 +383,8 @@ async def handle_message(hub: Hub, socket: WebSocket, conn: dict, msg: dict) -> 
     session = hub.session
     if msg.get("bytes"):  # recorded speech from the tablet
         text = await asyncio.to_thread(stt.transcribe, msg["bytes"])
+        if os.environ.get("ASTRO_SAVE_AUDIO") == "1":
+            save_utterance(msg["bytes"], text, conn["handsfree"])
         if text:
             await handle_spoken(hub, socket, conn, text)
         else:

@@ -1,3 +1,4 @@
+import json
 import os
 
 os.environ["ASTRO_SIM"] = "1"
@@ -238,6 +239,14 @@ def test_handsfree_needs_the_wake_word():
         ws.send_json({"type": "handsfree", "on": False})
         spoken(ws, "go to pizza")  # no wake word needed once off
         assert "go to pizza" in receive_until(ws, "heard")
+
+
+def test_save_utterance_keeps_audio_and_transcript(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "UTTERANCES", tmp_path)
+    server.save_utterance(b"RIFFxxxx", "astro stop", True)
+    (wav,) = tmp_path.glob("*.wav")
+    assert wav.read_bytes() == b"RIFFxxxx"
+    assert json.loads(wav.with_suffix(".json").read_text()) == {"heard": "astro stop", "handsfree": True}
 
 
 def test_hardware_startup_failure_is_reported(monkeypatch):

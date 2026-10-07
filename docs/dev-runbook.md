@@ -76,7 +76,8 @@ tailnet, open the URL in Chrome, and "Add to Home screen".
 ## Speech
 Hands-free mode (button under the talk button; say "Astro, ..." and the page shows what it heard) needs
 `scripts/install-vad.sh` once (Silero VAD into git-ignored `web/vendor/vad`, served offline).
-`scripts/dev/voice_cases.py --transcribe` checks wake-word handling on generated speech-in-noise audio.
+`ASTRO_SAVE_AUDIO=1` keeps every utterance the tablet sends in `data/utterances/` (audio plus what
+whisper heard), a real-audio set to label and score. `scripts/dev/voice_cases.py --transcribe` checks wake-word handling on generated speech-in-noise audio.
 
 `scripts/install-voice.sh` (MiniPC) builds whisper.cpp and installs Piper, writing `voice.env`.
 The server then announces `server_stt/server_tts` and the tablet records audio for the server
