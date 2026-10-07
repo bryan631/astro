@@ -56,7 +56,7 @@
   <div id="vstate" hidden></div>
   <div id="heard"></div>
   <form id="typed"><input id="text" placeholder="or type here" autocomplete="off"><button class="small">Send</button></form>
-  <div id="views"><button class="small" data-v="finder">Finder</button> <button class="small" data-v="main">Main camera</button> <button class="small" data-v="debug">Debug</button></div>
+  <div id="views"><button class="small" data-v="finder">Finder</button> <button class="small" data-v="main">Main camera</button> <button class="small" data-v="debug">Debug</button> <button class="small" id="vid" hidden>Live video</button></div>
   <div id="camview" hidden><img id="camimg" alt="camera view"><div id="camcap"></div></div>
   <pre id="debugbox" hidden></pre>
   <div><button class="small" id="mode">Day mode</button> <button class="small" id="pics">Pictures</button> <button class="small" id="beeps">Beeps off</button></div>
@@ -96,7 +96,7 @@ function handle(m) {
     if (!unavailable) speak("The telescope isn't ready.");
     unavailable = true;
   }
-  if (m.type === "view") setView(m.what === "none" ? "" : m.what);
+  if (m.type === "view") setView(m.what === "none" ? "" : m.what, !!m.video);
   if (m.type === "hello") { unavailable = false; serverStt = m.server_stt; serverTts = m.server_tts; setupTalk(); }
   if (m.type === "heard") { armedUntil = 0; said.textContent = `“${m.text}”`; heardEl.textContent = `Command: “${m.text}”`; }
   if (m.type === "ignored") heardEl.textContent = `Heard, no “Astro”: “${m.text}”`;
@@ -225,14 +225,27 @@ function setupTalk() {
 }
 // Live camera views and the debug panel: the page polls what the server last captured.
 let view = "", viewTimer = null, camUrl = null;
-function setView(what) {
-  view = what; clearTimeout(viewTimer);
-  document.getElementById("camview").hidden = !(what === "finder" || what === "main");
+let videoOn = false;
+function setView(what, video = false) {
+  view = what; videoOn = video; clearTimeout(viewTimer);
+  const isCam = what === "finder" || what === "main";
+  const img = document.getElementById("camimg"), vid = document.getElementById("vid");
+  img.removeAttribute("src");  // drops a running stream, so the server sees nobody watching
+  vid.hidden = !isCam; vid.textContent = video ? "Stop video" : "Live video";
+  document.getElementById("camview").hidden = !isCam;
+  if (video && isCam) {
+    img.src = `/api/camera/${what}.mjpg`;
+    document.getElementById("camcap").textContent = `${what}: live video`;
+    document.querySelectorAll("#views button[data-v]").forEach(b => b.classList.toggle("on", b.dataset.v === what));
+    document.getElementById("debugbox").hidden = true;
+    return;
+  }
   document.getElementById("debugbox").hidden = what !== "debug";
   document.querySelectorAll("#views button").forEach(b => b.classList.toggle("on", b.dataset.v === what));
   if (what) pollView();
 }
-document.querySelectorAll("#views button").forEach(b => b.onclick = () => setView(view === b.dataset.v ? "" : b.dataset.v));
+document.getElementById("vid").onclick = () => send(videoOn ? "stop the video" : `live video of the ${view}`);
+document.querySelectorAll("#views button[data-v]").forEach(b => b.onclick = () => setView(view === b.dataset.v ? "" : b.dataset.v));
 function formatDebug(info) {
   return Object.entries(info).map(([section, vals]) => section.toUpperCase() + "\n" +
     Object.entries(vals).map(([k, v]) => `  ${k}: ${JSON.stringify(v)}`).join("\n")).join("\n\n");

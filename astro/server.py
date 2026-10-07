@@ -21,7 +21,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import PlainTextResponse, Response
+from fastapi.responses import PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnected  # raised when sending to a closed socket
 
@@ -477,6 +477,33 @@ def api_camera(name: str) -> Response:
         raise HTTPException(404, "no frame yet")
     raw, bayer, age = frame
     return Response(jpeg(raw, bayer), media_type="image/jpeg", headers={"X-Frame-Age": f"{age:.1f}"})
+
+
+@app.get("/api/camera/{name}.mjpg")
+async def api_camera_stream(name: str) -> StreamingResponse:
+    """Live video: every new frame of the camera as motion JPEG. Watching keeps the preview alive."""
+    if name not in ("finder", "main"):
+        raise HTTPException(404)
+    try:
+        session = get_hub().session
+    except Exception as e:
+        raise HTTPException(503, str(e)) from e
+    cam = session.camera(name)
+    if cam is None:
+        raise HTTPException(404, "no such camera")
+
+    async def frames():
+        seen = 0.0
+        while session.video_active(name):  # the stream ends with the video
+            session.video_touch()
+            if cam.last is not None and cam.last_at != seen:
+                seen = cam.last_at
+                data = await asyncio.to_thread(jpeg, cam.last, cam.bayer)
+                yield (b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n" % len(data)
+                       + data + b"\r\n")
+            await asyncio.sleep(0.03)
+
+    return StreamingResponse(frames(), media_type="multipart/x-mixed-replace; boundary=frame")
 
 
 @app.get("/sw.js")

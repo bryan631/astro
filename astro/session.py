@@ -428,9 +428,13 @@ class Session:
         return "\n".join(lines) or "Nothing good is up right now."
 
     # --- what the tablet can look at ------------------------------------------------------
+    def camera(self, name: str):
+        """The named camera (finder or main), which keeps its last frame, or None."""
+        return getattr(self.finder, "camera", None) if name == "finder" else self.main_camera
+
     def camera_frame(self, name: str):
         """(raw frame, bayer, age in s) the named camera last captured, or None."""
-        cam = getattr(self.finder, "camera", None) if name == "finder" else self.main_camera
+        cam = self.camera(name)
         if cam is None or getattr(cam, "last", None) is None:
             return None
         return cam.last, cam.bayer, time.monotonic() - cam.last_at
@@ -467,6 +471,9 @@ class Session:
         if hasattr(self.finder, "paused"):
             self.finder.paused.clear()
         return name
+
+    def video_active(self, name: str) -> bool:
+        return self._video is not None and self._video[0] == name and self._video[1].running
 
     def video_touch(self) -> None:
         """The page's stream calls this: someone is watching, keep the camera running."""

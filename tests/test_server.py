@@ -333,6 +333,28 @@ def test_live_video_starts_stops_and_restores_the_camera():
         assert "no video" in session.handle("stop the video")[0]["text"]
 
 
+def test_video_stream_serves_motion_jpeg():
+    import asyncio
+
+    async def two_frames():
+        response = await server.api_camera_stream("finder")
+        parts = []
+        async for part in response.body_iterator:
+            parts.append(part)
+            if len(parts) == 2:
+                break
+        await response.body_iterator.aclose()
+        return response, parts
+
+    with TestClient(server.app).websocket_connect("/ws"):
+        session = server.get_hub().session
+        session.handle("live video of the finder")
+        response, parts = asyncio.run(two_frames())
+        assert response.media_type.startswith("multipart/x-mixed-replace")
+        assert all(b"Content-Type: image/jpeg" in p and b"\xff\xd8" in p for p in parts)
+        session.handle("stop the video")
+
+
 def test_save_utterance_keeps_audio_and_transcript(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "UTTERANCES", tmp_path)
     server.save_utterance(b"RIFFxxxx", "astro stop", True)
