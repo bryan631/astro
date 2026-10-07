@@ -270,7 +270,7 @@ function setupHandsFree(Rec) {
   };
 }
 connect();
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");  // installable (V1)
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").then(r => r.update());  // installable (V1); check for a new build on every load
 </script>
 </body>
 </html>

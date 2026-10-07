@@ -7,6 +7,7 @@ In sim mode a simulated user follows the spoken cues so the whole loop can be wa
 import asyncio
 import contextlib
 import functools
+import hashlib
 import hmac
 import json
 import logging
@@ -17,7 +18,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from astro import calibration_store, logs, site_store
@@ -424,6 +425,14 @@ def gallery() -> list[str]:
     """Processed pictures, newest first."""
     files = sorted(GALLERY.glob("*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
     return [p.name for p in files]
+
+
+@app.get("/sw.js")
+def service_worker() -> Response:
+    """sw.js stamped with a hash of the web files: every deploy changes it, so tablets update."""
+    web = ROOT / "web"
+    build = hashlib.sha256(b"".join(f.read_bytes() for f in sorted(web.glob("*")) if f.is_file())).hexdigest()[:12]
+    return Response(f'const BUILD = "{build}";\n{(web / "sw.js").read_text()}', media_type="text/javascript")
 
 
 app.mount("/pictures", StaticFiles(directory=GALLERY, check_dir=False), name="pictures")

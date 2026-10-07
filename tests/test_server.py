@@ -254,6 +254,12 @@ def test_pages_revalidate():
     assert TestClient(server.app).get("/").headers["cache-control"] == "no-cache"
 
 
+def test_service_worker_is_stamped_with_the_build():
+    r = TestClient(server.app).get("/sw.js")
+    assert r.text.startswith('const BUILD = "') and "skipWaiting" in r.text
+    assert r.headers["cache-control"] == "no-cache"
+
+
 def test_save_utterance_keeps_audio_and_transcript(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "UTTERANCES", tmp_path)
     server.save_utterance(b"RIFFxxxx", "astro stop", True)
