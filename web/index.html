@@ -222,7 +222,7 @@ const loadScript = src => new Promise((ok, fail) => {
 });
 function setupHandsFree(Rec) {
   const btn = document.getElementById("hands"), vstate = document.getElementById("vstate");
-  const TAIL_MS = 600, VAD = "/vendor/vad/";  // absolute: onnxruntime import()s its module from here
+  const TAIL_MS = 600, MAX_UTTERANCE_S = 6, VAD = "/vendor/vad/";  // absolute: onnxruntime import()s its module from here
   let on = false, stream = null, micVad = null, recog = null, hearing = false, tainted = false, lastSpoke = 0;
   const speaking = () => speechSynthesis.speaking || (player && !player.paused && !player.ended);
   const states = {waiting: "Say “Astro…”", hearing: "Hearing you…", armed: "Listening for your command",
@@ -242,11 +242,12 @@ function setupHandsFree(Rec) {
       micVad = await vad.MicVAD.new({
         getStream: async () => stream, baseAssetPath: VAD, onnxWASMBasePath: VAD, model: "v5",
         preSpeechPadMs: 300, redemptionMs: 700, minSpeechMs: 300,  // pre-roll keeps the first word
+        positiveSpeechThreshold: 0.6, negativeSpeechThreshold: 0.4,  // stricter than the default 0.3/0.25: far-away TV talk stays below
         onSpeechStart: () => { hearing = true; tainted = !quiet(); },  // started over our own voice
         onVADMisfire: () => { hearing = false; },
         onSpeechEnd: audio => {
           hearing = false;
-          if (!tainted && quiet()) wsSend(new Blob([vad.utils.encodeWAV(audio)], {type: "audio/wav"}));
+          if (!tainted && quiet() && audio.length < MAX_UTTERANCE_S * 16000) wsSend(new Blob([vad.utils.encodeWAV(audio)], {type: "audio/wav"}));
         },
       });
       micVad.start();
