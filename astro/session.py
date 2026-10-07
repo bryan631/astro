@@ -443,8 +443,8 @@ class Session:
             syncs, rms = f.alignment()
             pointing = {"alt_deg": round(alt, 2), "az_deg": round(az, 2), "synced": f.synced,
                         "syncs": syncs, "model_rms_arcmin": rms}
-            if (age := getattr(f, "fix_age", None)) is not None:
-                pointing["fix_age_s"] = round(age(), 1)
+            if (age := getattr(f, "fix_age", None)) is not None and f.synced:
+                pointing["fix_age_s"] = round(age(), 1)  # seconds since the last good solve
             info["pointing"] = pointing
             if (counts := getattr(f, "raw_counts", None)) is not None:
                 try:
