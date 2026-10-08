@@ -212,10 +212,12 @@ def test_weather_tool_says_so_when_the_forecast_is_unavailable(monkeypatch):
         {"type": "say", "text": "I couldn't get the forecast."}]
 
 
-def test_weather_question_with_tonight_goes_to_claude():
-    client = FakeClient([NS(stop_reason="end_turn", content=[text("Clearing after ten.")])])
-    out = Agent(session(), client=client).handle("when are the clouds going to clear tonight?")
-    assert out[-1]["text"] == "Clearing after ten." and len(client.requests) == 1
+def test_questions_that_say_tonight_go_to_claude():
+    for question in ("when are the clouds going to clear tonight?", "will there be dew tonight?",
+                     "when is Saturn highest tonight?"):
+        client = FakeClient([NS(stop_reason="end_turn", content=[text("Answer.")])])
+        out = Agent(session(), client=client).handle(question)
+        assert out[-1]["text"] == "Answer." and len(client.requests) == 1, question
     plain = FakeClient([])
     Agent(session(), client=plain).handle("what's good tonight")
     assert plain.requests == []  # the list itself stays offline
