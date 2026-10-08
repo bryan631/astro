@@ -219,10 +219,10 @@ function setupTalk() {
     if (talk.textContent !== label) talk.textContent = label;
     talk.disabled = !s && handsOn;
   }, 150);
-  let pressed = false, cancelled = false;
+  let pressed = false;  // this gesture started a recording (a stop tap never does)
   talk.addEventListener("pointerdown", async e => {
     e.preventDefault();
-    if (speakingNow()) { stopAudio(); cancelled = true; return; }  // a tap to stop, not a command
+    if (speakingNow()) { stopAudio(); return; }  // a tap to stop, not a command
     listen(true); pressed = true;
     try {
       await start();
@@ -232,7 +232,7 @@ function setupTalk() {
     }
   });
   for (const ev of ["pointerup", "pointerleave", "pointercancel"])
-    talk.addEventListener(ev, () => { if (cancelled) { cancelled = false; return; } pressed = false; stop(); });
+    talk.addEventListener(ev, () => { if (!pressed) return; pressed = false; stop(); });
 }
 // Live camera views and the debug panel: the page polls what the server last captured.
 let view = "", viewTimer = null, camUrl = null;

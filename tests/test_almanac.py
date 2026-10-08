@@ -31,3 +31,8 @@ def test_moon_two_days_before_new():
 
 def test_events_include_the_orionids():
     assert "Wed Oct 21: Orionids meteor shower peaks" in events_text(PALM_BEACH, OCT8_4PM)
+
+
+def test_each_moon_phase_is_listed_once():
+    text = moon_text(PALM_BEACH, datetime(2026, 10, 9, 12, 0, tzinfo=UTC))  # a day before new
+    assert text.count("Next new Moon") == 1 and text.count("Next full Moon") == 1

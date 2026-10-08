@@ -10,6 +10,7 @@ from astropy.coordinates import AltAz, get_body
 from astropy.time import Time
 
 from astro.planner.horizon import HorizonMask
+from astro.planner.tonight import PLANETS
 from astro.pointing.coords import Site
 
 # Geometric Sun altitudes (no refraction); -0.833 is the standard sunrise/sunset (refraction
@@ -18,7 +19,6 @@ SUN_LEVELS = [(-0.833, "sunset", "sunrise"),
               (-6.0, "civil dusk", "civil dawn"),
               (-12.0, "nautical dusk: dark enough to observe", "nautical dawn: too light to observe"),
               (-18.0, "astronomical dusk: fully dark", "astronomical dawn")]
-PLANETS = ("mercury", "venus", "mars", "jupiter", "saturn")
 # Peak nights (month, day), the same every year to within a day; rate = meteors/hour, dark sky.
 METEOR_SHOWERS = [((1, 3), "Quadrantids", 110), ((4, 22), "Lyrids", 18),
                   ((5, 6), "Eta Aquariids", 50), ((8, 12), "Perseids", 100),
@@ -112,11 +112,14 @@ def moon_text(site: Site, start: datetime) -> str:
     # Next full and new Moon: the lit fraction's turning points over the next 31 days.
     days = _times(start, 31 * 24, 60)
     f, _ = _moon_lit(days)
+    seen = set()  # 31 days is longer than a lunar month: keep only the first of each
     for i in range(1, len(f) - 1):
-        if f[i] > 0.9 and f[i - 1] < f[i] >= f[i + 1]:
-            lines.append(f"Next full Moon: {_local(site, days[i].to_datetime(timezone=start.tzinfo), True)}")
-        if f[i] < 0.1 and f[i - 1] > f[i] <= f[i + 1]:
-            lines.append(f"Next new Moon: {_local(site, days[i].to_datetime(timezone=start.tzinfo), True)}")
+        for phase, turning in (("full", f[i] > 0.9 and f[i - 1] < f[i] >= f[i + 1]),
+                               ("new", f[i] < 0.1 and f[i - 1] > f[i] <= f[i + 1])):
+            if turning and phase not in seen:
+                seen.add(phase)
+                when = days[i].to_datetime(timezone=start.tzinfo)
+                lines.append(f"Next {phase} Moon: {_local(site, when, True)}")
     return "\n".join(lines)
 
 
