@@ -54,4 +54,4 @@ Power off: a short press of the power button shuts down cleanly (logind `HandleP
 - Optional: passwordless sudo for that user (`/etc/sudoers.d/<user>`) lets Claude run installs unattended, but it means any session on that account has root. The Mele is reachable only over your tailnet; drop the file when the bring-up is done.
 - `scripts/setup.sh --minipc` needs HTTPS certificates enabled in the Tailscale admin console (DNS), or it stops at the cert step.
 - The closed-source SVBony SDK is not in the repo: copy it with `tar -C ~ -cz sdk | tailscale ssh <user>@mele 'tar -C ~ -xz'`.
-- The classic Nano (CH340) appears as `/dev/ttyUSB0`, not `ttyACM*`. It runs `astro_mcu` (flashed with `avrdude`, old bootloader at 57600; see `firmware/README.md`). BME280, encoders and heaters are not wired yet.
+- The classic Nano (CH340) appears as `/dev/ttyUSB0`, not `ttyACM*`. It runs `astro_mcu` (flashed with `avrdude`, old bootloader at 57600; see `firmware/README.md`). Encoders are wired and verified (see plan.md); BME280 and heaters are not wired yet.

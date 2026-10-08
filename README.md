@@ -8,6 +8,7 @@ development.
 
 - `docs/user-guide.md`: how to use it at the telescope
 - `docs/dev-runbook.md`: running, layout, deployment
+- `docs/troubleshooting.md`: remote checks (`scripts/check.sh mele`) and common problems
 - `docs/requirements.md`: the requirements this is judged against
 - `docs/plan.md`: the original project plan; `CLAUDE.md`: coding rules
 

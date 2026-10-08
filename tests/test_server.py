@@ -12,6 +12,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from astro import server
+from astro.session import Session
+
+
+@pytest.fixture
+def night(monkeypatch):
+    """Video tests must not depend on the wall clock: by day the Sun gate refuses the camera."""
+    monkeypatch.setattr(Session, "exposure_safety", lambda self: None)
 
 
 def receive_until(ws, kind):
@@ -323,6 +330,7 @@ def test_camera_and_debug_views():
         assert ws_msgs[0] == {"type": "view", "what": "finder"}
 
 
+@pytest.mark.usefixtures("night")
 def test_live_video_starts_stops_and_restores_the_camera():
     with TestClient(server.app).websocket_connect("/ws"):
         session = server.get_hub().session
@@ -342,6 +350,7 @@ def test_live_video_starts_stops_and_restores_the_camera():
         assert "no video" in session.handle("stop the video")[0]["text"]
 
 
+@pytest.mark.usefixtures("night")
 def test_video_runs_through_unrelated_commands_until_stopped():
     with TestClient(server.app).websocket_connect("/ws"):
         session = server.get_hub().session
@@ -354,6 +363,7 @@ def test_video_runs_through_unrelated_commands_until_stopped():
         assert session.video_now() is None
 
 
+@pytest.mark.usefixtures("night")
 def test_main_video_leaves_the_finder_solving_and_a_failed_start_unpauses():
     with TestClient(server.app).websocket_connect("/ws"):
         session = server.get_hub().session
@@ -375,18 +385,16 @@ def test_main_video_leaves_the_finder_solving_and_a_failed_start_unpauses():
         assert not session.finder.paused.is_set() and session.video_now() is None
 
 
+@pytest.mark.usefixtures("night")
 def test_video_buttons_are_silent_and_a_reload_shows_the_video():
     def until_view(ws):
-        kinds = []
         while True:
             msg = ws.receive()
             if not msg.get("text"):
                 continue  # speech audio
             if (m := json.loads(msg["text"]))["type"] == "view":
-                break
-            kinds.append(m["type"])
-        assert not {"say", "notice"} & set(kinds)
-        return m
+                return m
+            assert m["type"] not in ("say", "notice"), m  # silent; and fail, don't wait forever
 
     client = TestClient(server.app)
     with client.websocket_connect("/ws") as ws:
@@ -401,6 +409,7 @@ def test_video_buttons_are_silent_and_a_reload_shows_the_video():
         assert "Barlow" in receive_until(ws, "say")  # the first thing spoken is this answer
 
 
+@pytest.mark.usefixtures("night")
 def test_video_stream_serves_motion_jpeg():
     import asyncio
 
