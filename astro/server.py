@@ -488,9 +488,11 @@ def api_camera(name: str) -> Response:
     """The named camera's last frame (finder or main), as the page's live view polls it."""
     if name not in ("finder", "main"):
         raise HTTPException(404)
-    frame = running_hub().session.camera_frame(name)
-    if frame is None:
-        raise HTTPException(404, "no frame yet")
+    session = running_hub().session
+    frame = session.camera_frame(name)
+    if frame is None:  # say why, so a blank view isn't a mystery
+        why = session.exposure_safety() or "it hasn't taken a picture since the server started"
+        raise HTTPException(404, f"no frame yet: {why}")
     raw, bayer, age = frame
     return Response(jpeg(raw, bayer), media_type="image/jpeg", headers={"X-Frame-Age": f"{age:.1f}"})
 
