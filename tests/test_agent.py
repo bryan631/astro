@@ -86,7 +86,7 @@ def test_every_tool_is_handled():
     from astro.agent import _COMMANDS, TOOLS
 
     handled = set(_COMMANDS) | {"goto", "describe", "focus", "barlow", "session_status", "list_tonight",
-                                "weather"}
+                                "weather", "sun_times"}
     assert {t["name"] for t in TOOLS} <= handled
 
 

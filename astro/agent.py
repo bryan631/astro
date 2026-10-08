@@ -14,6 +14,7 @@ import anthropic
 
 from astro.intents import match_name, parse
 from astro.messages import say
+from astro.planner.sun import sun_text
 from astro.planner.weather import forecast_text
 from astro.session import NOT_UNDERSTOOD, Session
 
@@ -33,6 +34,7 @@ no jargon unless he asks. Use the tools to act; never invent where something is 
 Guidance cues ("push left", "stop") are spoken by the system, not by you.
 If he asks what to see, or refers to something suggested earlier, call list_tonight first.
 For weather, clouds or rain, call weather and answer from it; times are local.
+For sunrise, sunset, twilight or when it gets dark or light, call sun_times.
 He views on the tablet screen, not through an eyepiece."""
 
 TOOLS = [
@@ -77,6 +79,9 @@ TOOLS = [
     {"name": "weather", "description": "Hourly forecast for the next 24 hours at the telescope: "
      "cloud cover (total, low, mid, high), chance of rain, temperature, dew point and wind.",
      "input_schema": {"type": "object", "properties": {}}},
+    {"name": "sun_times", "description": "Sunrise, sunset and twilight (civil, nautical, "
+     "astronomical) at the telescope for the next 24 hours, in local time. Nautical dusk is "
+     "when it's dark enough to observe.", "input_schema": {"type": "object", "properties": {}}},
     {"name": "session_status", "description": "What's going on: aligned or not, target, focus, "
      "Barlow, picture in progress, pictures taken, horizon, clouds.",
      "input_schema": {"type": "object", "properties": {}}},
@@ -206,6 +211,8 @@ class Agent:
         if name == "weather":
             site = self.session.site
             return [say(forecast_text(site.lat_deg, site.lon_deg) or "I couldn't get the forecast.")]
+        if name == "sun_times":
+            return [say(sun_text(self.session.site, self.session.clock()))]
         if name == "list_tonight":
             return [{"type": "say", "text": self.session.tonight_by_category()}]
         if name == "goto":  # by name, not re-parsed as a sentence ("Andromeda (M31)")
