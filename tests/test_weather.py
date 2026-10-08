@@ -47,3 +47,25 @@ def test_clear_or_offline_says_nothing_about_clouds():
 def test_agent_list_includes_cloud_cover():
     s, _ = session(35.0)
     assert "cloud cover: about 35%" in s.tonight_by_category()
+
+
+def hourly(lat, lon):
+    times = [f"2026-10-08T{h:02d}:00" for h in range(18, 24)]
+    n = len(times)
+    return {"current": {"time": "2026-10-08T20:15", "cloud_cover": 90},
+            "hourly": {"time": times, "cloud_cover": [100, 100, 90, 50, 20, 10],
+                       "cloud_cover_low": [0] * n, "cloud_cover_mid": [0] * n,
+                       "cloud_cover_high": [100, 100, 90, 50, 20, 10],
+                       "precipitation_probability": [5] * n, "temperature_2m": [77.4] * n,
+                       "dew_point_2m": [74.0] * n, "wind_speed_10m": [3.2] * n}}
+
+
+def test_forecast_text_starts_at_the_current_hour():
+    from astro.planner.weather import forecast_text
+
+    lines = forecast_text(26.6, -80.1, hours=3, get=hourly).splitlines()
+    assert lines[0] == "Now 20:15 local; cloud cover 90%."
+    assert lines[1].startswith("10-08 20:00: clouds 90%")
+    assert lines[-1].startswith("10-08 22:00: clouds 20% (low 0, mid 0, high 20), rain 5%, 77F")
+    assert len(lines) == 4
+    assert forecast_text(26.6, -80.1, get=lambda lat, lon: {}) is None  # unexpected reply

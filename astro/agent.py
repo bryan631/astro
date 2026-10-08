@@ -13,6 +13,7 @@ import anthropic
 
 from astro.intents import match_name, parse
 from astro.messages import say
+from astro.planner.weather import forecast_text
 from astro.session import NOT_UNDERSTOOD, Session
 
 MODEL = "claude-haiku-4-5"
@@ -28,6 +29,7 @@ Replies are spoken aloud: one to three short, warm, plain sentences. No lists, n
 no jargon unless he asks. Use the tools to act; never invent where something is in the sky.
 Guidance cues ("push left", "stop") are spoken by the system, not by you.
 If he asks what to see, or refers to something suggested earlier, call list_tonight first.
+For weather, clouds or rain, call weather and answer from it; times are local.
 He views on the tablet screen, not through an eyepiece."""
 
 TOOLS = [
@@ -68,6 +70,9 @@ TOOLS = [
      "'mark' at points along it and 'done').", "input_schema": {"type": "object", "properties": {}}},
     {"name": "collimate", "description": "Check the telescope's collimation (mirror alignment) "
      "from a defocused star and coach the primary mirror's screws.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "weather", "description": "Hourly forecast for the next 24 hours at the telescope: "
+     "cloud cover (total, low, mid, high), chance of rain, temperature, dew point and wind.",
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "session_status", "description": "What's going on: aligned or not, target, focus, "
      "Barlow, picture in progress, pictures taken, horizon, clouds.",
@@ -193,6 +198,9 @@ class Agent:
             return self.session.handle("barlow in" if args.get("inserted") else "barlow out")
         if name == "session_status":
             return [{"type": "say", "text": self.session.status_text()}]
+        if name == "weather":
+            site = self.session.site
+            return [say(forecast_text(site.lat_deg, site.lon_deg) or "I couldn't get the forecast.")]
         if name == "list_tonight":
             return [{"type": "say", "text": self.session.tonight_by_category()}]
         if name == "goto":  # by name, not re-parsed as a sentence ("Andromeda (M31)")
