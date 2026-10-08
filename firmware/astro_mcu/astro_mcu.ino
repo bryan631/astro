@@ -3,7 +3,8 @@
 // astro/devices/mcu_protocol.py.
 //
 // Wiring (screw-terminal board):
-//   Az encoder A/B  -> D2 / D4      Alt encoder A/B -> D7 / D8   (5 V TTL quadrature; UNVERIFIED)
+//   IntelliScope RJ12 (cut, scope end): white 5V, blue GND,
+//     green az A -> A6, red az B -> A3, yellow alt A -> A7, black alt B -> A2
 //   Heater MOSFETs  -> D9 (secondary), D10 (finder lens)   (power from the bank, not the Nano)
 //   BME280 I2C      -> A4 SDA / A5 SCL                      DS18B20 (optional) -> D12, 4.7k pull-up
 
@@ -15,9 +16,9 @@
 #endif
 
 const char* NAME = "astro-mcu";
-const char* VERSION = "0.1";
+const char* VERSION = "0.2";
 
-const uint8_t AZ_A = 2, AZ_B = 4, ALT_A = 7, ALT_B = 8;
+const uint8_t AZ_A = A6, AZ_B = A3, ALT_A = A7, ALT_B = A2;
 const uint8_t HEATER_PINS[2] = {9, 10};
 const uint8_t ONE_WIRE_PIN = 12;
 
@@ -25,11 +26,40 @@ const unsigned long POS_EVERY_MS = 50;     // 20 Hz
 const unsigned long ENV_EVERY_MS = 1000;   // 1 Hz
 const unsigned long HEARTBEAT_MS = 10000;  // heaters off if the host goes quiet
 
-// Quadrature decoding: one table for every (previous AB, current AB) transition.
-// +1 / -1 for a valid step, 0 for no change or an invalid (missed) transition.
-const int8_t QUAD[16] = {0, -1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0};
-volatile long azCount = 0, altCount = 0;
-volatile uint8_t azState = 0, altState = 0;
+// The IntelliScope encoders are analog: two Hall sensors per axis give sine waves a quarter
+// cycle apart (~0.2-4.7 V), 36 cycles per turn. atan2 of the pair gives the angle within a
+// cycle as 0-255, so a turn is 36 * 256 = 9216 counts. Each axis tracks its sensors' min/max to
+// center and scale them, and adds up the change in angle every sample (~1 kHz), so it only loses
+// count if the axis moves half a cycle (5 degrees) between two samples.
+struct Axis {
+  uint8_t pinA, pinB;
+  int lo[2] = {1023, 1023}, hi[2] = {0, 0};
+  int last = 0;  // last angle, 0-255
+  long count = 0;
+  Axis(uint8_t a, uint8_t b) : pinA(a), pinB(b) {}
+};
+Axis az(AZ_A, AZ_B), alt(ALT_A, ALT_B);
+const int MIN_SPAN = 200;  // ADC counts: until a sensor has swung this far, assume mid-scale
+
+// Center and scale one sensor reading to about -1..1.
+float scaled(Axis& x, uint8_t i, int v) {
+  x.lo[i] = min(x.lo[i], v);
+  x.hi[i] = max(x.hi[i], v);
+  int span = x.hi[i] - x.lo[i];
+  if (span < MIN_SPAN) return (v - 512) / 400.0;
+  return (2.0 * v - x.hi[i] - x.lo[i]) / span;
+}
+
+int angle(Axis& x) {
+  float a = scaled(x, 0, analogRead(x.pinA)), b = scaled(x, 1, analogRead(x.pinB));
+  return (int)lround(atan2(b, a) * (128 / PI)) & 255;
+}
+
+void sample(Axis& x) {
+  int now = angle(x);
+  x.count += (int8_t)(now - x.last);  // the change, wrapped to -128..127
+  x.last = now;
+}
 
 Adafruit_BME280 bme;
 bool bmeOk = false;
@@ -44,18 +74,6 @@ const unsigned long OPTIC_CONVERSION_MS = 800;
 unsigned long lastPos = 0, lastEnv = 0, lastPing = 0;
 char line[48];
 uint8_t lineLen = 0;
-
-void azChange() {
-  uint8_t s = (digitalRead(AZ_A) << 1) | digitalRead(AZ_B);
-  azCount += QUAD[(azState << 2) | s];
-  azState = s;
-}
-
-void altChange() {
-  uint8_t s = (digitalRead(ALT_A) << 1) | digitalRead(ALT_B);
-  altCount += QUAD[(altState << 2) | s];
-  altState = s;
-}
 
 // Send BODY*CS\n where CS is the XOR of BODY's bytes, two hex digits.
 void sendLine(const char* body) {
@@ -110,9 +128,7 @@ void handleCommand(char* text) {
       sendLine("ERR bad HEAT");
     }
   } else if (strcmp(text, "ZERO") == 0) {
-    noInterrupts();
-    azCount = altCount = 0;
-    interrupts();
+    az.count = alt.count = 0;
   } else if (strcmp(text, "VER?") == 0) {
     snprintf(buf, sizeof buf, "VER %s %s", NAME, VERSION);
     sendLine(buf);
@@ -139,11 +155,8 @@ void readSerial() {
 }
 
 void sendPosition() {
-  noInterrupts();
-  long az = azCount, alt = altCount;
-  interrupts();
   char buf[40];
-  snprintf(buf, sizeof buf, "POS %ld %ld", az, alt);
+  snprintf(buf, sizeof buf, "POS %ld %ld", az.count, alt.count);
   sendLine(buf);
 }
 
@@ -180,29 +193,8 @@ void pollOptic(unsigned long now) {
 }
 
 #ifdef __AVR_ATmega328P__
-// The 328P only has external interrupts on D2/D3, so use pin-change interrupts:
-// D2, D4, D7 share PCINT2 (port D); D8 is PCINT0 (port B). Unchanged pins decode to 0.
-ISR(PCINT2_vect) {
-  azChange();
-  altChange();
-}
-ISR(PCINT0_vect) { altChange(); }
-
-void encodersStart() {
-  PCMSK2 |= _BV(PCINT18) | _BV(PCINT20) | _BV(PCINT23);  // D2, D4, D7
-  PCMSK0 |= _BV(PCINT0);                                 // D8
-  PCICR |= _BV(PCIE2) | _BV(PCIE0);
-}
-
 void watchdogStart() { wdt_enable(WDTO_2S); }  // reset if loop() stalls for ~2 s
 #else
-void encodersStart() {
-  attachInterrupt(digitalPinToInterrupt(AZ_A), azChange, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(AZ_B), azChange, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(ALT_A), altChange, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(ALT_B), altChange, CHANGE);
-}
-
 void watchdogStart() {  // ATmega4809: reset if loop() stalls for ~2 s
   _PROTECTED_WRITE(WDT.CTRLA, WDT_PERIOD_2KCLK_gc);
 }
@@ -214,13 +206,10 @@ void watchdogFeed() {
 
 void setup() {
   Serial.begin(115200);
-  const uint8_t encoderPins[] = {AZ_A, AZ_B, ALT_A, ALT_B};
-  for (uint8_t pin : encoderPins) pinMode(pin, INPUT_PULLUP);
   for (uint8_t pin : HEATER_PINS) pinMode(pin, OUTPUT);
   heatersOff();
-  azState = (digitalRead(AZ_A) << 1) | digitalRead(AZ_B);
-  altState = (digitalRead(ALT_A) << 1) | digitalRead(ALT_B);
-  encodersStart();
+  az.last = angle(az);
+  alt.last = angle(alt);
   bmeOk = bme.begin(0x76) || bme.begin(0x77);
   optic.begin();
   opticOk = optic.getDeviceCount() > 0;
@@ -233,6 +222,8 @@ void setup() {
 
 void loop() {
   watchdogFeed();
+  sample(az);
+  sample(alt);
   readSerial();
   unsigned long now = millis();
   if (now - lastPos >= POS_EVERY_MS) {
