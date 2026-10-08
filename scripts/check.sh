@@ -55,6 +55,8 @@ local_checks() {
     local errs; errs=$(grep -ciE 'error|traceback' <<<"$log")
     [ "$errs" -eq 0 ] && ok "no errors in the last 15 min of logs" || warn "$errs error lines in 15 min: journalctl -u astro --since -15min"
   else warn "can't read the service log (not in group systemd-journal or adm?)"; fi
+  grep -qE '^ANTHROPIC_API_KEY=.+' ~astro/astro/.env 2>/dev/null && ok "Claude API key in .env" \
+    || warn "no Claude API key in ~/astro/.env: only the basic commands work"
   local cert; cert=$(ls ~astro/astro/certs/*.crt 2>/dev/null | head -1)
   if [ -n "$cert" ]; then
     openssl x509 -checkend 604800 -noout -in "$cert" >/dev/null && ok "cert valid > 7 days" || warn "cert expires within 7 days: scripts/tailscale-cert.sh"

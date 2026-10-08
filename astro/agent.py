@@ -4,6 +4,7 @@ Pointing stays deterministic: tools only start/stop guidance; cues come from the
 Falls back to the offline grammar when there's no API key or no network.
 """
 
+import logging
 import os
 import threading
 import time
@@ -11,12 +12,16 @@ import time
 import anthropic
 
 from astro.intents import match_name, parse
-from astro.session import Session
+from astro.messages import say
+from astro.session import NOT_UNDERSTOOD, Session
 
 MODEL = "claude-haiku-4-5"
 MAX_TOOL_ROUNDS = 4
 OFFLINE_RETRY_S = 60.0  # after a connection failure, try Claude again this much later
 HISTORY_TURNS = 10
+NO_KEY = "there's no Claude API key on the telescope computer"
+
+log = logging.getLogger(__name__)
 
 SYSTEM = """You help a 77-year-old amateur astronomer use his telescope by voice.
 Replies are spoken aloud: one to three short, warm, plain sentences. No lists, no markdown,
@@ -94,6 +99,7 @@ class Agent:
         self.history: list[dict] = []
         self._turn = threading.Lock()  # one conversation turn at a time (two tablets talking)
         self._offline_until = 0.0  # after a connection failure, answer offline until then
+        self._why = ""  # the last failure, said when the offline grammar can't help
 
     def handle(self, text: str) -> list[dict]:
         """Return messages for the tablet. Core commands never need the network."""
@@ -101,9 +107,12 @@ class Agent:
             return self._handle(text)
 
     def _handle(self, text: str) -> list[dict]:
-        offline = time.monotonic() < self._offline_until  # recently unreachable: don't wait again
-        if self.client is None or offline or self._offline_understands(text):
+        if self._offline_understands(text):
             return self.session.handle(text)
+        if self.client is None:
+            return self._offline(text, NO_KEY)
+        if time.monotonic() < self._offline_until:  # recently unreachable: don't wait again
+            return self._offline(text, self._why)
         try:
             return self._run(text)
         except _ToolsRan as partial:  # don't do it all again offline
@@ -111,10 +120,20 @@ class Agent:
             return [*partial.side_effects, {"type": "say", "text": PARTIAL}]
         except anthropic.APIError as e:
             self._note_failure(e)
-            return self.session.handle(text)
+            return self._offline(text, self._why)
+
+    def _offline(self, text: str, why: str) -> list[dict]:
+        """The offline grammar; if it doesn't understand either, say why Claude couldn't help."""
+        out = self.session.handle(text)
+        if out == [say(NOT_UNDERSTOOD)]:
+            return [say(f"I can only do the basic commands right now, because {why}. "
+                        "Say 'what's good tonight' or 'go to Saturn'.")]
+        return out
 
     def _note_failure(self, e: BaseException | None) -> None:
-        if isinstance(e, (anthropic.APIConnectionError, anthropic.APITimeoutError)):
+        log.warning("Claude unavailable: %r", e)
+        self._why = _reason(e)
+        if isinstance(e, anthropic.APIConnectionError):  # includes timeouts
             self._offline_until = time.monotonic() + OFFLINE_RETRY_S
 
     def _offline_understands(self, text: str) -> bool:
@@ -183,6 +202,21 @@ class Agent:
         if name in _COMMANDS:
             return self.session.handle(_COMMANDS[name])
         return [{"type": "say", "text": f"Unknown tool {name}."}]
+
+
+def _reason(e: BaseException | None) -> str:
+    """Why Claude couldn't answer, in words for the user."""
+    if isinstance(e, anthropic.APIConnectionError):
+        return "I can't reach Claude, so the internet may be down"
+    if isinstance(e, (anthropic.AuthenticationError, anthropic.PermissionDeniedError)):
+        return "Claude rejected the API key"
+    if isinstance(e, anthropic.BadRequestError) and "credit" in str(e).lower():
+        return "the Claude account is out of credit"
+    if isinstance(e, anthropic.RateLimitError):
+        return "Claude says we're asking too often"
+    if isinstance(e, anthropic.APIStatusError) and e.status_code >= 500:
+        return "Claude is having problems right now"
+    return "Claude returned an error"
 
 
 def _default_client() -> anthropic.Anthropic | None:

@@ -51,6 +51,7 @@ VIDEO = {"finder": (0.1, 400, False), "main": (0.02, 200, True)}
 VIDEO_EXPOSURE = {"finder": (0.01, 0.5), "main": (0.002, 0.2)}  # auto-exposure limits, seconds
 VIDEO_CROP = (1280, 720)
 # Commands that leave live video running; anything else needs a camera (or might) and ends it.
+NOT_UNDERSTOOD = "Sorry, I didn't catch that. Say 'what's good tonight' or 'go to Saturn'."
 KEEPS_VIDEO = {"describe", "barlow_on", "barlow_off", "location", "horizon_start",
                "horizon_mark", "stop_capture", "stop"}
 FOCUS_STEP_S = 1.0  # one finder focus measurement per second while coaching
@@ -225,7 +226,7 @@ class Session:
         if intent is not None and intent.name in ("setup", "ready", "skip"):
             return self._wizard_command(intent.name)
         if intent is None:
-            return [say("Sorry, I didn't catch that. Say 'what's good tonight' or 'go to Saturn'.")]
+            return [say(NOT_UNDERSTOOD)]
         if intent.name == "goto":
             name = match_name(intent.target or "", self.names())
             return self.goto(name) if name else [say(f"I don't know {intent.target}.")]
