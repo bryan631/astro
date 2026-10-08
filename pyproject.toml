@@ -18,6 +18,7 @@ packages = ["astro"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+tmp_path_retention_policy = "failed"  # recording tests write ~1 GB per run
 
 [tool.ruff]
 line-length = 100

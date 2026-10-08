@@ -66,17 +66,8 @@ def plan(site: Site, start: datetime, mask: HorizonMask | None = None,
     elongation = get_body("sun", times, frame.location).separation(moon).rad
     moon_lit = (1 - np.cos(elongation)) / 2
 
-    candidates: list[tuple[str, str, str, SkyCoord, float]] = []
-    for p, weight in PLANETS.items():
-        candidates.append((p.capitalize(), "planet", PLANET_NOTES[p],
-                           get_body(p, times, frame.location), weight))
-    candidates.append(("Moon", "moon", "Craters and mountains along the shadow line.", moon, 3.0))
-    for t in targets:
-        coord = SkyCoord(ra=t.ra * u.deg, dec=t.dec * u.deg)
-        candidates.append((t.name, t.category, t.note, coord, 1.0))
-
     out: dict[str, list[Choice]] = {}
-    for name, cat, note, coord, weight in candidates:
+    for name, cat, note, coord, weight in candidates(times, frame.location, targets):
         aa = coord.transform_to(frame)
         alt, az = aa.alt.deg, aa.az.deg
         visible = alt > mask.min_alt(az)
@@ -94,6 +85,17 @@ def plan(site: Site, start: datetime, mask: HorizonMask | None = None,
     if moon_choice := out.get("moon"):
         out["moon feature"] = _moon_features(moon_choice[0], Time(moon_choice[0].best_time))
     return {c: sorted(v, key=lambda x: -x.score)[:per_category] for c, v in out.items()}
+
+
+def candidates(times: Time, location, targets: list[Target]) -> list[tuple[str, str, str, SkyCoord, float]]:
+    """(name, category, note, coordinate, weight) for the planets, the Moon and the catalog."""
+    out = [(p.capitalize(), "planet", PLANET_NOTES[p], get_body(p, times, location), weight)
+           for p, weight in PLANETS.items()]
+    out.append(("Moon", "moon", "Craters and mountains along the shadow line.",
+                get_body("moon", times, location), 3.0))
+    out += [(t.name, t.category, t.note, SkyCoord(ra=t.ra * u.deg, dec=t.dec * u.deg), 1.0)
+            for t in targets]
+    return out
 
 
 def moon_minus_sun_deg(when: Time) -> float:
