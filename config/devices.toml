@@ -11,7 +11,7 @@ driver = "svbony"      # svbony | none
 model = "SV705C"
 
 [mount]
-driver = "solve"       # mcu (encoders via the Nano) | handset (IntelliScope RS-232) | solve (finder only)
+driver = "mcu"         # mcu (encoders via the Nano) | handset (IntelliScope RS-232) | solve (finder only)
 port = ""              # mcu: empty = first ttyACM*, then ttyUSB*; handset: empty = /dev/ttyUSB0.
                        # Set explicitly when both are plugged in (classic Nano and handset are both ttyUSB*).
 counts_per_rev = 9216
