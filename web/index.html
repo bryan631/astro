@@ -212,9 +212,18 @@ function setupTalk() {
     talk.textContent = "Type below"; talk.disabled = true; return;
   }
   setupHandsFree(Rec);
-  let pressed = false;
+  // While the telescope talks, the big button stops it (in either mode) instead of listening.
+  const speakingNow = () => speechSynthesis.speaking || (player && !player.paused && !player.ended);
+  setInterval(() => {
+    const s = !!speakingNow(), label = s ? "Tap to stop talking" : "Hold to talk";
+    if (talk.textContent !== label) talk.textContent = label;
+    talk.disabled = !s && handsOn;
+  }, 150);
+  let pressed = false, cancelled = false;
   talk.addEventListener("pointerdown", async e => {
-    e.preventDefault(); stopAudio(); listen(true); pressed = true;
+    e.preventDefault();
+    if (speakingNow()) { stopAudio(); cancelled = true; return; }  // a tap to stop, not a command
+    listen(true); pressed = true;
     try {
       await start();
       if (!pressed) stop();  // let go while the microphone was opening
@@ -223,7 +232,7 @@ function setupTalk() {
     }
   });
   for (const ev of ["pointerup", "pointerleave", "pointercancel"])
-    talk.addEventListener(ev, () => { pressed = false; stop(); });
+    talk.addEventListener(ev, () => { if (cancelled) { cancelled = false; return; } pressed = false; stop(); });
 }
 // Live camera views and the debug panel: the page polls what the server last captured.
 let view = "", viewTimer = null, camUrl = null;
