@@ -19,7 +19,7 @@ What it checks on the Mele:
 |---|---|---|
 | network | default route, WiFi name, internet, Tailscale | a route; `NETGEAR30` or the Pixel hotspot (or Ethernet) |
 | devices | SVBony cameras (`lsusb -d f266:`), MCU serial port, `astro` groups | 2 cameras; `/dev/ttyUSB0` or `ttyACM0` for the MCU; `video`, `dialout` |
-| service | `astro` service, web on :8443, errors in the last 15 min, cert expiry | active, 200 (401 when `ASTRO_TOKEN` is set; HTTP if there's no cert), none, > 7 days |
+| service | `astro` service, web on :8443, errors in the last 15 min, Claude API key, cert expiry | active, 200 (401 when `ASTRO_TOKEN` is set; HTTP if there's no cert), none, set, > 7 days |
 | system | free disk, load | > 2 GB |
 
 ## Symptoms
@@ -48,6 +48,11 @@ Usually a camera not found: check the cables, then `lsusb -d f266:` (want 2 line
 **MCU light is on but no serial port.** One of the Mele's USB-C ports is power-only: power goes
 there, the MCU on the other. A charge-only cable does the same. The classic Nano shows up as
 `/dev/ttyUSB0`.
+
+**"I can only do the basic commands right now, because ..."** Claude couldn't answer, and the
+reason follows: no API key (put `ANTHROPIC_API_KEY=...` in `~/astro/.env`, then restart), no
+internet, the key was rejected, or the account is out of credit (console.anthropic.com, Billing).
+Commands like "go to Saturn" still work offline. `journalctl -u astro | grep Claude` shows the error.
 
 **Voice: "I can't use the microphone".** The page must be opened over `https://` with the ts.net
 name, and the mic allowed for the site. Hands-free needs `scripts/install-vad.sh` run once.

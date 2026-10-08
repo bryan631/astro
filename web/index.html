@@ -272,7 +272,10 @@ async function pollView() {
         if (camUrl) URL.revokeObjectURL(camUrl);
         camUrl = url;
         document.getElementById("camcap").textContent = `${what}: frame ${r.headers.get("X-Frame-Age")} s old`;
-      } else if (!r.ok) document.getElementById("camcap").textContent = `${what}: no frame yet`;
+      } else if (!r.ok) {
+        const why = (await r.json().catch(() => ({}))).detail || "no frame yet";
+        document.getElementById("camcap").textContent = `${what}: ${why}`;
+      }
     }
   } catch (e) { report(`View failed: ${e.message}`); }
   if (view === what) viewTimer = setTimeout(pollView, what === "debug" ? 1000 : 1500);

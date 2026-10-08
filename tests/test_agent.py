@@ -85,7 +85,8 @@ def test_session_status_tool_reports_facts():
 def test_every_tool_is_handled():
     from astro.agent import _COMMANDS, TOOLS
 
-    handled = set(_COMMANDS) | {"goto", "describe", "focus", "barlow", "session_status"}
+    handled = set(_COMMANDS) | {"goto", "describe", "focus", "barlow", "session_status", "list_tonight",
+                                "weather"}
     assert {t["name"] for t in TOOLS} <= handled
 
 
@@ -161,3 +162,51 @@ def test_out_of_tool_rounds_ends_with_words():
     out = Agent(session(), client=client).handle("tell me everything, then more")
     assert out[-1]["text"] == "All set."
     assert client.requests[-1]["tool_choice"] == {"type": "none"}
+
+
+def test_without_a_key_a_question_says_why_it_cant_help():
+    out = Agent(session(), client=None).handle("when will the clouds clear?")
+    assert "no Claude API key" in out[0]["text"]
+
+
+class Failing:
+    """A client whose every request raises `error`."""
+
+    def __init__(self, error):
+        self.error, self.messages = error, self
+
+    def create(self, **kw):
+        raise self.error
+
+
+def status_error(cls, code, message="nope"):
+    import httpx
+
+    response = httpx.Response(code, request=httpx.Request("POST", "https://x"))
+    return cls(message, response=response, body=None)
+
+
+def test_claude_failures_are_explained_and_commands_still_work():
+    import anthropic
+
+    cases = [
+        (Unreachable(), "can't reach Claude"),
+        (Failing(status_error(anthropic.AuthenticationError, 401)), "rejected the API key"),
+        (Failing(status_error(anthropic.BadRequestError, 400, "Your credit balance is too low")),
+         "out of credit"),
+        (Failing(status_error(anthropic.InternalServerError, 529)), "having problems"),
+    ]
+    for client, why in cases:
+        a = Agent(session(), client=client)
+        assert why in a.handle("when will the clouds clear?")[0]["text"]
+        assert why in a.handle("is it going to rain?")[0]["text"]  # offline window or not
+        assert a.handle("go to albireo") == [{"type": "say", "text": "Let's find Albireo."}]
+
+
+
+def test_weather_tool_says_so_when_the_forecast_is_unavailable(monkeypatch):
+    import astro.agent
+
+    monkeypatch.setattr(astro.agent, "forecast_text", lambda lat, lon: None)
+    assert Agent(session(), client=None)._call("weather", {}) == [
+        {"type": "say", "text": "I couldn't get the forecast."}]
