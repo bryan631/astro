@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Record a treeline</title>
+<style>
+  :root { --bg: #111; --fg: #f2f2f2; --dim: #888; --accent: #ff6b5e; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 20px/1.35 system-ui, sans-serif;
+         padding: 16px; display: flex; flex-direction: column; gap: 12px; max-width: 720px; margin-inline: auto; }
+  h1 { font-size: 24px; margin: 0; }
+  p { margin: 0; }
+  .help { color: var(--dim); font-size: 17px; }
+  #view { position: relative; width: 100%; aspect-ratio: 4 / 3; background: #000; border-radius: 8px; overflow: hidden; }
+  #view video { width: 100%; height: 100%; object-fit: cover; }
+  #view::before, #view::after { content: ""; position: absolute; background: var(--accent); }
+  #view::before { left: 0; right: 0; top: 50%; height: 2px; }   /* the crosshair: put the */
+  #view::after { top: 0; bottom: 0; left: 50%; width: 2px; }    /* line on the treetops  */
+  #read { font-size: 28px; font-variant-numeric: tabular-nums; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  button, input { font: inherit; padding: 12px 18px; border-radius: 8px; border: 2px solid var(--fg);
+                  background: transparent; color: var(--fg); }
+  input { flex: 1; min-width: 0; }
+  #mark { flex: 1; font-size: 28px; border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: .4; }
+  #status { min-height: 1.4em; }
+</style>
+</head>
+<body>
+<h1>Record a treeline</h1>
+<p class="help">Stand where the telescope goes. Point the back of the tablet at the treetops so the
+  red line sits on them, and tap <b>Mark</b>. Turn a little and mark again, all the way around
+  (8 to 15 marks). Then tap <b>Save</b>.</p>
+<div class="row"><input id="name" list="known" placeholder="Spot name, e.g. Back deck" autocomplete="off">
+  <datalist id="known"></datalist></div>
+<div id="view"><video id="cam" autoplay playsinline muted></video></div>
+<p id="read">Starting the compass…</p>
+<div class="row"><button id="mark" disabled>Mark</button><button id="undo" disabled>Undo</button>
+  <button id="save" disabled>Save</button></div>
+<p id="status"></p>
+<p class="help">The compass is only good to about 5 degrees: fine for planning. A treeline walk with
+  the telescope later replaces this one. <a href="/tonight" style="color: inherit">Tonight's report</a></p>
+<script>
+const $ = id => document.getElementById(id);
+let az = null, alt = null;
+const marks = [];
+const status = t => { $("status").textContent = t; };
+// Where the back camera points, from the device orientation (W3C: R = Rz(alpha) Rx(beta) Ry(gamma),
+// world x east, y north, z up). The camera looks along the device's -z axis.
+function aim(e) {
+  if (e.alpha == null) return;
+  const r = Math.PI / 180, a = e.alpha * r, b = e.beta * r, g = e.gamma * r;
+  const east = -(Math.cos(a) * Math.sin(g) + Math.sin(a) * Math.sin(b) * Math.cos(g));
+  const north = -(Math.sin(a) * Math.sin(g) - Math.cos(a) * Math.sin(b) * Math.cos(g));
+  const up = -(Math.cos(b) * Math.cos(g));
+  az = (Math.atan2(east, north) / r + 360) % 360;
+  alt = Math.asin(Math.max(-1, Math.min(1, up))) / r;
+  $("read").textContent = `Toward ${az.toFixed(0)}°, ${alt.toFixed(0)}° up · ${marks.length} marks`;
+  $("mark").disabled = false;
+}
+if ("ondeviceorientationabsolute" in window) addEventListener("deviceorientationabsolute", aim);
+else $("read").textContent = "This browser has no compass reading; use Chrome on Android.";
+navigator.mediaDevices?.getUserMedia({video: {facingMode: "environment"}})
+  .then(s => { $("cam").srcObject = s; })
+  .catch(e => status(`No camera (${e.message}): aim along the tablet's back instead.`));
+fetch("/api/spots").then(r => r.json()).then(names => {
+  $("known").innerHTML = names.map(n => `<option value="${n.replace(/"/g, "&quot;")}">`).join("");
+}).catch(() => {});
+function update() {
+  $("undo").disabled = !marks.length;
+  $("save").disabled = marks.length < 3;
+  if (az != null) $("read").textContent = `Toward ${az.toFixed(0)}°, ${alt.toFixed(0)}° up · ${marks.length} marks`;
+}
+$("mark").onclick = () => { marks.push([az, Math.max(0, alt)]); status(`Marked ${marks.length}.`); update(); };
+$("undo").onclick = () => { marks.pop(); status(`${marks.length} marks.`); update(); };
+$("save").onclick = () => {
+  const name = $("name").value.trim();
+  if (!name) { status("Give the spot a name first."); $("name").focus(); return; }
+  $("save").disabled = true; status("Getting the location…");
+  navigator.geolocation.getCurrentPosition(async p => {
+    try {
+      const r = await fetch("/api/spots", {method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({name, lat: p.coords.latitude, lon: p.coords.longitude,
+                              elevation: p.coords.altitude, points: marks})});
+      const out = await r.json();
+      status(r.ok ? out.said : `Not saved: ${out.detail}`);
+      if (r.ok) { marks.length = 0; update(); }
+    } catch (e) { status(`Not saved: ${e.message}`); }
+    $("save").disabled = marks.length < 3;
+  }, e => { status(`No location (${e.message}). Allow location for this site and try again.`);
+            $("save").disabled = false; }, {enableHighAccuracy: true, timeout: 20000});
+};
+</script>
+</body>
+</html>

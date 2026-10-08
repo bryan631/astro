@@ -131,10 +131,10 @@ def _cloud_class(pct: float | None) -> str:
     return "unk" if pct is None else "clear" if pct < 30 else "part" if pct < 70 else "cloudy"
 
 
-def render_html(night: Night | None, spots: list[Spot]) -> str:
+def render_html(night: Night | None, spots: list[Spot], note: str = "") -> str:
     tz = spots[0].site.timezone if spots else UTC
     if night is None:
-        body = "<p>It doesn't get dark tonight.</p>"
+        body = f"<p>{html.escape(note or 'It does not get dark tonight.')}</p>"
         title = "Tonight"
     else:
         title = f"Tonight, {night.dark_start.astimezone(tz):%a %b %d}"
@@ -187,10 +187,12 @@ def main(argv: list[str]) -> int:
     text = os.environ.get("SPOTS_TOML") or (Path("data/spots.toml").read_text()
                                             if Path("data/spots.toml").exists() else "")
     spots, _ = spot_store.parse(text)
-    if not spots:
-        print("No spots: set SPOTS_TOML or record treelines first", file=sys.stderr)
-        return 1
     out.parent.mkdir(parents=True, exist_ok=True)
+    if not spots:  # a page that says so, not a failing scheduled job
+        print("No spots: set SPOTS_TOML or record treelines first", file=sys.stderr)
+        out.write_text(render_html(None, [], "No spots yet: record a treeline with the tablet, "
+                                               "then run scripts/publish-spots.sh."))
+        return 0
     out.write_text(render_html(build(spots, datetime.now(UTC)), spots))
     print(f"wrote {out}")
     return 0

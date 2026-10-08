@@ -18,6 +18,7 @@
           border: 6px solid var(--fg); background: transparent; color: var(--fg); font-size: 40px; }
   #talk { touch-action: none; }  /* a press is never a scroll (which cancels it) */
   #talk.listening { background: var(--dim); }
+  .links { font-size: 22px; } .links a { color: var(--fg); }
   /* Night: pictures in dim red too, so they don't spoil dark-adapted eyes. */
   body:not(.day) #live, body:not(.day) #gallery img, body:not(.day) #camimg {
     filter: grayscale(1) sepia(1) saturate(5) hue-rotate(-50deg) brightness(.6); }
@@ -61,6 +62,7 @@
   <pre id="debugbox" hidden></pre>
   <div><button class="small" id="mode">Day mode</button> <button class="small" id="pics">Pictures</button> <button class="small" id="beeps">Beeps off</button></div>
   <div id="gallery" hidden></div>
+  <div class="links"><a href="/tonight">Tonight at each spot</a> · <a href="/treeline.html">Record a treeline</a></div>
 <script>
 const HINT = `Hold the button and say "what's good tonight?"`;
 const heardEl = document.getElementById("heard"), said = document.getElementById("said"), arrow = document.getElementById("arrow"),

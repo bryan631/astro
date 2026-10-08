@@ -1,0 +1,46 @@
+name: Tonight
+
+# Publishes the "Tonight" report (what each spot can see, with the cloud forecast) to GitHub
+# Pages, so it can be checked from inside without powering up the Mele. The spots (places and
+# treelines) come from the SPOTS_TOML secret, never the repo; the page shows only times and targets.
+on:
+  schedule:
+    - cron: "0 1,17,20,23 * * *"  # 1, 4, 7 and 9 PM in Florida (EDT): fresh forecast by evening
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e .
+      - run: python -m astro.planner.report site/index.html
+        env:
+          SPOTS_TOML: ${{ secrets.SPOTS_TOML }}
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
