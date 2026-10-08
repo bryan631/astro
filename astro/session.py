@@ -13,7 +13,9 @@ from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import astropy.units as u
 import numpy as np
+from astropy.coordinates import SkyCoord, get_body
 
 from astro import calibration_store
 from astro.capture.collimation import CENTERED as COLLIMATED
@@ -30,6 +32,8 @@ from astro.guidance.engine import CueLimiter, DirectionLearner, Guide, wrap180
 from astro.intents import Intent, match_name, parse
 from astro.messages import notice, say
 from astro.optics import MAIN_SENSOR_PX
+from astro.planner.almanac import compass as _compass
+from astro.planner.almanac import target_text
 from astro.planner.catalog import load_targets
 from astro.planner.horizon import HorizonMask
 from astro.planner.moon_features import FEATURES
@@ -189,6 +193,22 @@ class Session:
         if 0 < alt < float(self.horizon.min_alt(az)):
             where += " That's behind the trees from here."
         return [say(f"{name} is {kind}. {note} {where}")]
+
+    def timing(self, spoken: str) -> list[dict]:
+        """When a target rises, clears the trees, is highest and sets (agent tool)."""
+        name = match_name(spoken, self.names())
+        if name is None:
+            return [say(f"I don't know {spoken}.")]
+        body = "moon" if name in MOON_FEATURES or name == "Moon" else name.lower()
+        if body in PLANETS or body == "moon":
+            def coord_at(t, loc):
+                return get_body(body, t, loc)
+        else:
+            target = self.catalog[name]
+
+            def coord_at(t, loc):
+                return SkyCoord(ra=target.ra * u.deg, dec=target.dec * u.deg)
+        return [say(target_text(self.site, self.clock(), name, coord_at, self.horizon))]
 
     def names(self) -> list[str]:
         return [p.capitalize() for p in PLANETS] + ["Moon", *MOON_FEATURES, *self.catalog]
@@ -1046,12 +1066,6 @@ def _azimuth_coverage(azs: list[float]) -> float:
     a = sorted(az % 360 for az in azs)
     gaps = np.diff([*a, a[0] + 360])
     return 360 - float(gaps.max())
-
-
-def _compass(az: float) -> str:
-    """Azimuth in degrees -> 'northeast' etc. (8 points)."""
-    points = ("north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest")
-    return points[round(az % 360 / 45) % 8]
 
 
 def _clock(t: datetime) -> str:

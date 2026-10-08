@@ -66,6 +66,19 @@ def test_forecast_text_starts_at_the_current_hour():
     lines = forecast_text(26.6, -80.1, hours=3, get=hourly).splitlines()
     assert lines[0] == "Now 20:15 local; cloud cover 90%."
     assert lines[1].startswith("10-08 20:00: clouds 90%")
-    assert lines[-1].startswith("10-08 22:00: clouds 20% (low 0, mid 0, high 20), rain 5%, 77F")
-    assert len(lines) == 4
+    assert lines[-2].startswith("10-08 22:00: clouds 20% (low 0, mid 0, high 20), rain 5%, 77F")
+    assert len(lines) == 5
+    assert lines[-1] == "Dew unlikely in this period."  # 77F air, 74F dew point
     assert forecast_text(26.6, -80.1, get=lambda lat, lon: {}) is None  # unexpected reply
+
+
+def test_forecast_text_warns_of_dew():
+    from astro.planner.weather import forecast_text
+
+    def dewy(lat, lon):
+        data = hourly(lat, lon)
+        data["hourly"]["dew_point_2m"] = [70, 71, 72, 75, 76, 77]  # air stays 77.4F
+        return data
+
+    assert forecast_text(26.6, -80.1, get=dewy).splitlines()[-1].startswith(
+        "Dew likely from 10-08 21:00")

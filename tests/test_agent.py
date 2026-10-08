@@ -86,7 +86,7 @@ def test_every_tool_is_handled():
     from astro.agent import _COMMANDS, TOOLS
 
     handled = set(_COMMANDS) | {"goto", "describe", "focus", "barlow", "session_status", "list_tonight",
-                                "weather", "sun_times"}
+                                "weather", "sun_times", "moon", "when_up", "sky_events"}
     assert {t["name"] for t in TOOLS} <= handled
 
 
@@ -219,3 +219,10 @@ def test_weather_question_with_tonight_goes_to_claude():
     plain = FakeClient([])
     Agent(session(), client=plain).handle("what's good tonight")
     assert plain.requests == []  # the list itself stays offline
+
+
+def test_when_up_tool_times_a_target():
+    said = Agent(session(), client=None)._call("when_up", {"target": "saturn"})[0]["text"]
+    assert "Saturn, the next 24 hours" in said and "highest" in said
+    assert Agent(session(), client=None)._call("when_up", {"target": "xyzzy"})[0]["text"] == \
+        "I don't know xyzzy."
