@@ -39,14 +39,16 @@ struct Axis {
   Axis(uint8_t a, uint8_t b) : pinA(a), pinB(b) {}
 };
 Axis az(AZ_A, AZ_B), alt(ALT_A, ALT_B);
-const int MIN_SPAN = 200;  // ADC counts: until a sensor has swung this far, assume mid-scale
+// Until a sensor has swung MIN_SPAN, center on its typical midpoint. The swing depends on the
+// sensor-to-disk gap: 0.2-4.3 V on altitude, but only 2.0-2.6 V (~120 counts) on this azimuth.
+const int MIN_SPAN = 60, MID = 465;
 
 // Center and scale one sensor reading to about -1..1.
 float scaled(Axis& x, uint8_t i, int v) {
   x.lo[i] = min(x.lo[i], v);
   x.hi[i] = max(x.hi[i], v);
   int span = x.hi[i] - x.lo[i];
-  if (span < MIN_SPAN) return (v - 512) / 400.0;
+  if (span < MIN_SPAN) return (v - MID) / 400.0;
   return (2.0 * v - x.hi[i] - x.lo[i]) / span;
 }
 
