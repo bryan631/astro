@@ -86,7 +86,7 @@ def test_every_tool_is_handled():
     from astro.agent import _COMMANDS, TOOLS
 
     handled = set(_COMMANDS) | {"goto", "describe", "focus", "barlow", "session_status", "list_tonight",
-                                "weather"}
+                                "weather", "sun_times", "moon", "when_up", "sky_events"}
     assert {t["name"] for t in TOOLS} <= handled
 
 
@@ -210,3 +210,21 @@ def test_weather_tool_says_so_when_the_forecast_is_unavailable(monkeypatch):
     monkeypatch.setattr(astro.agent, "forecast_text", lambda lat, lon: None)
     assert Agent(session(), client=None)._call("weather", {}) == [
         {"type": "say", "text": "I couldn't get the forecast."}]
+
+
+def test_questions_that_say_tonight_go_to_claude():
+    for question in ("when are the clouds going to clear tonight?", "will there be dew tonight?",
+                     "when is Saturn highest tonight?"):
+        client = FakeClient([NS(stop_reason="end_turn", content=[text("Answer.")])])
+        out = Agent(session(), client=client).handle(question)
+        assert out[-1]["text"] == "Answer." and len(client.requests) == 1, question
+    plain = FakeClient([])
+    Agent(session(), client=plain).handle("what's good tonight")
+    assert plain.requests == []  # the list itself stays offline
+
+
+def test_when_up_tool_times_a_target():
+    said = Agent(session(), client=None)._call("when_up", {"target": "saturn"})[0]["text"]
+    assert "Saturn, the next 24 hours" in said and "highest" in said
+    assert Agent(session(), client=None)._call("when_up", {"target": "xyzzy"})[0]["text"] == \
+        "I don't know xyzzy."

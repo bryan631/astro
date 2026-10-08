@@ -6,6 +6,7 @@ Falls back to the offline grammar when there's no API key or no network.
 
 import logging
 import os
+import re
 import threading
 import time
 
@@ -13,6 +14,7 @@ import anthropic
 
 from astro.intents import match_name, parse
 from astro.messages import say
+from astro.planner.almanac import events_text, moon_text, sun_text
 from astro.planner.weather import forecast_text
 from astro.session import NOT_UNDERSTOOD, Session
 
@@ -20,6 +22,8 @@ MODEL = "claude-haiku-4-5"
 MAX_TOOL_ROUNDS = 4
 OFFLINE_RETRY_S = 60.0  # after a connection failure, try Claude again this much later
 HISTORY_TURNS = 10
+# The offline "tonight" intent also matches the bare word; only these phrasings mean the list.
+TONIGHT_LIST = re.compile(r"\b(what('s| is) (good|up|out|visible)|what can i see)\b", re.IGNORECASE)
 NO_KEY = "there's no Claude API key on the telescope computer"
 
 log = logging.getLogger(__name__)
@@ -29,7 +33,10 @@ Replies are spoken aloud: one to three short, warm, plain sentences. No lists, n
 no jargon unless he asks. Use the tools to act; never invent where something is in the sky.
 Guidance cues ("push left", "stop") are spoken by the system, not by you.
 If he asks what to see, or refers to something suggested earlier, call list_tonight first.
-For weather, clouds or rain, call weather and answer from it; times are local.
+For weather, clouds, rain or dew, call weather and answer from it; times are local.
+For sunrise, sunset, twilight or when it gets dark or light, call sun_times.
+For the Moon's phase or rise and set, call moon. For when something rises, sets, is highest
+or clears the trees, call when_up. For meteor showers or planets close together, call sky_events.
 He views on the tablet screen, not through an eyepiece."""
 
 TOOLS = [
@@ -72,8 +79,21 @@ TOOLS = [
      "from a defocused star and coach the primary mirror's screws.",
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "weather", "description": "Hourly forecast for the next 24 hours at the telescope: "
-     "cloud cover (total, low, mid, high), chance of rain, temperature, dew point and wind.",
+     "cloud cover (total, low, mid, high), chance of rain, temperature, dew point and wind, and "
+     "when dew is likely on the optics.",
      "input_schema": {"type": "object", "properties": {}}},
+    {"name": "sun_times", "description": "Sunrise, sunset and twilight (civil, nautical, "
+     "astronomical) at the telescope for the next 24 hours, in local time. Nautical dusk is "
+     "when it's dark enough to observe.", "input_schema": {"type": "object", "properties": {}}},
+    {"name": "moon", "description": "The Moon now: phase, how much is lit, where it is, its "
+     "rise and set in the next 24 hours, and the next full and new Moon.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "when_up", "description": "When a named target rises, clears the trees, is highest "
+     "(and how high), goes behind the trees and sets, in the next 24 hours.",
+     "input_schema": {"type": "object", "properties": {"target": {"type": "string"}},
+                      "required": ["target"]}},
+    {"name": "sky_events", "description": "Meteor shower peaks and close pairings of the Moon "
+     "and planets in the next 30 days.", "input_schema": {"type": "object", "properties": {}}},
     {"name": "session_status", "description": "What's going on: aligned or not, target, focus, "
      "Barlow, picture in progress, pictures taken, horizon, clouds.",
      "input_schema": {"type": "object", "properties": {}}},
@@ -146,6 +166,8 @@ class Agent:
         intent = parse(text)
         if intent is None:
             return False
+        if intent.name == "tonight" and not TONIGHT_LIST.search(text):
+            return False  # "when is Saturn highest tonight?" is a question for Claude, not the list
         if intent.name == "skip" and "next" in text.lower():
             return True  # "next step" means next (the session maps it), even outside setup
         if intent.name in ("ready", "skip") and not self.session.wizard_active:
@@ -201,6 +223,14 @@ class Agent:
         if name == "weather":
             site = self.session.site
             return [say(forecast_text(site.lat_deg, site.lon_deg) or "I couldn't get the forecast.")]
+        if name == "sun_times":
+            return [say(sun_text(self.session.site, self.session.clock()))]
+        if name == "moon":
+            return [say(moon_text(self.session.site, self.session.clock()))]
+        if name == "when_up":
+            return self.session.timing(args.get("target", ""))
+        if name == "sky_events":
+            return [say(events_text(self.session.site, self.session.clock()))]
         if name == "list_tonight":
             return [{"type": "say", "text": self.session.tonight_by_category()}]
         if name == "goto":  # by name, not re-parsed as a sentence ("Andromeda (M31)")

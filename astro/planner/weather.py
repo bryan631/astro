@@ -19,6 +19,7 @@ def cloud_cover_pct(lat: float, lon: float, when: datetime, timeout_s: float = 3
         return None
 
 
+DEW_SPREAD_F = 3  # optics dew up once the air is this close to its dew point
 HOURLY = ("cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,precipitation_probability,"
           "temperature_2m,dew_point_2m,wind_speed_10m")
 
@@ -46,6 +47,11 @@ def forecast_text(lat: float, lon: float, hours: int = 24, get=fetch_hourly) -> 
                 f"high {h['cloud_cover_high'][i]}), rain {h['precipitation_probability'][i]}%, "
                 f"{h['temperature_2m'][i]:.0f}F, dew point {h['dew_point_2m'][i]:.0f}F, "
                 f"wind {h['wind_speed_10m'][i]:.0f} mph")
+        hours_ahead = range(start, min(start + hours, len(h["time"])))
+        dewy = [i for i in hours_ahead if h["temperature_2m"][i] - h["dew_point_2m"][i] <= DEW_SPREAD_F]
+        lines.append(f"Dew likely from {h['time'][dewy[0]][5:16].replace('T', ' ')} (air within "
+                     f"{DEW_SPREAD_F}F of the dew point): the dew heaters help." if dewy
+                     else "Dew unlikely in this period.")
         return "\n".join(lines)
     except (OSError, ValueError, KeyError, TypeError, http.client.HTTPException):  # best effort
         return None

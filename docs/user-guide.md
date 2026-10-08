@@ -37,6 +37,7 @@
 **Good to know**
 
 - Say **"Stop"** any time. It stops the guiding, or a picture being taken.
+- Talking too long? Tap the big circle (it says **Tap to stop talking**) to quiet it right away.
 - Lost? Say **"Sync"** or **"Where am I pointing?"**
 - Did you put in or take out the Barlow? Say **"Barlow in"** or **"Barlow out."**
 - Moved the telescope to a new place? Say **"Use my location."**

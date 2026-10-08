@@ -212,9 +212,18 @@ function setupTalk() {
     talk.textContent = "Type below"; talk.disabled = true; return;
   }
   setupHandsFree(Rec);
-  let pressed = false;
+  // While the telescope talks, the big button stops it (in either mode) instead of listening.
+  const speakingNow = () => speechSynthesis.speaking || (player && !player.paused && !player.ended);
+  setInterval(() => {
+    const s = !!speakingNow(), label = s ? "Tap to stop talking" : "Hold to talk";
+    if (talk.textContent !== label) talk.textContent = label;
+    talk.disabled = !s && handsOn;
+  }, 150);
+  let pressed = false;  // this gesture started a recording (a stop tap never does)
   talk.addEventListener("pointerdown", async e => {
-    e.preventDefault(); stopAudio(); listen(true); pressed = true;
+    e.preventDefault();
+    if (speakingNow()) { stopAudio(); return; }  // a tap to stop, not a command
+    listen(true); pressed = true;
     try {
       await start();
       if (!pressed) stop();  // let go while the microphone was opening
@@ -223,7 +232,7 @@ function setupTalk() {
     }
   });
   for (const ev of ["pointerup", "pointerleave", "pointercancel"])
-    talk.addEventListener(ev, () => { pressed = false; stop(); });
+    talk.addEventListener(ev, () => { if (!pressed) return; pressed = false; stop(); });
 }
 // Live camera views and the debug panel: the page polls what the server last captured.
 let view = "", viewTimer = null, camUrl = null;
@@ -335,8 +344,11 @@ function setupHandsFree(Rec) {
   }
   btn.onclick = async () => {
     on = !on;
+    btn.disabled = true;  // loading the voice detector takes a few seconds: show it, ignore taps
+    btn.textContent = `Hands-free: ${on ? "starting…" : "stopping…"}`;
     try { if (on) await enable(); else await disable(); }
     catch (err) { on = false; await disable().catch(() => {}); said.textContent = `I can't use the microphone: ${err.message}. Type below.`; }
+    btn.disabled = false;
     handsOn = on; armedUntil = 0; wsSend(JSON.stringify({type: "handsfree", on}));
     btn.textContent = `Hands-free: ${on ? "on" : "off"}`; talk.disabled = on;
     if (on) said.textContent = "Say “Astro, what's good tonight?”";  // the hint changes with the mode
