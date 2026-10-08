@@ -335,8 +335,11 @@ function setupHandsFree(Rec) {
   }
   btn.onclick = async () => {
     on = !on;
+    btn.disabled = true;  // loading the voice detector takes a few seconds: show it, ignore taps
+    btn.textContent = `Hands-free: ${on ? "starting…" : "stopping…"}`;
     try { if (on) await enable(); else await disable(); }
     catch (err) { on = false; await disable().catch(() => {}); said.textContent = `I can't use the microphone: ${err.message}. Type below.`; }
+    btn.disabled = false;
     handsOn = on; armedUntil = 0; wsSend(JSON.stringify({type: "handsfree", on}));
     btn.textContent = `Hands-free: ${on ? "on" : "off"}`; talk.disabled = on;
     if (on) said.textContent = "Say “Astro, what's good tonight?”";  // the hint changes with the mode
