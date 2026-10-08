@@ -29,7 +29,7 @@ The end user must never need a keyboard, terminal, or config file.
 | Finder/solver camera: SVBONY SV905C + 25mm f/1.4 C-mount lens (5mm CS-C ring) | IMX225 color, 1280×960, 3.75µm, 4.8×3.6mm sensor. ≈11°×8° FOV, ≈31″/px. Exposure 64µs–20s. Run lens at f/2–2.8. |
 | Computer (arriving): MeLE Quieter 4C, Intel N150, 16GB/512GB, fanless | Target OS: Ubuntu LTS. Powered by USB-C PD (C1 port, 12–20V). |
 | Microcontroller (arriving): Arduino Nano Every on screw-terminal board, USB-C | 5V logic. Reads IntelliScope encoders, drives dew heaters, reads BME280 (+ optional DS18B20). |
-| Encoders | IntelliScope hall-effect, 9216 steps/rev each axis, 4-wire RJ cables. Believed TTL quadrature, ~5V — UNVERIFIED until phase 3. Fallback: read positions from the IntelliScope handset over RS-232 (Tangent/BBox-style "Q" command) via USB-serial adapter. |
+| Encoders | IntelliScope Hall-effect (2 Allegro A3515 per axis): two analog sine waves a quarter cycle apart, ~0.2-4.7 V, 36 cycles/rev; the Nano reads them on A2/A3/A6/A7 and interpolates with atan2 to 9216 counts/rev. RJ12 (scope end, white on pin 1): white 5V, blue GND, yellow/black alt, green/red az. Verified on the scope: 90 deg altitude = 2331 counts, repeatable to ~8. Fallback: the IntelliScope handset over RS-232 ("Q" command). |
 | Dew | Two 5V USB heater strips (secondary holder, finder lens) via logic-level MOSFET modules on Nano PWM pins; powered from power bank, not the Nano. |
 | Power | 100W USB-C PD power bank. |
 | Tablet | User's tablet; browser PWA is the mic, speaker, and screen. |
