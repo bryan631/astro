@@ -6,6 +6,7 @@ Falls back to the offline grammar when there's no API key or no network.
 
 import logging
 import os
+import re
 import threading
 import time
 
@@ -20,6 +21,8 @@ MODEL = "claude-haiku-4-5"
 MAX_TOOL_ROUNDS = 4
 OFFLINE_RETRY_S = 60.0  # after a connection failure, try Claude again this much later
 HISTORY_TURNS = 10
+WEATHER = re.compile(r"\b(clouds?|cloudy|clear(s|ing)? up|rain\w*|weather|forecast|storms?)\b",
+                     re.IGNORECASE)
 NO_KEY = "there's no Claude API key on the telescope computer"
 
 log = logging.getLogger(__name__)
@@ -146,6 +149,8 @@ class Agent:
         intent = parse(text)
         if intent is None:
             return False
+        if intent.name == "tonight" and WEATHER.search(text):
+            return False  # "will the clouds clear tonight?" is a weather question, not the list
         if intent.name == "skip" and "next" in text.lower():
             return True  # "next step" means next (the session maps it), even outside setup
         if intent.name in ("ready", "skip") and not self.session.wizard_active:
