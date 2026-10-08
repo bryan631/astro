@@ -12,6 +12,7 @@ import hmac
 import io
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -21,11 +22,12 @@ from collections.abc import Callable
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import PlainTextResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketState
 
 from astro import calibration_store, logs, site_store
+from astro import spots as spot_store
 from astro.agent import Agent
 from astro.devices import config as devices
 from astro.devices.sim.finder import SimFinderCamera
@@ -35,6 +37,8 @@ from astro.guidance.centering import centering_phrases
 from astro.guidance.engine import cue_phrases
 from astro.optics import MAIN_SENSOR_PX
 from astro.planner import horizon_store
+from astro.planner import report as tonight_report
+from astro.planner.horizon import HorizonMask
 from astro.planner.weather import cloud_cover_pct
 from astro.pointing.coords import Site
 from astro.pointing.finder_sync import FinderSync
@@ -97,8 +101,15 @@ def build_session() -> tuple[Session, SimScope | None]:
                       on_horizon_change=lambda m: horizon_store.save(ROOT, m),
                       weather=None if OFFLINE else cloud_cover_pct,
                       calibration=calibration_store.load(ROOT),
-                      on_calibration_change=lambda d: calibration_store.save(ROOT, d))
+                      on_calibration_change=lambda d: calibration_store.save(ROOT, d),
+                      **_spot_args())
     return session, scope
+
+
+def _spot_args() -> dict:
+    spots, current = spot_store.load(ROOT)
+    return {"spots": spots, "spot": current,
+            "on_spots_change": lambda sp, cur: spot_store.save(ROOT, sp, cur)}
 
 
 @functools.cache
@@ -123,7 +134,8 @@ def build_real_session() -> Session:
                        on_horizon_change=lambda m: horizon_store.save(ROOT, m),
                        weather=None if OFFLINE else cloud_cover_pct,
                        calibration=calibration_store.load(ROOT),
-                       on_calibration_change=lambda d: calibration_store.save(ROOT, d))
+                       on_calibration_change=lambda d: calibration_store.save(ROOT, d),
+                       **_spot_args())
     except Exception:
         close_hardware()  # roll back, so the next attempt doesn't find devices still owned
         raise
@@ -469,6 +481,49 @@ async def handle_message(hub: Hub, socket: WebSocket, conn: dict, msg: dict) -> 
     elif data.get("type") == "location_error":
         for out in session.location_failed(str(data.get("message", "")), request_id):
             await hub.broadcast(out)
+
+
+@app.get("/tonight")
+async def tonight() -> HTMLResponse:
+    """What every spot can see tonight with the cloud forecast; doesn't start the hardware."""
+    spots, _ = spot_store.load(ROOT)
+    spots = spots or [spot_store.Spot("Here", load_site(), horizon_store.load(ROOT))]
+    night = await asyncio.to_thread(tonight_report.build, spots, utcnow())
+    return HTMLResponse(tonight_report.render_html(night, spots))
+
+
+@app.get("/api/spots")
+def api_spots() -> list[str]:
+    return [s.name for s in spot_store.load(ROOT)[0]]
+
+
+@app.post("/api/spots")
+async def api_save_spot(request: Request) -> dict:
+    """A treeline from the tablet walk: {name, lat, lon, elevation?, points: [[az, alt], ...]}."""
+    data = await request.json()
+    name, points = str(data.get("name", "")).strip(), data.get("points") or []
+    if not name or len(points) < 3:
+        raise HTTPException(400, "A spot needs a name and at least three treeline marks.")
+    try:
+        lat, lon, elev = (float(data["lat"]), float(data["lon"]), float(data.get("elevation") or 0))
+        marks = tuple(sorted((float(az) % 360, float(alt)) for az, alt in points))
+    except (KeyError, TypeError, ValueError) as e:
+        raise HTTPException(400, f"Bad spot data: {e}") from e
+    if not (all(map(math.isfinite, (lat, lon, elev, *(v for m in marks for v in m))))
+            and -90 <= lat <= 90 and -180 <= lon <= 180 and all(-10 <= a <= 90 for _, a in marks)):
+        raise HTTPException(400, "That location or treeline doesn't look right.")
+    spot = spot_store.Spot(name, Site(lat, lon, elev), HorizonMask(marks))
+    hub = _sim_hub if SIM else _real_hub
+    if hub is not None:  # the running session switches to it (site, treeline, planning)
+        msgs = hub.session.save_spot(spot)
+        for m in msgs:
+            await hub.broadcast(m)
+        return {"saved": name, "said": msgs[0]["text"]}
+    spots, _ = spot_store.load(ROOT)  # not started: store it as the current spot for next time
+    spot_store.save(ROOT, spot_store.upsert(spots, spot), name)
+    site_store.save(ROOT, spot.site)
+    horizon_store.save(ROOT, spot.mask)
+    return {"saved": name, "said": f"Saved {name}."}
 
 
 @app.get("/gallery")

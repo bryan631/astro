@@ -6,17 +6,26 @@ import urllib.request
 from datetime import UTC, datetime
 
 
-def cloud_cover_pct(lat: float, lon: float, when: datetime, timeout_s: float = 3) -> float | None:
+def hourly_cloud_cover(lat: float, lon: float, timeout_s: float = 3) -> dict[str, float] | None:
+    """Cloud cover % by UTC hour ("2026-10-08T21:00") for two days, or None when offline."""
     # ~1 km is plenty for a forecast, and says less about where the user lives.
     url = (f"https://api.open-meteo.com/v1/forecast?latitude={lat:.2f}&longitude={lon:.2f}"
            "&hourly=cloud_cover&timezone=UTC&forecast_days=2")
     try:
         with urllib.request.urlopen(url, timeout=timeout_s) as r:
             hourly = json.load(r)["hourly"]
-        key = when.astimezone(UTC).strftime("%Y-%m-%dT%H:00")
-        return float(hourly["cloud_cover"][hourly["time"].index(key)])
-    except (OSError, ValueError, KeyError, http.client.HTTPException):  # best effort
+        return {t: float(c) for t, c in zip(hourly["time"], hourly["cloud_cover"], strict=True)}
+    except (OSError, ValueError, KeyError, TypeError, http.client.HTTPException):  # best effort
         return None
+
+
+def hour_key(when: datetime) -> str:
+    return when.astimezone(UTC).strftime("%Y-%m-%dT%H:00")
+
+
+def cloud_cover_pct(lat: float, lon: float, when: datetime, timeout_s: float = 3) -> float | None:
+    hourly = hourly_cloud_cover(lat, lon, timeout_s)
+    return None if hourly is None else hourly.get(hour_key(when))
 
 
 DEW_SPREAD_F = 3  # optics dew up once the air is this close to its dew point

@@ -37,6 +37,7 @@ For weather, clouds, rain or dew, call weather and answer from it; times are loc
 For sunrise, sunset, twilight or when it gets dark or light, call sun_times.
 For the Moon's phase or rise and set, call moon. For when something rises, sets, is highest
 or clears the trees, call when_up. For meteor showers or planets close together, call sky_events.
+If he says which spot the telescope is set up at, call set_spot; session_status lists the spots.
 He views on the tablet screen, not through an eyepiece."""
 
 TOOLS = [
@@ -94,6 +95,10 @@ TOOLS = [
                       "required": ["target"]}},
     {"name": "sky_events", "description": "Meteor shower peaks and close pairings of the Moon "
      "and planets in the next 30 days.", "input_schema": {"type": "object", "properties": {}}},
+    {"name": "set_spot", "description": "The telescope is set up at this named spot: use its "
+     "place and treeline for planning.",
+     "input_schema": {"type": "object", "properties": {"name": {"type": "string"}},
+                      "required": ["name"]}},
     {"name": "session_status", "description": "What's going on: aligned or not, target, focus, "
      "Barlow, picture in progress, pictures taken, horizon, clouds.",
      "input_schema": {"type": "object", "properties": {}}},
@@ -227,6 +232,8 @@ class Agent:
             return [say(sun_text(self.session.site, self.session.clock()))]
         if name == "moon":
             return [say(moon_text(self.session.site, self.session.clock()))]
+        if name == "set_spot":
+            return self.session.use_spot(args.get("name", ""))
         if name == "when_up":
             return self.session.timing(args.get("target", ""))
         if name == "sky_events":

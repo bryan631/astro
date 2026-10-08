@@ -46,6 +46,8 @@ def saved_site(monkeypatch, tmp_path):
     monkeypatch.setattr(server.site_store, "has_saved", lambda root: True)
     monkeypatch.setattr(server.site_store, "save", lambda root, site: None)
     monkeypatch.setattr(server, "load_site", lambda: server.Site(26.7, -80.1))
+    monkeypatch.setattr(server.spot_store, "load", lambda root: ([], None))
+    monkeypatch.setattr(server.spot_store, "save", lambda root, spots, current: None)
 
 
 def test_text_command():
@@ -494,3 +496,27 @@ def test_token_gates_pages_and_socket(monkeypatch):
     assert client.get("/gallery").status_code == 200
     with client.websocket_connect("/ws") as ws:  # the cookie alone is enough
         assert ws.receive_json()["type"] in ("hello", "say")
+
+
+def test_tablet_treeline_is_saved_as_the_current_spot(monkeypatch):
+    saved = {}
+    monkeypatch.setattr(server.spot_store, "save",
+                        lambda root, spots, current: saved.update(spots=spots, current=current))
+    monkeypatch.setattr(server.horizon_store, "save", lambda root, mask: saved.update(mask=mask))
+    monkeypatch.setattr(server, "_sim_hub", None)
+    client = TestClient(server.app)
+    assert client.post("/api/spots", json={"name": "Deck", "points": [[0, 30]]}).status_code == 400
+    bad = {"name": "Deck", "lat": 100, "lon": 0, "points": [[0, 30], [90, 30], [180, 30]]}
+    assert client.post("/api/spots", json=bad).status_code == 400 and not saved
+    bad |= {"lat": 26.7, "points": [[0, 30], [90], [180, 30]]}
+    assert client.post("/api/spots", json=bad).status_code == 400 and not saved
+    r = client.post("/api/spots", json={"name": "Deck", "lat": 26.7, "lon": -80.1,
+                                        "points": [[90, 40], [0, 30], [200, 25]]})
+    assert r.status_code == 200 and saved["current"] == "Deck"
+    assert saved["mask"].points == ((0.0, 30.0), (90.0, 40.0), (200.0, 25.0))
+
+
+def test_tonight_page_renders_without_starting_the_telescope(monkeypatch):
+    monkeypatch.setattr(server.tonight_report, "build", lambda spots, now: None)
+    r = TestClient(server.app).get("/tonight")
+    assert r.status_code == 200 and "It does not get dark tonight." in r.text

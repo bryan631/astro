@@ -19,6 +19,20 @@
      treeline, marking as you go. Say **"Done"** when you're back where you started.
    It remembers all of this for next time.
 
+**Is it worth going out tonight?**
+
+Open **Tonight at each spot** (the link at the bottom of the app, or the bookmarked web page,
+which works even when the telescope box is off). It lists, for each place you set up, what
+clears the trees tonight, between what times, and how cloudy it will be. The best spot is at
+the top.
+
+**A new spot**
+
+Stand where the telescope will go, open **Record a treeline**, type a name like "Back deck",
+then point the back of the tablet at the treetops and tap **Mark** as you turn all the way
+around. Tap **Save**. When you set up there, say **"We're at the back deck."** A treeline walk
+with the telescope later makes that spot's treeline more exact.
+
 **Find something**
 
 5. Say **"What's good tonight?"**, then **"Go to Saturn"** or **"Next."**

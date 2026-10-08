@@ -45,6 +45,7 @@ from astro.pointing.main_offset import MainOffset
 from astro.pointing.platesolve import finder_gray
 from astro.process.planet import MIN_FRAMES, StackResult, process_ser
 from astro.safety import DAYTIME_SUN_ALT_DEG, SafetyResult, check_target
+from astro.spots import Spot, upsert, with_mask
 from astro.wizard import SetupWizard
 
 Clock = Callable[[], datetime]
@@ -98,7 +99,9 @@ class Session:
                  on_horizon_change: Callable[[HorizonMask], None] | None = None,
                  weather: Callable[[float, float, datetime], float | None] | None = None,
                  calibration: dict | None = None,
-                 on_calibration_change: Callable[[dict], None] | None = None):
+                 on_calibration_change: Callable[[dict], None] | None = None,
+                 spots: list[Spot] | None = None, spot: str | None = None,
+                 on_spots_change: Callable[[list[Spot], str | None], None] | None = None):
         """Pointing comes from `finder` (encoders + mount model + plate solving), or, for
         tests without a finder, from `position()` returning true (alt, az)."""
         if finder is not None and hasattr(finder, "camera"):
@@ -108,6 +111,8 @@ class Session:
         self.on_site_change = on_site_change  # e.g. persist the GPS fix, update simulators
         self.horizon = horizon or HorizonMask()  # treeline for the planner
         self.on_horizon_change = on_horizon_change
+        self.spots, self.spot = list(spots or []), spot  # named places; the one we're at
+        self.on_spots_change = on_spots_change
         self._horizon: list[tuple[float, float]] | None = None  # points during a horizon walk
         self.wizard: SetupWizard | None = None  # first-time setup at a location
         self._location_request = 0  # id of the GPS request whose answer we'd accept
@@ -193,6 +198,36 @@ class Session:
         if 0 < alt < float(self.horizon.min_alt(az)):
             where += " That's behind the trees from here."
         return [say(f"{name} is {kind}. {note} {where}")]
+
+    # --- spots ---------------------------------------------------------------------------
+    def use_spot(self, spoken: str) -> list[dict]:
+        """We're at a named spot: use its place and treeline (agent tool)."""
+        with self._lock:
+            name = match_name(spoken, [s.name for s in self.spots])
+            if name is None:
+                known = ", ".join(s.name for s in self.spots) or "none yet"
+                return [say(f"I don't know a spot called {spoken}. Known spots: {known}.")]
+            self._use(next(s for s in self.spots if s.name == name))
+            return [say(f"OK, we're at {name}. I'll plan with its treeline.")]
+
+    def save_spot(self, spot: Spot) -> list[dict]:
+        """A treeline recorded with the tablet. We're standing there, so it becomes current."""
+        with self._lock:
+            self.spots = upsert(self.spots, spot)
+            self._use(spot)
+            return [say(f"Saved {spot.name} with {len(spot.mask.points)} treeline marks.")]
+
+    def _use(self, spot: Spot) -> None:
+        self._relocate(replace(self.site, lat_deg=spot.site.lat_deg, lon_deg=spot.site.lon_deg,
+                               elevation_m=spot.site.elevation_m))  # a far spot re-syncs
+        self.horizon, self.spot, self._suggestions = spot.mask, spot.name, []
+        if self.on_horizon_change:
+            self.on_horizon_change(self.horizon)
+        self._spots_changed()
+
+    def _spots_changed(self) -> None:
+        if self.on_spots_change:
+            self.on_spots_change(self.spots, self.spot)
 
     def timing(self, spoken: str) -> list[dict]:
         """When a target rises, clears the trees, is highest and sets (agent tool)."""
@@ -929,6 +964,9 @@ class Session:
         self.horizon = HorizonMask(tuple(sorted(points)))
         if self.on_horizon_change:
             self.on_horizon_change(self.horizon)
+        if self.spot:  # the telescope's walk replaces the spot's (tablet) treeline
+            self.spots = with_mask(self.spots, self.spot, self.horizon)
+            self._spots_changed()
         msg = f"Saved the treeline from {len(points)} marks. I'll only suggest things above it."
         if (covered := _azimuth_coverage([az for az, _ in points])) < MIN_HORIZON_COVERAGE_DEG:
             msg += (f" Your marks only go about {covered:.0f} degrees around, so I guessed a "
@@ -958,7 +996,9 @@ class Session:
             return self._status_facts()
 
     def _status_facts(self) -> str:
-        facts = []
+        facts = [f"at spot: {self.spot}" if self.spot else "spot: not chosen"]
+        if self.spots:
+            facts.append("known spots: " + ", ".join(s.name for s in self.spots))
         if self.finder is not None:
             facts.append("aligned with the stars" if self.finder.synced else "not aligned yet")
             if sol := getattr(self.finder, "last_solution", None):
@@ -1000,29 +1040,35 @@ class Session:
             return []
         if not (-90 <= lat <= 90 and -180 <= lon <= 180):
             return [say("That location doesn't look right, so I kept the old one.")]
-        new = replace(self.site, lat_deg=lat, lon_deg=lon,
-                      elevation_m=self.site.elevation_m if elevation_m is None else elevation_m)
-        # Great-circle distance from where the mount model was built (separation_deg works on
-        # any lat/lon pair), so a chain of small updates can't drift away without a reset.
+        self._relocate(replace(self.site, lat_deg=lat, lon_deg=lon, elevation_m=self.site.elevation_m
+                               if elevation_m is None else elevation_m))
+        near = f", accurate to about {accuracy_m:.0f} meters" if accuracy_m else ""
+        out = [say(f"Got it, I know where we are{near}.")]
+        if self.wizard_active:  # setup was waiting for this before the first sync
+            out += self.wizard.location_done()
+        return out
+
+    def _relocate(self, new: Site) -> None:
+        """Move to `new`. Far from where the mount model was built (great-circle distance, so a
+        chain of small updates can't drift away), pointing, treeline and plans start over."""
         ref = self._model_site
-        moved_km = np.radians(separation_deg(ref.lat_deg, ref.lon_deg, lat, lon)) * EARTH_RADIUS_KM
+        moved_km = (np.radians(separation_deg(ref.lat_deg, ref.lon_deg, new.lat_deg, new.lon_deg))
+                    * EARTH_RADIUS_KM)
         self.site = new
-        if moved_km > SITE_MOVE_KM:  # a new place: its pointing, treeline and plans don't apply
+        if moved_km > SITE_MOVE_KM:
             self._model_site = new
             if self.finder is not None:
                 self.finder.reset(new)
             self.target, self.guide, self._centering, self._focus_coach = None, None, False, None
             self._horizon, self._suggestions = None, []
             self.horizon = HorizonMask()
+            if self.spot:
+                self.spot = None
+                self._spots_changed()
             if self.on_horizon_change:
                 self.on_horizon_change(self.horizon)
         if self.on_site_change:
             self.on_site_change(new)
-        near = f", accurate to about {accuracy_m:.0f} meters" if accuracy_m else ""
-        out = [say(f"Got it, I know where we are{near}.")]
-        if self.wizard_active:  # setup was waiting for this before the first sync
-            out += self.wizard.location_done()
-        return out
 
     def location_failed(self, message: str, request_id: int | None = None) -> list[dict]:
         """The tablet couldn't give a GPS fix: keep the saved site (setup moves on with it)."""
