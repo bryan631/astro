@@ -70,10 +70,10 @@ def _runs(mask: np.ndarray) -> tuple[int, int]:
 def build(spots: list[Spot], now: datetime,
           clouds: Callable[[float, float], dict[str, float] | None] = hourly_cloud_cover,
           targets=None) -> Night | None:
-    """Tonight's plan for every spot, or None if it doesn't get dark in the next 16 hours."""
+    """Tonight's plan for every spot, or None if it doesn't get dark in the next 24 hours."""
     targets = load_targets() if targets is None else targets
     first = spots[0].site
-    times = night_times(first, now, hours=16)
+    times = night_times(first, now, hours=24)  # from a midday run, through dawn
     if len(times) == 0:
         return None
     gaps = np.flatnonzero(np.diff(times.jd) * 24 * 60 > STEP_MIN * 1.5)

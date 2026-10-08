@@ -506,6 +506,10 @@ def test_tablet_treeline_is_saved_as_the_current_spot(monkeypatch):
     monkeypatch.setattr(server, "_sim_hub", None)
     client = TestClient(server.app)
     assert client.post("/api/spots", json={"name": "Deck", "points": [[0, 30]]}).status_code == 400
+    bad = {"name": "Deck", "lat": 100, "lon": 0, "points": [[0, 30], [90, 30], [180, 30]]}
+    assert client.post("/api/spots", json=bad).status_code == 400 and not saved
+    bad |= {"lat": 26.7, "points": [[0, 30], [90], [180, 30]]}
+    assert client.post("/api/spots", json=bad).status_code == 400 and not saved
     r = client.post("/api/spots", json={"name": "Deck", "lat": 26.7, "lon": -80.1,
                                         "points": [[90, 40], [0, 30], [200, 25]]})
     assert r.status_code == 200 and saved["current"] == "Deck"

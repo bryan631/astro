@@ -12,6 +12,7 @@ import hmac
 import io
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -503,10 +504,15 @@ async def api_save_spot(request: Request) -> dict:
     name, points = str(data.get("name", "")).strip(), data.get("points") or []
     if not name or len(points) < 3:
         raise HTTPException(400, "A spot needs a name and at least three treeline marks.")
-    spot = spot_store.Spot(name, Site(float(data["lat"]), float(data["lon"]),
-                                      float(data.get("elevation") or 0.0)),
-                           HorizonMask(tuple(sorted((float(az) % 360, float(alt))
-                                                    for az, alt in points))))
+    try:
+        lat, lon, elev = (float(data["lat"]), float(data["lon"]), float(data.get("elevation") or 0))
+        marks = tuple(sorted((float(az) % 360, float(alt)) for az, alt in points))
+    except (KeyError, TypeError, ValueError) as e:
+        raise HTTPException(400, f"Bad spot data: {e}") from e
+    if not (all(map(math.isfinite, (lat, lon, elev, *(v for m in marks for v in m))))
+            and -90 <= lat <= 90 and -180 <= lon <= 180 and all(-10 <= a <= 90 for _, a in marks)):
+        raise HTTPException(400, "That location or treeline doesn't look right.")
+    spot = spot_store.Spot(name, Site(lat, lon, elev), HorizonMask(marks))
     hub = _sim_hub if SIM else _real_hub
     if hub is not None:  # the running session switches to it (site, treeline, planning)
         msgs = hub.session.save_spot(spot)

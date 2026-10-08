@@ -16,6 +16,8 @@ def test_spots_round_trip_and_upsert_replaces_by_name():
     assert spots == [DECK, DRIVE] and current == "Driveway"
     moved = Spot("back DECK", Site(1.0, 2.0), DECK.mask)
     assert upsert(spots, moved) == [DRIVE, moved]
+    odd = Spot('Bob\'s "north" \\ lawn', DECK.site, DECK.mask)  # quotes and a backslash
+    assert parse(dumps([odd], odd.name)) == ([odd], odd.name)
 
 
 def session(spots=(), spot=None):

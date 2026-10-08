@@ -3,6 +3,7 @@
 The same TOML, stored as the SPOTS_TOML repo secret, feeds the online "Tonight" report.
 """
 
+import json
 import tomllib
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -32,10 +33,10 @@ def parse(text: str) -> tuple[list[Spot], str | None]:
 def dumps(spots: list[Spot], current: str | None) -> str:
     out = ["# Observing spots: name, place and treeline ([azimuth, minimum altitude] degrees)."]
     if current:
-        out.append(f'current = "{current}"')
+        out.append(f"current = {json.dumps(current)}")  # JSON escapes are valid TOML
     for s in spots:
         rows = ", ".join(f"[{az:.0f}, {alt:.0f}]" for az, alt in s.mask.points)
-        out += ["", "[[spot]]", f'name = "{s.name}"', f"lat_deg = {s.site.lat_deg:.5f}",
+        out += ["", "[[spot]]", f"name = {json.dumps(s.name)}", f"lat_deg = {s.site.lat_deg:.5f}",
                 f"lon_deg = {s.site.lon_deg:.5f}", f"elevation_m = {s.site.elevation_m:.0f}",
                 f"horizon = [{rows}]"]
     return "\n".join(out) + "\n"

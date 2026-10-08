@@ -218,11 +218,9 @@ class Session:
             return [say(f"Saved {spot.name} with {len(spot.mask.points)} treeline marks.")]
 
     def _use(self, spot: Spot) -> None:
-        self.site = replace(self.site, lat_deg=spot.site.lat_deg, lon_deg=spot.site.lon_deg,
-                            elevation_m=spot.site.elevation_m)
+        self._relocate(replace(self.site, lat_deg=spot.site.lat_deg, lon_deg=spot.site.lon_deg,
+                               elevation_m=spot.site.elevation_m))  # a far spot re-syncs
         self.horizon, self.spot, self._suggestions = spot.mask, spot.name, []
-        if self.on_site_change:
-            self.on_site_change(self.site)
         if self.on_horizon_change:
             self.on_horizon_change(self.horizon)
         self._spots_changed()
@@ -1042,14 +1040,22 @@ class Session:
             return []
         if not (-90 <= lat <= 90 and -180 <= lon <= 180):
             return [say("That location doesn't look right, so I kept the old one.")]
-        new = replace(self.site, lat_deg=lat, lon_deg=lon,
-                      elevation_m=self.site.elevation_m if elevation_m is None else elevation_m)
-        # Great-circle distance from where the mount model was built (separation_deg works on
-        # any lat/lon pair), so a chain of small updates can't drift away without a reset.
+        self._relocate(replace(self.site, lat_deg=lat, lon_deg=lon, elevation_m=self.site.elevation_m
+                               if elevation_m is None else elevation_m))
+        near = f", accurate to about {accuracy_m:.0f} meters" if accuracy_m else ""
+        out = [say(f"Got it, I know where we are{near}.")]
+        if self.wizard_active:  # setup was waiting for this before the first sync
+            out += self.wizard.location_done()
+        return out
+
+    def _relocate(self, new: Site) -> None:
+        """Move to `new`. Far from where the mount model was built (great-circle distance, so a
+        chain of small updates can't drift away), pointing, treeline and plans start over."""
         ref = self._model_site
-        moved_km = np.radians(separation_deg(ref.lat_deg, ref.lon_deg, lat, lon)) * EARTH_RADIUS_KM
+        moved_km = (np.radians(separation_deg(ref.lat_deg, ref.lon_deg, new.lat_deg, new.lon_deg))
+                    * EARTH_RADIUS_KM)
         self.site = new
-        if moved_km > SITE_MOVE_KM:  # a new place: its pointing, treeline and plans don't apply
+        if moved_km > SITE_MOVE_KM:
             self._model_site = new
             if self.finder is not None:
                 self.finder.reset(new)
@@ -1063,11 +1069,6 @@ class Session:
                 self.on_horizon_change(self.horizon)
         if self.on_site_change:
             self.on_site_change(new)
-        near = f", accurate to about {accuracy_m:.0f} meters" if accuracy_m else ""
-        out = [say(f"Got it, I know where we are{near}.")]
-        if self.wizard_active:  # setup was waiting for this before the first sync
-            out += self.wizard.location_done()
-        return out
 
     def location_failed(self, message: str, request_id: int | None = None) -> list[dict]:
         """The tablet couldn't give a GPS fix: keep the saved site (setup moves on with it)."""

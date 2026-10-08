@@ -1,4 +1,4 @@
-"""The tablet page's JavaScript must parse (a syntax error silently breaks the whole UI)."""
+"""The tablet pages' JavaScript must parse (a syntax error silently breaks the whole UI)."""
 
 import re
 import shutil
@@ -7,12 +7,13 @@ from pathlib import Path
 
 import pytest
 
-PAGE = Path(__file__).resolve().parents[1] / "web" / "index.html"
+WEB = Path(__file__).resolve().parents[1] / "web"
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="needs node (CI has it)")
-def test_page_script_parses(tmp_path):
-    scripts = re.findall(r"<script>(.*?)</script>", PAGE.read_text(), flags=re.DOTALL)
+@pytest.mark.parametrize("page", ["index.html", "treeline.html"])
+def test_page_script_parses(tmp_path, page):
+    scripts = re.findall(r"<script>(.*?)</script>", (WEB / page).read_text(), flags=re.DOTALL)
     assert scripts, "no inline script found"
     js = tmp_path / "page.js"
     js.write_text("\n".join(scripts))

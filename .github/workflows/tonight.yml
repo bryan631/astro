@@ -4,8 +4,9 @@ name: Tonight
 # Pages, so it can be checked from inside without powering up the Mele. The spots (places and
 # treelines) come from the SPOTS_TOML secret, never the repo; the page shows only times and targets.
 on:
-  schedule:
-    - cron: "0 1,17,20,23 * * *"  # 1, 4, 7 and 9 PM in Florida (EDT): fresh forecast by evening
+  schedule:  # 1, 4, 7 and 9 PM Eastern. Cron is UTC, so one line per offset; the job skips
+    - cron: "0 17,20,23,1 * * *"  # EDT (UTC-4)   the line that doesn't match today's offset.
+    - cron: "0 18,21,0,2 * * *"   # EST (UTC-5)
   workflow_dispatch:
 
 permissions:
@@ -21,22 +22,41 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      due: ${{ steps.due.outputs.due }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - id: due
+        env:
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          offset=$(TZ=America/New_York date +%z)  # -0400 in summer, -0500 in winter
+          case "$SCHEDULE" in
+            "") due=true ;;  # run by hand
+            "0 17,20,23,1 * * *") [ "$offset" = -0400 ] && due=true || due=false ;;
+            *) [ "$offset" = -0500 ] && due=true || due=false ;;
+          esac
+          echo "due=$due" >> "$GITHUB_OUTPUT"
+      - if: steps.due.outputs.due == 'true'
+        uses: actions/checkout@v4
+      - if: steps.due.outputs.due == 'true'
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -e .
-      - run: python -m astro.planner.report site/index.html
+      - if: steps.due.outputs.due == 'true'
+        run: pip install -e .
+      - if: steps.due.outputs.due == 'true'
+        run: python -m astro.planner.report site/index.html
         env:
           SPOTS_TOML: ${{ secrets.SPOTS_TOML }}
-      - uses: actions/upload-pages-artifact@v3
+      - if: steps.due.outputs.due == 'true'
+        uses: actions/upload-pages-artifact@v3
         with:
           path: site
 
   deploy:
     needs: build
+    if: needs.build.outputs.due == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
