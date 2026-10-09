@@ -51,11 +51,19 @@ class LiveView:
         return self
 
     def nudge(self, factor: float) -> None:
-        """Manual exposure (the page's Brighter/Darker): turns auto-exposure off."""
+        """Manual exposure (the page's Brighter/Darker): turns auto-exposure off. Past the
+        shortest exposure, Darker lowers the gain; Brighter brings the gain back first."""
         with self.lock:
             self.exposure_range = None
-            self.exposure_s = min(max(self.exposure_s * factor, MIN_EXPOSURE_S), MAX_EXPOSURE_S)
-            self.camera.set_exposure(self.exposure_s)
+            if factor < 1 and self.exposure_s <= MIN_EXPOSURE_S and self.gain > 0:
+                self.gain = int(self.gain * factor)
+                self.camera.set_gain(self.gain)
+            elif factor > 1 and self.gain < self._base_gain:
+                self.gain = min(round(self.gain * factor) + 1, self._base_gain)
+                self.camera.set_gain(self.gain)
+            else:
+                self.exposure_s = min(max(self.exposure_s * factor, MIN_EXPOSURE_S), MAX_EXPOSURE_S)
+                self.camera.set_exposure(self.exposure_s)
 
     @property
     def running(self) -> bool:

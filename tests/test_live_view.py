@@ -91,3 +91,13 @@ def test_manual_exposure_turns_auto_off():
     time.sleep(0.1)
     assert view.exposure_range is None and cam.exposure_s == before
     view.stop()
+
+
+def test_darker_lowers_the_gain_past_the_shortest_exposure():
+    cam = Cam()
+    view = LiveView(cam, 0.0002, 400)
+    for _ in range(3):
+        view.nudge(0.5)
+    assert cam.exposure_s == 0.0001 and cam.gain == 100
+    view.nudge(2.0)
+    assert cam.gain == 201 and cam.exposure_s == 0.0001
