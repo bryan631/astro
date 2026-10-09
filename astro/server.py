@@ -483,6 +483,8 @@ async def handle_message(hub: Hub, socket: WebSocket, conn: dict, msg: dict) -> 
     elif data.get("type") == "handsfree":
         conn["handsfree"], conn["armed_until"] = bool(data.get("on")), 0.0
         (hub.handsfree.add if conn["handsfree"] else hub.handsfree.discard)(socket)
+    elif data.get("type") == "checks":  # the daytime "skip checks" toggle
+        session.override = bool(data.get("off"))
     elif data.get("type") == "video":  # the Live video button: answered silently
         for out in await asyncio.to_thread(session.video, data.get("camera"), data.get("then")):
             await hub.broadcast(out)
@@ -579,6 +581,7 @@ def api_status() -> dict:
     """The page's status line: cameras, encoders, internet and Claude."""
     hub = running_hub()
     return {**hub.session.connections(), "internet": internet_ok(), "claude": hub.agent.status(),
+            "daytime": hub.session.daytime(), "checks_off": hub.session.override,
             "build": web_build()}  # the page reloads itself when this changes
 
 

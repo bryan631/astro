@@ -44,6 +44,8 @@
   #debugbox { width: 100%; max-width: 900px; font: 20px/1.35 ui-monospace, monospace; white-space: pre-wrap;
               border: 2px solid var(--dim); border-radius: 12px; padding: 12px; margin: 0; }
   #status { font-size: 18px; opacity: .85; text-align: center; }
+  #checks { display: block; text-align: center; font-size: 18px; }
+  #checks[hidden] { display: none; }
   #status .bad { text-decoration: underline; font-weight: bold; }
   #typed { display: flex; gap: 8px; width: 100%; max-width: 600px; }
   #typed input, button.small { font-size: 24px; padding: 12px; background: var(--bg); color: var(--fg);
@@ -58,6 +60,7 @@
 </head>
 <body>
   <div id="status"></div>
+  <label id="checks" hidden><input type="checkbox" id="checksoff"> Skip safety checks (daytime)</label>
   <div id="said">Tap the button and say "what's good tonight?"</div>
   <div id="arrow" hidden>&#x2191;</div>
   <div id="dist"></div>
@@ -274,7 +277,11 @@ async function pollStatus() {
     item("Tablet link", link, link ? "" : "reconnecting"), item("Finder", s.finder), item("Main camera", s.main),
     item("Encoders", s.encoders), item("Internet", s.internet),
     s.claude ? item("Claude", claudeOk, claudeOk ? "" : `(${s.claude})`) : ""].filter(Boolean).join(" · ");
+  document.getElementById("checks").hidden = !s.daytime;
+  document.getElementById("checksoff").checked = !!s.checks_off;
 }
+document.getElementById("checksoff").onchange = e =>
+  wsSend(JSON.stringify({type: "checks", off: e.target.checked}));
 setInterval(pollStatus, 5000); setTimeout(pollStatus, 1500);
 // Live camera views and the debug panel: the page polls what the server last captured.
 let view = "", viewTimer = null, camUrl = null;

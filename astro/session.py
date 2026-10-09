@@ -44,7 +44,7 @@ from astro.pointing.geometry import separation_deg
 from astro.pointing.main_offset import MainOffset, local_delta
 from astro.pointing.platesolve import finder_gray
 from astro.process.planet import MIN_FRAMES, StackResult, process_ser
-from astro.safety import SafetyResult, check_target
+from astro.safety import DAYTIME_SUN_ALT_DEG, SafetyResult, check_target
 from astro.spots import Spot, upsert, with_mask
 from astro.wizard import SetupWizard
 
@@ -1124,9 +1124,14 @@ class Session:
     def target_safety(self, alt: float, az: float) -> SafetyResult:
         """Sun, daytime and below-horizon checks, plus the local treeline (horizon mask)."""
         result = check_target(alt, az, self.site, self.clock(), self.override)
+        if self.override and self.daytime():  # the page's daytime toggle: all but the Sun
+            return result if result.reason == "too close to the Sun" else SafetyResult(True)
         if result.ok and alt < float(self.horizon.min_alt(az)):
             return SafetyResult(False, "behind the trees right now")
         return result
+
+    def daytime(self) -> bool:
+        return body_altaz("sun", self.site, self.clock())[0] > DAYTIME_SUN_ALT_DEG
 
     def _tolerance_arcmin(self) -> float:
         return TOLERANCE_BARLOW_ARCMIN if self.barlow else TOLERANCE_ARCMIN

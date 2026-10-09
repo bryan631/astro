@@ -94,3 +94,18 @@ def test_centering_stops_too_when_pointing_is_lost():
     s.target, s._centering = "Saturn", True
     finder.encoder_age = lambda: 5.0
     assert "position sensors" in texts(s.tick(0.0))[0] and not s._centering
+
+
+def test_daytime_toggle_skips_all_checks_but_the_sun():
+    session = Session(WPB, clock=lambda: NOON)
+    assert not session.target_safety(10.0, 0.0).ok  # daytime lockout
+    session.override = True
+    assert session.target_safety(-5.0, 0.0).ok  # below horizon and behind trees: allowed
+    sun_alt, sun_az = body_altaz("sun", WPB, NOON)
+    assert not session.target_safety(sun_alt, sun_az).ok
+
+
+def test_toggle_does_nothing_at_night():
+    session = Session(WPB, clock=lambda: NIGHT)
+    session.override = True
+    assert not session.target_safety(-5.0, 0.0).ok
