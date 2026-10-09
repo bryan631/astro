@@ -564,7 +564,8 @@ def internet_ok() -> bool:
 def api_status() -> dict:
     """The page's status line: cameras, encoders, internet and Claude."""
     hub = running_hub()
-    return {**hub.session.connections(), "internet": internet_ok(), "claude": hub.agent.status()}
+    return {**hub.session.connections(), "internet": internet_ok(), "claude": hub.agent.status(),
+            "build": web_build()}  # the page reloads itself when this changes
 
 
 @app.get("/api/debug")
@@ -612,9 +613,14 @@ async def api_camera_stream(name: str) -> StreamingResponse:
 @app.get("/sw.js")
 def service_worker() -> Response:
     """sw.js stamped with a hash of the web files: every deploy changes it, so tablets update."""
+    return Response(f'const BUILD = "{web_build()}";\n{(ROOT / "web" / "sw.js").read_text()}',
+                    media_type="text/javascript")
+
+
+def web_build() -> str:
+    """A hash of the web files: changes with every deploy of the page."""
     web = ROOT / "web"
-    build = hashlib.sha256(b"".join(f.read_bytes() for f in sorted(web.glob("*")) if f.is_file())).hexdigest()[:12]
-    return Response(f'const BUILD = "{build}";\n{(web / "sw.js").read_text()}', media_type="text/javascript")
+    return hashlib.sha256(b"".join(f.read_bytes() for f in sorted(web.glob("*")) if f.is_file())).hexdigest()[:12]
 
 
 app.mount("/pictures", StaticFiles(directory=GALLERY, check_dir=False), name="pictures")

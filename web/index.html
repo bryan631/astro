@@ -254,12 +254,20 @@ function setupTalk() {
   });
 }
 // Status line: what's connected. Problems are underlined and bold (it's all red at night).
+let build = null;
 async function pollStatus() {
   const link = ws && ws.readyState === WebSocket.OPEN;
   const item = (name, ok, why) => ok === null || ok === undefined ? "" :
     `<span class="${ok ? "" : "bad"}">${name} ${ok ? "✓" : "✗" + (why ? " " + why : "")}</span>`;
   let s = {};
   if (link) { try { const r = await fetch("/api/status"); if (r.ok) s = await r.json(); } catch {} }
+  if (s.build) {  // a new version was deployed: reload by itself, keeping the open view
+    if (build && s.build !== build) {
+      try { sessionStorage.setItem("view", view); } catch {}
+      location.reload(); return;
+    }
+    build = s.build;
+  }
   const claudeOk = s.claude === "ok";
   document.getElementById("status").innerHTML = [
     item("Tablet link", link, link ? "" : "reconnecting"), item("Finder", s.finder), item("Main camera", s.main),
@@ -392,6 +400,10 @@ function setupHandsFree(Rec) {
   };
 }
 connect();
+try {  // reopen the view that was showing before an automatic reload (video comes back from the server)
+  const v = sessionStorage.getItem("view"); sessionStorage.removeItem("view");
+  if (v === "debug" || v === "finder" || v === "main") setTimeout(() => { if (!view) setView(v); }, 1500);
+} catch {}
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").then(r => r.update());  // installable (V1); check for a new build on every load
 </script>
 </body>
