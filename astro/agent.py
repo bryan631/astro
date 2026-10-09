@@ -144,13 +144,21 @@ class Agent:
         if time.monotonic() < self._offline_until:  # recently unreachable: don't wait again
             return self._offline(text, self._why)
         try:
-            return self._run(text)
+            out = self._run(text)
+            self._why = ""  # Claude answered: the status shows it's fine again
+            return out
         except _ToolsRan as partial:  # don't do it all again offline
             self._note_failure(partial.__cause__)
             return [*partial.side_effects, {"type": "say", "text": PARTIAL}]
         except anthropic.APIError as e:
             self._note_failure(e)
             return self._offline(text, self._why)
+
+    def status(self) -> str:
+        """Claude's state for the status line: 'ok' or why not."""
+        if self.client is None:
+            return NO_KEY
+        return self._why or "ok"
 
     def _offline(self, text: str, why: str) -> list[dict]:
         """The offline grammar; if it doesn't understand either, say why Claude couldn't help."""

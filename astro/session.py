@@ -582,6 +582,15 @@ class Session:
                  "none": "nothing"}
         return [{"type": "view", "what": what}, say(f"Showing {words[what]}.")]
 
+    def connections(self) -> dict:
+        """What's plugged in and working, for the status line: True, False or None (not fitted)."""
+        def cam(c):
+            return None if c is None else bool(getattr(c, "connected", True))
+
+        age = getattr(self.finder, "encoder_age", None)
+        return {"finder": cam(getattr(self.finder, "camera", None)), "main": cam(self.main_camera),
+                "encoders": None if age is None else age() < 2 * ENCODER_STALE_S}
+
     def debug_info(self) -> dict:
         """Everything the engineer would ask for, as sections of plain values (no camera calls:
         the SDK isn't safe to query while another thread captures)."""

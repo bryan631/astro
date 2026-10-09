@@ -15,6 +15,7 @@ import logging
 import math
 import os
 import re
+import socket
 import threading
 import time
 import wave
@@ -133,7 +134,7 @@ def build_real_session() -> Session:
             _hardware_closers.append(main.close)
         override = os.environ.get("ASTRO_DEV_OVERRIDE") == "1"
         return Session(site, clock=clock, developer_override=override, finder=finder,
-                       main_camera=main, main_sensor=main.sensor_size if main else MAIN_SENSOR_PX,
+                       main_camera=main, main_sensor=main.sensor_size if main and main.connected else MAIN_SENSOR_PX,
                        data_dir=ROOT / "data", on_site_change=lambda s: site_store.save(ROOT, s),
                        horizon=horizon_store.load(ROOT),
                        on_horizon_change=lambda m: horizon_store.save(ROOT, m),
@@ -542,6 +543,28 @@ def gallery() -> list[str]:
     """Processed pictures, newest first."""
     files = sorted(GALLERY.glob("*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
     return [p.name for p in files]
+
+
+_net = {"at": -1e9, "ok": False}
+
+
+def internet_ok() -> bool:
+    """Can the Mele reach Claude's servers? Checked at most every 30 s."""
+    if time.monotonic() - _net["at"] > 30:
+        try:
+            socket.create_connection(("api.anthropic.com", 443), timeout=2).close()
+            ok = True
+        except OSError:
+            ok = False
+        _net.update(at=time.monotonic(), ok=ok)
+    return _net["ok"]
+
+
+@app.get("/api/status")
+def api_status() -> dict:
+    """The page's status line: cameras, encoders, internet and Claude."""
+    hub = running_hub()
+    return {**hub.session.connections(), "internet": internet_ok(), "claude": hub.agent.status()}
 
 
 @app.get("/api/debug")

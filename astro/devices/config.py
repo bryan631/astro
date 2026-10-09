@@ -1,5 +1,6 @@
 """Build the real devices named in config/devices.toml."""
 
+import logging
 import tomllib
 from collections.abc import Callable
 from datetime import datetime
@@ -12,6 +13,8 @@ from astro.pointing.finder_sync import FinderSync
 from astro.pointing.mount_model import MountModel
 from astro.pointing.platesolve import FinderSolver
 from astro.pointing.solve_tracker import SolveTracker
+
+log = logging.getLogger(__name__)
 
 
 def load(path: Path) -> dict:
@@ -27,7 +30,11 @@ def open_camera(cfg: dict) -> Camera:
     if cfg["driver"] != "svbony":
         raise ValueError(f"unknown camera driver {cfg['driver']!r}")
     cam = SvbonyCamera(cfg["model"])
-    cam.connect()
+    try:
+        cam.connect()
+    except Exception:  # unplugged: start anyway, and keep trying to reconnect on each capture
+        log.exception("%s not connected; will keep trying", cfg["model"])
+        cam._lost = True
     if "exposure_s" in cfg:
         cam.set_exposure(cfg["exposure_s"])
     if "gain" in cfg:

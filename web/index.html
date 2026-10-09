@@ -43,6 +43,8 @@
   #camcap { font-size: 20px; opacity: .8; }
   #debugbox { width: 100%; max-width: 900px; font: 20px/1.35 ui-monospace, monospace; white-space: pre-wrap;
               border: 2px solid var(--dim); border-radius: 12px; padding: 12px; margin: 0; }
+  #status { font-size: 18px; opacity: .85; text-align: center; }
+  #status .bad { text-decoration: underline; font-weight: bold; }
   #typed { display: flex; gap: 8px; width: 100%; max-width: 600px; }
   #typed input, button.small { font-size: 24px; padding: 12px; background: var(--bg); color: var(--fg);
           border: 2px solid var(--dim); border-radius: 12px; }
@@ -55,6 +57,7 @@
 </style>
 </head>
 <body>
+  <div id="status"></div>
   <div id="said">Tap the button and say "what's good tonight?"</div>
   <div id="arrow" hidden>&#x2191;</div>
   <div id="dist"></div>
@@ -250,6 +253,20 @@ function setupTalk() {
     }
   });
 }
+// Status line: what's connected. Problems are underlined and bold (it's all red at night).
+async function pollStatus() {
+  const link = ws && ws.readyState === WebSocket.OPEN;
+  const item = (name, ok, why) => ok === null || ok === undefined ? "" :
+    `<span class="${ok ? "" : "bad"}">${name} ${ok ? "✓" : "✗" + (why ? " " + why : "")}</span>`;
+  let s = {};
+  if (link) { try { const r = await fetch("/api/status"); if (r.ok) s = await r.json(); } catch {} }
+  const claudeOk = s.claude === "ok";
+  document.getElementById("status").innerHTML = [
+    item("Tablet link", link, link ? "" : "reconnecting"), item("Finder", s.finder), item("Main camera", s.main),
+    item("Encoders", s.encoders), item("Internet", s.internet),
+    s.claude ? item("Claude", claudeOk, claudeOk ? "" : `(${s.claude})`) : ""].filter(Boolean).join(" · ");
+}
+setInterval(pollStatus, 5000); setTimeout(pollStatus, 1500);
 // Live camera views and the debug panel: the page polls what the server last captured.
 let view = "", viewTimer = null, camUrl = null;
 let videoOn = false;
