@@ -14,7 +14,8 @@ def hourly_cloud_cover(lat: float, lon: float, timeout_s: float = 3) -> dict[str
     try:
         with urllib.request.urlopen(url, timeout=timeout_s) as r:
             hourly = json.load(r)["hourly"]
-        return {t: float(c) for t, c in zip(hourly["time"], hourly["cloud_cover"], strict=True)}
+        return {t: float(c) for t, c in zip(hourly["time"], hourly["cloud_cover"], strict=True)
+                if c is not None}  # the forecast's last hours can be null
     except (OSError, ValueError, KeyError, TypeError, http.client.HTTPException):  # best effort
         return None
 
@@ -49,14 +50,15 @@ def forecast_text(lat: float, lon: float, hours: int = 24, get=fetch_hourly) -> 
         h, now = data["hourly"], data["current"]
         start = next((i for i, t in enumerate(h["time"]) if t[:13] >= now["time"][:13]), 0)
         lines = [f"Now {now['time'][11:16]} local; cloud cover {now['cloud_cover']}%."]
-        for i in range(start, min(start + hours, len(h["time"]))):
+        hours_ahead = [i for i in range(start, min(start + hours, len(h["time"])))
+                       if None not in (h[k][i] for k in HOURLY.split(","))]  # skip null hours
+        for i in hours_ahead:
             lines.append(
                 f"{h['time'][i][5:16].replace('T', ' ')}: clouds {h['cloud_cover'][i]}% "
                 f"(low {h['cloud_cover_low'][i]}, mid {h['cloud_cover_mid'][i]}, "
                 f"high {h['cloud_cover_high'][i]}), rain {h['precipitation_probability'][i]}%, "
                 f"{h['temperature_2m'][i]:.0f}F, dew point {h['dew_point_2m'][i]:.0f}F, "
                 f"wind {h['wind_speed_10m'][i]:.0f} mph")
-        hours_ahead = range(start, min(start + hours, len(h["time"])))
         dewy = [i for i in hours_ahead if h["temperature_2m"][i] - h["dew_point_2m"][i] <= DEW_SPREAD_F]
         lines.append(f"Dew likely from {h['time'][dewy[0]][5:16].replace('T', ' ')} (air within "
                      f"{DEW_SPREAD_F}F of the dew point): the dew heaters help." if dewy

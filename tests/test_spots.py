@@ -4,7 +4,7 @@ from astro.planner.horizon import HorizonMask
 from astro.planner.report import build, render_html
 from astro.pointing.coords import Site
 from astro.session import Session
-from astro.spots import Spot, dumps, parse, upsert
+from astro.spots import Spot, declination_deg, dumps, parse, upsert
 
 DECK = Spot("Back deck", Site(26.62, -80.14), HorizonMask(((0.0, 40.0), (180.0, 25.0))))
 DRIVE = Spot("Driveway", Site(26.62, -80.14), HorizonMask(((0.0, 80.0), (180.0, 80.0))))
@@ -56,3 +56,9 @@ def test_report_ranks_the_open_spot_first_and_counts_clouds():
 
 def _hours():
     return [f"2026-10-{d:02d}T{h:02d}:00" for d in (8, 9) for h in range(24)]
+
+
+def test_declination_from_the_world_magnetic_model():
+    when = datetime(2026, 10, 8, tzinfo=UTC)
+    assert -16 < declination_deg(42.4, -71.1, when) < -12  # Boston: about 14 W
+    assert 13 < declination_deg(47.6, -122.3, when) < 17  # Seattle: about 15 E

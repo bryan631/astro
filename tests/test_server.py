@@ -514,9 +514,16 @@ def test_tablet_treeline_is_saved_as_the_current_spot(monkeypatch):
                                         "points": [[90, 40], [0, 30], [200, 25]]})
     assert r.status_code == 200 and saved["current"] == "Deck"
     assert saved["mask"].points == ((0.0, 30.0), (90.0, 40.0), (200.0, 25.0))
+    assert client.post("/api/spots", json=["Deck"]).status_code == 400
+    assert client.post("/api/spots", json={"name": "Deck", "points": 5}).status_code == 400
+    monkeypatch.setattr(server.spot_store, "declination_deg", lambda lat, lon, when: -8.0)
+    r = client.post("/api/spots", json={"name": "Deck", "lat": 26.7, "lon": -80.1, "north": "magnetic",
+                                        "points": [[90, 40], [4, 30], [200, 25]]})
+    assert r.status_code == 200  # magnetic north is 8 degrees west of true here
+    assert saved["mask"].points == ((82.0, 40.0), (192.0, 25.0), (356.0, 30.0))
 
 
 def test_tonight_page_renders_without_starting_the_telescope(monkeypatch):
-    monkeypatch.setattr(server.tonight_report, "build", lambda spots, now: None)
+    monkeypatch.setattr(server.tonight_report, "build", lambda spots, now, clouds: None)
     r = TestClient(server.app).get("/tonight")
     assert r.status_code == 200 and "It does not get dark tonight." in r.text

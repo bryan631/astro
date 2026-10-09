@@ -107,7 +107,8 @@ On public WiFi, set `ASTRO_TOKEN=<random>` in `.env` and open the app once as
 
 ## Spots and the online "Tonight" page
 Each spot (name, place, treeline) lives in the Mele's git-ignored `data/spots.toml`, recorded with
-the tablet (`/treeline.html`, compass and tilt, about 5 degrees) or a telescope treeline walk at
+the tablet (`/treeline.html`, compass and tilt, about 5 degrees; the server turns the compass's magnetic north
+to true north with the World Magnetic Model, `pygeomag`) or a telescope treeline walk at
 the current spot (more exact; it replaces the tablet's). `/tonight` on the Mele renders the
 report. Online: `scripts/publish-spots.sh` copies the spots into the `SPOTS_TOML` repo secret and
 runs the `Tonight` workflow, which rebuilds the page on GitHub Pages at 1, 4, 7 and 9 PM Eastern.
