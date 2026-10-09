@@ -28,4 +28,4 @@ def test_zoom_crops_the_center():
     raw = np.zeros((400, 800), np.uint8)
     raw[150:250, 300:500] = 200  # a bright center fills the 4x view
     zoomed = Image.open(io.BytesIO(jpeg(raw, "GRBG", zoom=4)))
-    assert zoomed.size == (100, 50) and np.asarray(zoomed)[30:, :].mean() > 150
+    assert zoomed.size == (400, 200) and np.asarray(zoomed)[100:, :].mean() > 150

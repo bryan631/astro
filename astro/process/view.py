@@ -27,8 +27,8 @@ def jpeg(raw: np.ndarray, bayer: str, zoom: int = 1) -> bytes:
         hi = max(np.percentile(rgb, 99.8), lo + MIN_RANGE)
         img = Image.fromarray((((rgb - lo) / (hi - lo)).clip(0, 1) ** 0.6 * 255).astype(np.uint8))
     img = img.rotate(180)
-    if img.width > MAX_WIDTH:
-        img = img.resize((MAX_WIDTH, round(img.height * MAX_WIDTH / img.width)))
+    width = min(MAX_WIDTH, w // 2)  # zoomed views are scaled up to the same size: same text size
+    img = img.resize((width, round(img.height * width / img.width)))
     text = f"sharpness {sharpness:.0f}" + (f"  {zoom}x" if zoom > 1 else "")
     draw, font = ImageDraw.Draw(img), ImageFont.load_default(size=28)
     draw.text((10, 8), text, fill=(255, 60, 60), font=font, stroke_width=2, stroke_fill=(0, 0, 0))
