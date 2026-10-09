@@ -10,6 +10,10 @@ import pytest
 if not os.environ.get("ASTRO_REQUIRE_SOLVER"):
     pytest.importorskip("tetra3", reason="run scripts/install-solver.sh")
 
+import numpy as np
+
+from astro.pointing import sky_test
+from astro.pointing.finder_sync import FocusReport
 from astro.pointing.platesolve import FinderSolver
 from astro.pointing.sky_test import OUTCOMES, classify
 from tests import frames
@@ -51,11 +55,6 @@ class StubSolver:
     ("out_of_focus", False, "out_of_focus"),
 ])
 def test_classify_outcome_contract(monkeypatch, focus_outcome, solves, expected):
-    import numpy as np
-
-    from astro.pointing import sky_test
-    from astro.pointing.finder_sync import FocusReport
-
     report = FocusReport(5, 1.0, focus_outcome == "ok", "", focus_outcome)
     monkeypatch.setattr(sky_test, "check_focus", lambda gray: report)
     assert classify(np.zeros((8, 8), np.uint8), StubSolver(solves)) == expected

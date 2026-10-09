@@ -1,4 +1,5 @@
 import pytest
+import serial
 
 from astro.devices.handset import Handset, parse_reply
 
@@ -41,8 +42,6 @@ def test_counts_queries_and_keeps_last_good_reading():
 
 class UnpluggedPort(FakePort):
     def write(self, data):
-        import serial
-
         raise serial.SerialException("device disconnected")
 
 

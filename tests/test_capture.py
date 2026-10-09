@@ -5,6 +5,7 @@ import pytest
 from scipy import ndimage
 
 from astro.capture.focus import FocusCoach, half_flux_radius, laplacian_variance
+from astro.capture.recorder import safe_name
 from astro.capture.roi import brightest_blob, roi_around
 from astro.capture.ser import SerWriter, read_ser
 
@@ -63,16 +64,12 @@ def test_focus_coach_sequence():
 
 
 def test_file_names_are_safe():
-    from astro.capture.recorder import safe_name
-
     assert safe_name("Barnard's Star") == "Barnards_Star"
     assert safe_name("M31/Andromeda") == "M31Andromeda"
     assert safe_name("///") == "target"
 
 
 def test_roi_never_negative_on_a_small_sensor():
-    from astro.capture.roi import roi_around
-
     roi = roi_around((100, 100), 512, (400, 300))
     assert (roi.x, roi.y, roi.width, roi.height) == (0, 0, 300, 300)
 

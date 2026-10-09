@@ -102,7 +102,7 @@ class Tts:
             return self._synthesize_cli(text)
 
     def _synthesize_in_process(self, text: str) -> bytes:
-        from piper import PiperVoice
+        from piper import PiperVoice  # noqa: PLC0415 - optional; the CLI is the fallback
 
         with self._lock:  # load once; one synthesis at a time on the shared voice
             if self._voice is None:

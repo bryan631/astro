@@ -1,7 +1,8 @@
 import numpy as np
 import pytest
 
-from astro.guidance.centering import Centerer
+from astro.guidance.centering import Centerer, centering_phrases
+from astro.guidance.engine import cue_phrases
 from astro.pointing.main_offset import local_delta
 
 SIZE = (1928, 1090)
@@ -101,9 +102,6 @@ def test_offset_exact_despite_finder_residual_and_wraparound():
 
 
 def test_centering_phrases_cover_what_centering_says():
-    from astro.guidance.centering import centering_phrases
-    from astro.guidance.engine import cue_phrases
-
     rig = Rig(73, False, aim_offset=(0.06, -0.04))
     centerer = Centerer(SIZE)
     centerer.restart(rig.target)

@@ -8,10 +8,17 @@ os.environ["ANTHROPIC_API_KEY"] = ""  # tests never call the real API
 os.environ["ASTRO_NO_LOG_FILE"] = "1"  # don't write data/logs from tests
 os.environ["ASTRO_OFFLINE"] = "1"  # no forecast fetches from tests
 
+import asyncio
+import os
+import time as _time
+
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from astro import server
+from astro.devices import config as devices
+from astro.server import Hub
 from astro.session import Session
 
 
@@ -153,8 +160,6 @@ def test_unplugged_main_camera_runs_without_it(monkeypatch, tmp_path):
 
 
 def test_unknown_main_driver_rejected_before_hardware():
-    from astro.devices import config as devices
-
     with pytest.raises(ValueError, match="main camera driver"):
         devices.validate({"finder": {"driver": "svbony"}, "main": {"driver": "webcam"},
                           "mount": {"driver": "solve"}})
@@ -208,8 +213,6 @@ def test_failed_session_build_rolls_back_everything(monkeypatch, tmp_path):
 
 
 def test_slow_answer_says_let_me_think(monkeypatch):
-    import time as _time
-
     monkeypatch.setattr(server, "THINKING_AFTER_S", 0.1)
     session, _ = server.build_session()
     monkeypatch.setattr(server, "build_session", lambda: (session, None))
@@ -413,8 +416,6 @@ def test_video_buttons_are_silent_and_a_reload_shows_the_video():
 
 @pytest.mark.usefixtures("night")
 def test_video_stream_serves_motion_jpeg():
-    import asyncio
-
     async def two_frames():
         response = await server.api_camera_stream("finder")
         parts = []
@@ -452,10 +453,6 @@ def test_hardware_startup_failure_is_reported(monkeypatch):
 
 
 def test_state_updates_coalesce_while_events_keep_order():
-    import asyncio
-
-    from astro.server import Hub
-
     async def run():
         hub = Hub.__new__(Hub)
         hub._outbox, hub._state = asyncio.Queue(), None
@@ -485,8 +482,6 @@ def test_sim_world_resets_after_the_last_tablet_leaves(monkeypatch):
 
 
 def test_token_gates_pages_and_socket(monkeypatch):
-    from starlette.websockets import WebSocketDisconnect
-
     monkeypatch.setenv("ASTRO_TOKEN", "s3cret")
     client = TestClient(server.app)
     assert client.get("/").status_code == 401
@@ -530,9 +525,6 @@ def test_tonight_page_renders_without_starting_the_telescope(monkeypatch):
 
 
 def test_media_pruned_by_age_then_size(tmp_path):
-    import os
-    import time
-
     for i, (age_days, size) in enumerate([(90, 10), (5, 30), (2, 30), (1, 30)]):
         f = tmp_path / f"{i}.webm"
         f.write_bytes(b"x" * size)

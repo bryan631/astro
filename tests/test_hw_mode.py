@@ -9,6 +9,7 @@ if not os.environ.get("ASTRO_REQUIRE_SOLVER"):
     pytest.importorskip("tetra3", reason="run scripts/install-solver.sh")
 
 from astro.devices import config as devices
+from astro.devices import config as devices_config
 from astro.devices.sim.sky import render
 from astro.pointing.coords import Site, altaz_to_radec
 from astro.pointing.geometry import separation_deg
@@ -70,9 +71,6 @@ def test_unknown_drivers_rejected(solver):
 
 
 def test_failed_mcu_start_closes_port_and_camera(monkeypatch):
-    from astro.devices import config as devices_config
-    from astro.devices import mcu as mcu_module
-
     closed = []
 
     class Cam:
@@ -90,7 +88,7 @@ def test_failed_mcu_start_closes_port_and_camera(monkeypatch):
             closed.append("mcu")
 
     monkeypatch.setattr(devices_config, "open_camera", lambda cfg: Cam())
-    monkeypatch.setattr(mcu_module, "Mcu", BrokenMcu)
+    monkeypatch.setattr(devices_config, "Mcu", BrokenMcu)
     cfg = {"finder": {"driver": "svbony", "model": "X"}, "main": {"driver": "none"},
            "mount": {"driver": "mcu"}}
     with pytest.raises(OSError):
@@ -99,9 +97,6 @@ def test_failed_mcu_start_closes_port_and_camera(monkeypatch):
 
 
 def test_handset_mount_driver_reads_encoders(monkeypatch):
-    from astro.devices import config as devices_config
-    from astro.devices import handset as handset_module
-
     class Cam:
         def close(self):
             pass
@@ -120,7 +115,7 @@ def test_handset_mount_driver_reads_encoders(monkeypatch):
             pass
 
     monkeypatch.setattr(devices_config, "open_camera", lambda cfg: Cam())
-    monkeypatch.setattr(handset_module, "Handset", FakeHandset)
+    monkeypatch.setattr(devices_config, "Handset", FakeHandset)
     cfg = {"finder": {"driver": "svbony", "model": "X"}, "main": {"driver": "none"},
            "mount": {"driver": "handset", "port": "/dev/ttyUSB1"}}
     finder, close = devices_config.build_pointing(cfg, None, WPB, lambda: NOW)

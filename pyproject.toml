@@ -24,5 +24,5 @@ tmp_path_retention_policy = "failed"  # recording tests write ~1 GB per run
 line-length = 100
 
 [tool.ruff.lint]
-extend-select = ["E", "W", "I", "B", "UP"]
+extend-select = ["E", "W", "I", "B", "UP", "PLC0415"]  # PLC0415: imports at the top of files
 ignore = ["E501"]  # long lines are judged in review: wrapping URLs and tables hurts more

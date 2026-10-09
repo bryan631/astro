@@ -8,6 +8,8 @@ import pytest
 if not os.environ.get("ASTRO_REQUIRE_SOLVER"):
     pytest.importorskip("tetra3", reason="run scripts/install-solver.sh")
 
+import threading
+
 from astro import calibration_store
 from astro.pointing.coords import Site
 from astro.pointing.geometry import separation_deg
@@ -68,8 +70,6 @@ def test_wrong_shapes_start_fresh(tmp_path, content):
 
 
 def test_concurrent_saves_dont_clobber(tmp_path):
-    import threading
-
     threads = [threading.Thread(target=calibration_store.save, args=(tmp_path, {"n": i}))
                for i in range(20)]
     for th in threads:

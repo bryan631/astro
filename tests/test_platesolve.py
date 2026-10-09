@@ -8,7 +8,7 @@ if not os.environ.get("ASTRO_REQUIRE_SOLVER"):
 
 from astro.devices.sim.sky import render
 from astro.pointing.geometry import separation_deg
-from astro.pointing.platesolve import FinderSolver, bin2x2
+from astro.pointing.platesolve import FinderSolver, Solution, bin2x2, remove_hot_pixels
 from tests import frames
 
 
@@ -18,8 +18,6 @@ def solver():
 
 
 def test_remove_hot_pixels_keeps_stars():
-    from astro.pointing.platesolve import remove_hot_pixels
-
     img = np.full((9, 9), 10, np.uint8)
     img[2, 2] = 200  # hot pixel: neighbors dark
     img[5:8, 5:8] = 60
@@ -80,8 +78,6 @@ def test_real_finder_frame_solves(solver):
 
 
 def test_confidence_is_minus_log10_false_prob():
-    from astro.pointing.platesolve import Solution
-
     assert Solution(0, 0, 0, 10, 0, 10, 1e-12, 5).confidence == pytest.approx(12)
 
 

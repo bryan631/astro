@@ -2,11 +2,12 @@ from datetime import UTC, datetime
 
 import pytest
 
+from astro.capture.focus import FocusCoach
 from astro.intents import Intent, parse
 from astro.planner import horizon_store
 from astro.planner.horizon import HorizonMask
 from astro.pointing.coords import Site
-from astro.session import Session
+from astro.session import Session, _azimuth_coverage
 
 NIGHT = datetime(2026, 10, 4, 2, 0, tzinfo=UTC)
 
@@ -70,8 +71,6 @@ def test_record_the_horizon_is_not_a_capture():
 
 
 def test_horizon_walk_ends_focus_coaching():
-    from astro.capture.focus import FocusCoach
-
     s, _ = walk_session([])
     s._focus_coach, s._focus_mode = FocusCoach(), "finder"
     s.handle("start the horizon walk")
@@ -95,8 +94,6 @@ def test_next_step_outside_setup_means_next():
 
 
 def test_partial_treeline_warns_about_the_gap():
-    from astro.session import _azimuth_coverage
-
     assert _azimuth_coverage([90, 120, 150, 180]) == 90
     assert _azimuth_coverage([0, 90, 180, 270]) == 270
     assert _azimuth_coverage([350, 10, 40]) == pytest.approx(50)  # across north

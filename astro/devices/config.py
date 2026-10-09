@@ -7,6 +7,9 @@ from datetime import datetime
 from pathlib import Path
 
 from astro.devices.base import Camera
+from astro.devices.handset import Handset
+from astro.devices.mcu import Mcu
+from astro.devices.svbony import SvbonyCamera  # the vendor SDK itself loads on connect
 from astro.pointing.coords import Site
 from astro.pointing.encoders import COUNTS_PER_REV, EncoderAxis
 from astro.pointing.finder_sync import FinderSync
@@ -25,8 +28,6 @@ def load(path: Path) -> dict:
 
 
 def open_camera(cfg: dict) -> Camera:
-    from astro.devices.svbony import SvbonyCamera  # needs the vendor SDK; import only when used
-
     if cfg["driver"] != "svbony":
         raise ValueError(f"unknown camera driver {cfg['driver']!r}")
     cam = SvbonyCamera(cfg["model"])
@@ -110,10 +111,7 @@ def build_pointing(cfg: dict, solver: FinderSolver, site: Site, clock: Callable[
 def _open_encoders(mount: dict):
     """The encoder source for the mount driver; caller closes it if anything later fails."""
     if mount["driver"] == "handset":
-        from astro.devices.handset import Handset
-
         return Handset(mount.get("port") or "/dev/ttyUSB0")
-    from astro.devices.mcu import Mcu
 
     mcu = Mcu(mount.get("port") or None)
     try:

@@ -7,6 +7,8 @@ would test the workarounds instead of finding the quirks."""
 import ctypes as C
 import os
 
+import numpy as np
+
 LIB = os.environ.get("SVB_LIB", os.path.expanduser("~/sdk/SVBCameraSDK/lib/x64/libSVBCameraSDK.so"))
 RAW8, GAIN, EXPOSURE = 0, 0, 1  # SVB_IMG_RAW8, SVB_GAIN, SVB_EXPOSURE (exposure in us)
 BAYER = ["RG", "BG", "GR", "GB"]  # SDK pattern index -> first row pair
@@ -72,7 +74,6 @@ class Camera:
         check(lib.SVBStartVideoCapture(self.id), "SVBStartVideoCapture")
 
     def frame(self, wait_ms=5000):
-        import numpy as np
         buf = (C.c_ubyte * (self.w * self.h))()
         check(lib.SVBGetVideoData(self.id, buf, len(buf), wait_ms), "SVBGetVideoData")
         return np.frombuffer(buf, np.uint8).reshape(self.h, self.w).copy()

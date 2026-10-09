@@ -1,6 +1,11 @@
+import time
+from types import SimpleNamespace
+
 import numpy as np
 from scipy import ndimage
 
+from astro.capture.live_stacker import LiveStacker
+from astro.process import livestack
 from astro.process.livestack import LiveStack, stretch
 from astro.process.planet import _LAYOUT
 
@@ -91,10 +96,6 @@ class SkyCamera:
 
 
 def test_safety_stop_mid_stack_keeps_frames_and_restores_camera(tmp_path):
-    import time
-
-    from astro.capture.live_stacker import LiveStacker
-
     unsafe = {"reason": None}
     cam = SkyCamera()
     stacker = LiveStacker(cam, tmp_path, lambda: unsafe["reason"])
@@ -112,10 +113,6 @@ def test_safety_stop_mid_stack_keeps_frames_and_restores_camera(tmp_path):
 
 
 def test_four_stars_anchor_the_stack_three_do_not(monkeypatch):
-    from types import SimpleNamespace
-
-    from astro.process import livestack
-
     frame = np.zeros((64, 64), np.uint8)
     for stars, anchored in [(3, False), (4, True)]:
         monkeypatch.setattr(livestack, "check_focus", lambda lum, n=stars: SimpleNamespace(stars=n))

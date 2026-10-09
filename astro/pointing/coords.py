@@ -13,6 +13,7 @@ import astropy.units as u
 from astropy.coordinates import AltAz, EarthLocation, SkyCoord, get_body
 from astropy.time import Time
 from astropy.utils import iers
+from timezonefinder import TimezoneFinder  # offline lookup; loaded once
 
 iers.conf.auto_download = False
 iers.conf.auto_max_age = None
@@ -20,8 +21,6 @@ iers.conf.auto_max_age = None
 
 @functools.cache
 def _timezone_finder():
-    from timezonefinder import TimezoneFinder  # offline lookup; loaded once
-
     return TimezoneFinder()
 
 

@@ -4,11 +4,15 @@ from datetime import datetime, timedelta, timezone
 import numpy as np
 import pytest
 
+from astro.capture import recorder as rec_module
 from astro.capture.recorder import CaptureRefused, Recorder
+from astro.capture.roi import brightest_blob
 from astro.capture.ser import read_ser
 from astro.devices.base import Roi
 from astro.devices.sim.main_cam import SimMainCamera
-from astro.pointing.coords import Site, body_altaz
+from astro.guidance.centering import Step
+from astro.guidance.engine import Guide
+from astro.pointing.coords import Site, body_altaz, radec_to_altaz
 from astro.session import Session
 
 WPB = Site(26.7, -80.1)
@@ -160,8 +164,6 @@ def test_focus_stops_when_pointing_becomes_unsafe(tmp_path):
 
 
 def test_barlow_retunes_active_guide(tmp_path):
-    from astro.guidance.engine import Guide
-
     s, _ = make_session(tmp_path)
     s.guide = Guide(45, 100)
     s.handle("barlow in")
@@ -170,8 +172,6 @@ def test_barlow_retunes_active_guide(tmp_path):
 
 @pytest.mark.parametrize("planet", ["mercury", "uranus", "neptune"])
 def test_sim_main_camera_shows_every_planet(planet):
-    from astro.capture.roi import brightest_blob
-
     alt, az = body_altaz(planet, WPB, EVENING)
     cam = SimMainCamera(lambda: (alt, az), WPB, lambda: EVENING)
     assert brightest_blob(cam.capture()) is not None
@@ -290,8 +290,6 @@ def test_picture_keeps_capture_time_name_and_every_job_is_announced(tmp_path):
 
 
 def test_deep_sky_capture_live_stacks_drifting_stars(tmp_path):
-    from astro.pointing.coords import radec_to_altaz
-
     start = time.monotonic()
 
     def clock():
@@ -325,8 +323,6 @@ def test_plain_stop_ends_a_picture(tmp_path):
 
 
 def test_on_target_hands_over_to_main_camera_centering(tmp_path):
-    from astro.guidance.engine import Guide
-
     s, _ = make_session(tmp_path)
     alt, az = body_altaz("saturn", WPB, EVENING)
     s.guide = Guide(alt + 0.2, az)  # approaching from below; the scope sits on Saturn
@@ -337,9 +333,6 @@ def test_on_target_hands_over_to_main_camera_centering(tmp_path):
 
 
 def test_centering_cues_are_paced_and_lost_target_returns_to_finder(tmp_path):
-    from astro.guidance.centering import Step
-    from astro.guidance.engine import Guide
-
     s, _ = make_session(tmp_path)
     alt, az = body_altaz("saturn", WPB, EVENING)
     s.guide = Guide(alt + 0.2, az)
@@ -354,7 +347,6 @@ def test_centering_cues_are_paced_and_lost_target_returns_to_finder(tmp_path):
 
 def test_picture_silences_guidance_and_blocks_goto(tmp_path):
     """Review H5: no guidance cues during a picture; goto refused while the camera is busy."""
-    from astro.guidance.engine import Guide
 
     s, _ = make_session(tmp_path)
     alt, az = body_altaz("saturn", WPB, EVENING)
@@ -368,8 +360,6 @@ def test_picture_silences_guidance_and_blocks_goto(tmp_path):
 
 
 def test_refused_capture_keeps_guidance(tmp_path):
-    from astro.guidance.engine import Guide
-
     s, cam = make_session(tmp_path)
     s.guide, s.main_focus_ok = Guide(45, 100), True
     cam.true_altaz = lambda: (80.0, 10.0)  # nothing bright: the recorder refuses
@@ -390,8 +380,6 @@ def test_drifted_recording_still_becomes_a_picture(tmp_path, monkeypatch):
 
 
 def test_old_recordings_pruned_and_full_disk_refused(tmp_path, monkeypatch):
-    from astro.capture import recorder as rec_module
-
     caps = tmp_path / "caps"
     caps.mkdir()
     for i in range(5):

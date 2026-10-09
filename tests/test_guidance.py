@@ -1,7 +1,7 @@
 import pytest
 
 from astro.devices.sim.scope import SimScope, SimUser
-from astro.guidance.engine import DirectionLearner, Guide, wrap180
+from astro.guidance.engine import CueLimiter, DirectionLearner, Guide, wrap180
 
 
 def run_session(start, target, seconds=120, dt=0.1, **guide_kw):
@@ -106,8 +106,6 @@ def test_stop_nudge_back_on_target_says_stop_again():
 
 
 def test_calibration_prompt_repeats_in_full():
-    from astro.guidance.engine import CueLimiter
-
     limiter = CueLimiter()
     assert limiter.speak("push left a tiny bit, then stop", 0.0) == "push left a tiny bit, then stop"
     assert limiter.speak("push left a tiny bit, then stop", 5.0) == "push left a tiny bit, then stop"
