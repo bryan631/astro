@@ -52,8 +52,8 @@ Clock = Callable[[], datetime]
 TARGET_REFRESH_S = 1.0  # targets drift ~15"/s, so re-resolve their alt/az once a second
 # Live video for checking cap, focus and framing: exposure s, gain, centre crop (the main
 # camera's full frame is too slow to stream; a 1280x720 crop ran at ~47 fps on the checkout).
-VIDEO = {"finder": (0.1, 400, False), "main": (0.02, 200, True)}
-VIDEO_EXPOSURE = {"finder": (0.01, 0.5), "main": (0.002, 0.2)}  # auto-exposure limits, seconds
+VIDEO = {"finder": (0.1, 400, False), "main": (0.05, 400, True)}
+VIDEO_EXPOSURE = {"finder": (0.01, 0.5), "main": (0.002, 1.0)}  # auto-exposure limits, seconds
 VIDEO_CROP = (1280, 720)
 # Commands that leave live video running; anything else needs a camera (or might) and ends it.
 NOT_UNDERSTOOD = "Sorry, I didn't catch that. Say 'what's good tonight' or 'go to Saturn'."
