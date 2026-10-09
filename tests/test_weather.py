@@ -94,3 +94,11 @@ def test_null_forecast_hours_are_skipped(monkeypatch):
     monkeypatch.setattr(weather.urllib.request, "urlopen",
                         lambda url, timeout: io.BytesIO(json.dumps(body).encode()))
     assert weather.hourly_cloud_cover(1, 2) == {"2026-10-08T21:00": 40.0}
+
+    def gappy(lat, lon):
+        data = hourly(lat, lon)
+        data["hourly"]["temperature_2m"][3] = None  # 21:00
+        return data
+
+    lines = weather.forecast_text(26.6, -80.1, hours=3, get=gappy).splitlines()
+    assert [ln[:11] for ln in lines[1:-1]] == ["10-08 20:00", "10-08 22:00"]
