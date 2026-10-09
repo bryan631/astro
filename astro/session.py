@@ -70,8 +70,10 @@ DIRECTION_PROBE_S = 1.5  # after a left/right cue, look this long for the azimut
 FIX_STALE_S = 2.0  # a plate-solve fix older than this is too old to steer by
 ENCODER_STALE_S = 1.0  # encoder positions older than this mean the board or cable is gone
 MIN_HFR_PX = 0.5  # floor so a perfectly sharp (tiny) star can't blow up the focus score
-TOLERANCE_ARCMIN = 4.0  # guidance "on target" tolerance
-TOLERANCE_BARLOW_ARCMIN = 2.0  # half that with the 2x Barlow (half the field)
+# Guidance "on target" tolerance. 4' kept the user nudging in the field (encoder steps are 2.3');
+# 8' still lands the target well inside the main camera's 32' x 18' view.
+TOLERANCE_ARCMIN = 8.0
+TOLERANCE_BARLOW_ARCMIN = 4.0  # half that with the 2x Barlow (half the field)
 MOON_FEATURES = {f.name: f for f in FEATURES}  # pointing at one means pointing at the Moon
 EXTENDED_TARGETS = {p.capitalize() for p in PLANETS} | {"Moon", *MOON_FEATURES}  # SER video
 RECORD_SECONDS = 60  # planetary video length

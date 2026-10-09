@@ -13,6 +13,9 @@ FINE_DEG = 0.5
 MIN_SPEAK_INTERVAL_S = 1.5
 REPEAT_INTERVAL_S = 4.0
 SLOW_DOWN_TIME_S = 1.0  # say "slower" if we'd reach the target within this time
+# Near the target, encoder steps (2.3') and the sky's drift look like motion: only a real push
+# (faster than this) earns "slower".
+SLOWER_MIN_DEG_S = 0.3
 
 
 def _directional(text: str) -> bool:
@@ -125,7 +128,7 @@ class Guide:
             if prev_err * err < 0:
                 return f"passed it, back {direction} a little", True
             closing = (abs(prev_err) - abs(err)) / dt if dt > 0 else 0.0
-            if closing > 0 and abs(err) / closing < SLOW_DOWN_TIME_S:
+            if closing > SLOWER_MIN_DEG_S and abs(err) / closing < SLOW_DOWN_TIME_S:
                 return "slower", self._limiter.last_text != "slower"
 
         if abs(err) > COARSE_DEG:

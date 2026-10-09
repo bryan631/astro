@@ -13,7 +13,7 @@ from astro.devices.sim.main_cam import SimMainCamera
 from astro.guidance.centering import Step
 from astro.guidance.engine import Guide
 from astro.pointing.coords import Site, body_altaz, radec_to_altaz
-from astro.session import Session
+from astro.session import TOLERANCE_BARLOW_ARCMIN, Session
 
 WPB = Site(26.7, -80.1)
 EVENING = datetime(2026, 10, 3, 22, 0, tzinfo=timezone(timedelta(hours=-4)))
@@ -167,7 +167,7 @@ def test_barlow_retunes_active_guide(tmp_path):
     s, _ = make_session(tmp_path)
     s.guide = Guide(45, 100)
     s.handle("barlow in")
-    assert s.guide.tol_deg == pytest.approx(2 / 60)
+    assert s.guide.tol_deg == pytest.approx(TOLERANCE_BARLOW_ARCMIN / 60)
 
 
 @pytest.mark.parametrize("planet", ["mercury", "uranus", "neptune"])
