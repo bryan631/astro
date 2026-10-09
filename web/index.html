@@ -359,7 +359,8 @@ function setupHandsFree(Rec) {
       if (!window.vad) { await loadScript(VAD + "ort.wasm.min.js"); await loadScript(VAD + "bundle.min.js"); }
       micVad = await vad.MicVAD.new({
         getStream: async () => stream, baseAssetPath: VAD, onnxWASMBasePath: VAD, model: "v5",
-        preSpeechPadMs: 300, redemptionMs: 700, minSpeechMs: 300,  // pre-roll keeps the first word
+        preSpeechPadMs: 800, redemptionMs: 800, minSpeechMs: 250,  // a long pre-roll keeps "Astro" (often clipped)
+        positiveSpeechThreshold: 0.3, negativeSpeechThreshold: 0.2,  // softer: early-morning voices are quiet
         onSpeechStart: () => { hearing = true; tainted = !quiet(); },  // started over our own voice
         onVADMisfire: () => { hearing = false; },
         onSpeechEnd: audio => {

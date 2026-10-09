@@ -1,8 +1,10 @@
 """Wake word for hands-free mode: "Astro, go to Jupiter" or "Astro" then the command."""
 import re
 
-# Whisper often hears "Astro" as "Astra" or "Austro".
-_WAKE = re.compile(r"^\W*(?:hey\W+)?(?:astro|astra|austro)\b[\s,.!?:;-]*", re.IGNORECASE)
+# Whisper often hears "Astro" as "Astra", "Austro", "Astrid", "Ostro" or "Estro", softly spoken
+# even "Astrol" or "Asshro".
+_WAKE = re.compile(r"^\W*(?:hey\W+|ok\W+)?(?:astr(?!onom)[aoiu]\w*|austr[ao]\w*|[oe]stro\w*|asshro)\b[\s,.!?:;-]*",
+                   re.IGNORECASE)
 
 
 _SENTENCE = re.compile(r"(?<=[.!?])\s+")

@@ -27,6 +27,9 @@ def clean_transcript(text: str) -> str:
     return " ".join(_TAGS.sub(" ", text).split())
 
 
+# Brings quiet speech (whispering at 5 AM) up to a steady level for whisper, whatever the
+# background: a dynamic normalizer adapts to each recording rather than a fixed gain.
+LEVEL = "dynaudnorm=f=150:g=15:m=30"
 PROMPT = "Astro, go to Jupiter. Astro, stop."  # biases whisper towards the wake word and commands
 CUE_CACHE = 256  # distinct phrases kept as audio
 WAV_BYTES_PER_S = 16000 * 2  # ffmpeg output: 16 kHz mono 16-bit
@@ -62,7 +65,7 @@ class Stt:
         with tempfile.TemporaryDirectory() as d:
             src, wav = Path(d) / "in", Path(d) / "in.wav"
             src.write_bytes(audio)
-            subprocess.run(["ffmpeg", "-loglevel", "error", "-i", src, "-ar", "16000", "-ac", "1", wav],
+            subprocess.run(["ffmpeg", "-loglevel", "error", "-i", src, "-af", LEVEL, "-ar", "16000", "-ac", "1", wav],
                            check=True, timeout=20)
             ctx = audio_ctx(wav.stat().st_size / WAV_BYTES_PER_S)
             out = subprocess.run([binary, "-m", model, "-f", wav, "-nt", "-np", "-ac", str(ctx),

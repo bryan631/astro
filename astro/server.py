@@ -424,6 +424,7 @@ async def handle_spoken(hub: Hub, socket: WebSocket, conn: dict, text: str) -> N
         if command is None and now < conn["armed_until"]:
             command = text
         if command is None:
+            log.info("ignored", extra={"data": {"text": text}})  # tune the wake word from these
             await socket.send_json({"type": "ignored", "text": text})
             return
         if not command:
