@@ -67,3 +67,17 @@ def test_auto_exposure_stops_at_the_limit_for_a_capped_lens():
     assert wait_for(lambda: capped.exposure_s == 0.5)
     view.stop()
     assert capped.exposure_s == 0.8  # the camera's own setting is back
+
+
+class GainSceneCam(SceneCam):
+    def capture(self):
+        Cam.capture(self)
+        return np.full((64, 64), min(255, self.light * self.exposure_s * self.gain / 400), np.uint8)
+
+
+def test_auto_exposure_lowers_the_gain_in_daylight():
+    room = GainSceneCam(light=100000)  # saturated even at 0.01 s and gain 400
+    view = LiveView(room, 0.1, 400, exposure_range=(0.01, 0.5)).start()
+    assert wait_for(lambda: 60 <= room.light * room.exposure_s * room.gain / 400 <= 220)
+    assert room.exposure_s == 0.01 and room.gain < 400
+    view.stop()

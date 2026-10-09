@@ -26,7 +26,7 @@ class LiveView:
         `exposure_range` (min, max seconds) turns on auto-exposure: a dim room or sky gets a
         longer exposure, a bright one a shorter one. A capped lens stays black at the maximum."""
         self.camera, self.exposure_s, self.gain, self.roi = camera, exposure_s, gain, roi
-        self.exposure_range = exposure_range
+        self.exposure_range, self._base_gain = exposure_range, gain
         self.lock = lock or threading.Lock()
         self.stopped_because: str | None = None  # a spoken reason, when it ended by itself
         self._saved = (camera.exposure_s, camera.gain)
@@ -87,6 +87,14 @@ class LiveView:
     def _auto_expose(self, frame: np.ndarray) -> None:
         low, high = self.exposure_range
         peak = np.percentile(frame[::4, ::4], 99.5)
+        if peak > HIGH_PEAK and self.exposure_s <= low and self.gain > 0:  # daylight: lower the gain too
+            self.gain = int(self.gain / STEP)
+            self.camera.set_gain(self.gain)
+            return
+        if peak < LOW_PEAK and self.gain < self._base_gain:  # dim again: gain back first
+            self.gain = min(round(self.gain * STEP) + 1, self._base_gain)
+            self.camera.set_gain(self.gain)
+            return
         if peak < LOW_PEAK:
             new = min(self.exposure_s * STEP, high)
         elif peak > HIGH_PEAK:

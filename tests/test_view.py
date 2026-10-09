@@ -17,3 +17,8 @@ def test_dark_noise_stays_dark_and_stars_show():
     sky = dark.copy()
     sky[400:404, 600:604] = 250  # a star
     assert decode(sky).max() > 200 and decode(sky).shape == (480, 640, 3)
+
+
+def test_saturated_frame_is_white_not_black():
+    img = Image.open(io.BytesIO(jpeg(np.full((64, 64), 255, np.uint8), "GRBG")))
+    assert np.asarray(img).min() > 200
