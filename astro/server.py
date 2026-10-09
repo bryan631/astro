@@ -72,6 +72,7 @@ log = logging.getLogger("astro.server")
 LOGGED = {"say", "picture", "get_location"}  # not the 10 Hz "state" or "live" updates
 GALLERY = ROOT / "data" / "gallery"
 UTTERANCES = ROOT / "data" / "utterances"  # ASTRO_SAVE_AUDIO=1: what the tablet sent, to tune voice
+UTTERANCE_KEEP_DAYS, UTTERANCE_MAX_BYTES = 60, 2 * 1024**3  # then the oldest go
 LIVE = ROOT / "data" / "live"  # live-stack previews while they build (not gallery pictures)
 
 # Module state: speech engines, and the shared hubs (one per process; see get_hub).
@@ -412,6 +413,18 @@ def save_utterance(audio: bytes, text: str, handsfree: bool) -> None:
     ext = "wav" if audio[:4] == b"RIFF" else "webm"
     Path(f"{stem}.{ext}").write_bytes(audio)
     Path(f"{stem}.json").write_text(json.dumps({"heard": text, "handsfree": handsfree}))
+    prune_media(UTTERANCES, UTTERANCE_KEEP_DAYS, UTTERANCE_MAX_BYTES)
+
+
+def prune_media(folder: Path, keep_days: float, max_bytes: int) -> None:
+    """Delete files older than `keep_days`, then the oldest until the folder fits `max_bytes`."""
+    files = sorted((f for f in folder.iterdir() if f.is_file()), key=lambda f: f.stat().st_mtime)
+    cutoff, total = time.time() - keep_days * 86400, sum(f.stat().st_size for f in files)
+    for f in files:
+        if f.stat().st_mtime >= cutoff and total <= max_bytes:
+            break
+        total -= f.stat().st_size
+        f.unlink(missing_ok=True)
 
 
 async def handle_spoken(hub: Hub, socket: WebSocket, conn: dict, text: str) -> None:

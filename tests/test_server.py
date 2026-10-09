@@ -527,3 +527,16 @@ def test_tonight_page_renders_without_starting_the_telescope(monkeypatch):
     monkeypatch.setattr(server.tonight_report, "build", lambda spots, now, clouds: None)
     r = TestClient(server.app).get("/tonight")
     assert r.status_code == 200 and "It does not get dark tonight." in r.text
+
+
+def test_media_pruned_by_age_then_size(tmp_path):
+    import os
+    import time
+
+    for i, (age_days, size) in enumerate([(90, 10), (5, 30), (2, 30), (1, 30)]):
+        f = tmp_path / f"{i}.webm"
+        f.write_bytes(b"x" * size)
+        t = time.time() - age_days * 86400
+        os.utime(f, (t, t))
+    server.prune_media(tmp_path, keep_days=60, max_bytes=70)
+    assert sorted(f.name for f in tmp_path.iterdir()) == ["2.webm", "3.webm"]  # too old, then too big
