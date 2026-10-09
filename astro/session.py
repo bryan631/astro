@@ -59,6 +59,7 @@ VIDEO_CROP = (1280, 720)
 NOT_UNDERSTOOD = "Sorry, I didn't catch that. Say 'what's good tonight' or 'go to Saturn'."
 KEEPS_VIDEO = {"describe", "barlow_on", "barlow_off", "location", "horizon_start",
                "horizon_mark", "stop_capture", "stop"}
+FINDER_FOCUS_TOL = 0.15  # field test: 3% made it flip "sharper"/"passed it" every second
 FOCUS_STEP_S = 1.0  # one finder focus measurement per second while coaching
 MIN_FOCUS_SAMPLES = 3  # focus readings before "done" counts (else the gate was never checked)
 CENTER_STEP_S = 0.5  # main-camera centering cue rate
@@ -384,7 +385,8 @@ class Session:
         if self.finder is None:
             return [say("There's no finder camera connected.")]
         self.target, self.guide = None, None
-        self._focus_coach, self._focus_mode = FocusCoach(), "finder"
+        # The finder's score (stars / HFR) jumps 10-20% frame to frame: smooth it, judge coarser.
+        self._focus_coach, self._focus_mode = FocusCoach(FINDER_FOCUS_TOL, smooth=3), "finder"
         return [say("Point at some stars, then turn the finder's focus ring slowly. "
                     "I'll tell you when it gets sharper. Say stop when I say it's the sharpest.")]
 
