@@ -40,15 +40,6 @@ def test_streams_and_restores_the_camera():
     assert cam.frames == frames and not view.running
 
 
-def test_stops_with_the_reason_when_the_gate_says_no():
-    cam, reasons = Cam(), [None, None, "it's daytime"]
-    view = LiveView(cam, 0.05, 600, allowed=lambda: reasons.pop(0) if reasons else "it's daytime").start()
-    assert wait_for(lambda: not view.running)
-    assert view.stopped_because == "it's daytime"
-    view.stop()
-    assert cam.exposure_s == 0.8  # restored even after a gate stop
-
-
 class SceneCam(Cam):
     """A scene `light` bright: pixel value = light * exposure, so exposure decides the picture."""
 

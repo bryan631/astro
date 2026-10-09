@@ -44,7 +44,7 @@ from astro.pointing.geometry import separation_deg
 from astro.pointing.main_offset import MainOffset, local_delta
 from astro.pointing.platesolve import finder_gray
 from astro.process.planet import MIN_FRAMES, StackResult, process_ser
-from astro.safety import DAYTIME_SUN_ALT_DEG, SafetyResult, check_target
+from astro.safety import SafetyResult, check_target
 from astro.spots import Spot, upsert, with_mask
 from astro.wizard import SetupWizard
 
@@ -129,10 +129,8 @@ class Session:
         self._clouds_lock = threading.Lock()
         self._clouds_site: tuple[float, float] | None = None
         self.position = finder.position if finder else position
-        if finder is not None:
-            finder.safety = self.exposure_safety  # no finder exposure skips the Sun/daytime gate
-            if hasattr(finder, "start"):  # a background solver may only run once gated
-                finder.start()
+        if finder is not None and hasattr(finder, "start"):  # background plate solver
+            finder.start()
         self.override = developer_override
         self.catalog = {t.name: t for t in load_targets()}
         for t in list(self.catalog.values()):
@@ -152,12 +150,11 @@ class Session:
         self.barlow = False
         self.main_focus_ok = False  # pre-flight gate: reset per session and on Barlow change
         self.record_seconds = RECORD_SECONDS
-        self.recorder = (Recorder(main_camera, main_sensor, data_dir / "captures",
-                                  self.exposure_safety) if main_camera else None)
+        self.recorder = (Recorder(main_camera, main_sensor, data_dir / "captures") if main_camera else None)
         self._announced_done = True
         self.gallery_dir = data_dir / "gallery"
         self.stack_seconds = STACK_SECONDS
-        self.stacker = (LiveStacker(main_camera, self.gallery_dir, self.exposure_safety,
+        self.stacker = (LiveStacker(main_camera, self.gallery_dir,
                                     preview_dir=data_dir / "live")
                         if main_camera else None)
         self._stack_done_announced = True
@@ -537,8 +534,6 @@ class Session:
         if (self._camera_busy() or self._focus_coach or self._collimation or self._centering
                 or (name == "finder" and self.guide is not None)):  # guidance needs finder fixes
             return [say("Let me finish what I'm doing first. Say stop, then ask for the video.")]
-        if reason := self.exposure_safety():
-            return [say(f"I can't run the camera right now: {reason}.")]
         self.stop_video()
         exposure, gain, crop = VIDEO[name]
         roi = None
@@ -550,7 +545,7 @@ class Session:
             pause.set()
         lock = getattr(self.finder, "camera_lock", None) if name == "finder" else None
         try:
-            self._video = (name, LiveView(cam, exposure, gain, roi, lock, self.exposure_safety,
+            self._video = (name, LiveView(cam, exposure, gain, roi, lock,
                                                VIDEO_EXPOSURE[name]).start())
         finally:
             if self._video is None and pause is not None:  # it didn't start: solve again
@@ -667,7 +662,7 @@ class Session:
         return kept
 
     def _tick(self, t: float) -> list[dict]:
-        if self._video is not None and not self._video[1].running:  # the exposure gate ended it
+        if self._video is not None and not self._video[1].running:  # it ended by itself (camera unplugged)
             reason = self._video[1].stopped_because or "the camera stopped"
             tell = say if self._video_announce else notice
             name = self.stop_video()
@@ -866,9 +861,6 @@ class Session:
         if self._camera_busy():  # a recording or stack took the camera
             self._centering = False
             return []
-        if reason := self.exposure_safety():
-            self._centering = False
-            return [say(f"I stopped centering: {reason}.")]
         try:
             frame = self.main_camera.capture()
         except (RuntimeError, OSError) as e:
@@ -891,8 +883,6 @@ class Session:
         if t - self._focus_at < FOCUS_STEP_S or self.finder is None or self._focus_coach is None:
             return []
         self._focus_at = t
-        if stop := self._stop_focus_if_unsafe():
-            return stop
         try:
             report = self.finder.focus_report()
         except (RuntimeError, OSError) as e:
@@ -919,9 +909,6 @@ class Session:
         if t - self._collimation_at < COLLIMATION_STEP_S or self._collimation is None:
             return []
         self._collimation_at = t
-        if reason := self.exposure_safety():
-            self._collimation = None
-            return [say(f"I stopped the collimation check: {reason}.")]
         try:
             frame = self.main_camera.capture()
         except (RuntimeError, OSError) as e:
@@ -946,8 +933,6 @@ class Session:
         if t - self._focus_at < FOCUS_STEP_S or self.main_camera is None or self._focus_coach is None:
             return []
         self._focus_at = t
-        if stop := self._stop_focus_if_unsafe():
-            return stop
         try:
             frame = self.main_camera.capture()
         except (RuntimeError, OSError) as e:
@@ -1142,23 +1127,6 @@ class Session:
         if result.ok and alt < float(self.horizon.min_alt(az)):
             return SafetyResult(False, "behind the trees right now")
         return result
-
-    def exposure_safety(self) -> str | None:
-        """Spoken reason why taking an exposure now is unsafe, else None (astro/safety.py)."""
-        when = self.clock()
-        if self.finder is not None and not self.finder.synced:
-            # Pointing unknown: we can't rule out the Sun, so allow only when it is down.
-            if body_altaz("sun", self.site, when)[0] > DAYTIME_SUN_ALT_DEG:
-                return "it's daytime and I don't know where the telescope is pointing"
-            return None
-        result = check_target(*self.position(), self.site, when, self.override)
-        return None if result.ok else f"the telescope is pointing {result.reason}"
-
-    def _stop_focus_if_unsafe(self) -> list[dict]:
-        if reason := self.exposure_safety():
-            self._focus_coach = None
-            return [say(f"I stopped focusing: {reason}.")]
-        return []
 
     def _tolerance_arcmin(self) -> float:
         return TOLERANCE_BARLOW_ARCMIN if self.barlow else TOLERANCE_ARCMIN

@@ -17,7 +17,6 @@ from astro.pointing.platesolve import FinderSolver, finder_gray
 
 RETRY_S = 1.0  # pause after a failed solve (clouds, slewing) before trying again
 FRESH_S = 5.0  # a solve this recent counts for "sync" without solving again
-SAFETY_IDLE_S = 10.0  # re-check this often while exposures aren't allowed
 
 
 class SolveTracker:
@@ -25,7 +24,6 @@ class SolveTracker:
                  clock: Callable[[], datetime]):
         self.camera, self.solver, self.site, self.clock = camera, solver, site, clock
         self.synced = False
-        self.safety: Callable[[], str | None] | None = None  # exposure gate, set by the session
         self._altaz = (0.0, 0.0)
         self.last_solution = None  # not logged: this solves about once a second
         self._solved_at = -1e9
@@ -36,7 +34,7 @@ class SolveTracker:
         self._thread = threading.Thread(target=self._loop, daemon=True)
 
     def start(self) -> "SolveTracker":
-        """Start solving in the background. Idempotent; install `safety` before calling."""
+        """Start solving in the background. Idempotent."""
         if not self._thread.is_alive():
             self._thread.start()
         return self
@@ -61,8 +59,6 @@ class SolveTracker:
 
     def sync(self, fresh: bool = False) -> tuple[bool, str]:
         """`fresh`: always solve now, never reuse a recent solve."""
-        if self.safety and (reason := self.safety()):  # checked first: a recent solve doesn't
-            return False, f"I can't look at the sky right now: {reason}."  # make it safe now
         if not fresh and self.synced and time.monotonic() - self._solved_at < FRESH_S:
             return True, "Got it, I know where we're pointing."
         ok, reason = self._solve_once()
@@ -100,9 +96,6 @@ class SolveTracker:
         while not self._stop.is_set():
             if self.paused.is_set():
                 self._stop.wait(0.2)
-                continue
-            if self.safety and self.safety():  # e.g. daytime: don't expose, just wait
-                self._stop.wait(SAFETY_IDLE_S)
                 continue
             try:
                 ok, _ = self._solve_once()

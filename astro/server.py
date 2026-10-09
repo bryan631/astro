@@ -595,8 +595,7 @@ def api_camera(name: str) -> Response:
     session = running_hub().session
     frame = session.camera_frame(name)
     if frame is None:  # say why, so a blank view isn't a mystery
-        why = session.exposure_safety() or "it hasn't taken a picture since the server started"
-        raise HTTPException(404, f"no frame yet: {why}")
+        raise HTTPException(404, "no frame yet: it hasn't taken a picture since the server started")
     raw, bayer, age = frame
     return Response(jpeg(raw, bayer), media_type="image/jpeg", headers={"X-Frame-Age": f"{age:.1f}"})
 

@@ -1,6 +1,6 @@
-"""Solar safety: never guide or capture near the Sun, and lock out daytime use.
+"""Solar safety: never guide the telescope near the Sun, and lock out daytime use.
 
-The guidance and capture layers must call `check_target` before every move or exposure.
+The guidance layer must call `check_target` before every move. Cameras are never gated.
 """
 
 from dataclasses import dataclass

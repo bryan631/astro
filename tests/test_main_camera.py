@@ -103,7 +103,7 @@ class DriftingPlanet:
 def test_recorder_recenters_on_drift(tmp_path, monkeypatch):
     monkeypatch.setattr("astro.capture.recorder.ROI_PX", 128)
     cam = DriftingPlanet()
-    rec = Recorder(cam, (800, 600), tmp_path, lambda: None).start("Jupiter", 0.3)
+    rec = Recorder(cam, (800, 600), tmp_path).start("Jupiter", 0.3)
     rec.done.wait(5)
     time.sleep(0.05)
     assert rec.frames > 60 and not rec.lost
@@ -119,21 +119,6 @@ def test_second_capture_is_refused_while_recording(tmp_path):
     assert texts(s.handle("take a picture")) == ["I'm already recording."]
     s.recorder.stop()
     s.recorder.current.done.wait(5)
-
-
-def test_recording_refused_and_stopped_when_unsafe(tmp_path, monkeypatch):
-    monkeypatch.setattr("astro.capture.recorder.ROI_PX", 128)
-    unsafe = {"reason": "too close to the Sun"}
-    rec = Recorder(DriftingPlanet(), (800, 600), tmp_path, lambda: unsafe["reason"])
-    with pytest.raises(CaptureRefused, match="too close to the Sun"):
-        rec.start("Jupiter", 1)
-    unsafe["reason"] = None
-    cam = DriftingPlanet()
-    rec = Recorder(cam, (800, 600), tmp_path, lambda: unsafe["reason"])
-    run = rec.start("Jupiter", 5)
-    time.sleep(0.2)
-    unsafe["reason"] = "daytime lockout"
-    assert run.done.wait(3) and "daytime lockout" in run.error
 
 
 class FailingCamera(DriftingPlanet):
@@ -153,14 +138,6 @@ def test_camera_failure_is_reported_not_done(tmp_path, monkeypatch):
     s.recorder.current.done.wait(5)
     said = texts(s.tick(100.0))[0]
     assert said.startswith("Recording failed: SVB error 11") and "Done" not in said
-
-
-def test_focus_stops_when_pointing_becomes_unsafe(tmp_path):
-    s, _ = make_session(tmp_path)
-    s.handle("focus")
-    s.exposure_safety = lambda: "daytime lockout"
-    assert texts(s.tick(0.0)) == ["I stopped focusing: daytime lockout."]
-    assert s._focus_coach is None
 
 
 def test_barlow_retunes_active_guide(tmp_path):
@@ -195,13 +172,13 @@ class UnresettableCamera(DriftingPlanet):
 
 def test_recording_finishes_even_if_camera_reset_fails(tmp_path, monkeypatch):
     monkeypatch.setattr("astro.capture.recorder.ROI_PX", 128)
-    rec = Recorder(UnresettableCamera(), (800, 600), tmp_path, lambda: None).start("Mars", 0.1)
+    rec = Recorder(UnresettableCamera(), (800, 600), tmp_path).start("Mars", 0.1)
     assert rec.done.wait(3) and "did not reset" in rec.error
 
 
 def test_quick_recordings_get_distinct_files(tmp_path, monkeypatch):
     monkeypatch.setattr("astro.capture.recorder.ROI_PX", 128)
-    recorder = Recorder(DriftingPlanet(), (800, 600), tmp_path, lambda: None)
+    recorder = Recorder(DriftingPlanet(), (800, 600), tmp_path)
     first = recorder.start("Mars", 0.05)
     first.done.wait(3)
     second = recorder.start("Mars", 0.05)
@@ -388,7 +365,7 @@ def test_old_recordings_pruned_and_full_disk_refused(tmp_path, monkeypatch):
     assert sorted(p.name for p in caps.glob("*.ser")) == [f"2026100{i}_Saturn.ser" for i in (2, 3, 4)]
     monkeypatch.setattr(rec_module.shutil, "disk_usage", lambda p: type("U", (), {"free": 10})())
     with pytest.raises(CaptureRefused, match="disk is nearly full"):
-        Recorder(DriftingPlanet(), (800, 600), caps, lambda: None).start("Mars", 1)
+        Recorder(DriftingPlanet(), (800, 600), caps).start("Mars", 1)
 
 
 def test_done_right_after_focus_is_not_accepted(tmp_path):

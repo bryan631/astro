@@ -135,8 +135,6 @@ class FinderSync:
         # Seconds since the encoders last reported (None if not tracked, e.g. simulators).
         self.encoder_age: Callable[[], float] | None = None
         self.raw_counts: Callable[[], tuple[int, int]] | None = None  # (az, alt), debug view only
-        # Exposure gate (spoken reason or None); the session installs its exposure_safety.
-        self.safety: Callable[[], str | None] | None = None
 
     def alignment(self) -> tuple[int, float | None]:
         """(number of syncs, model RMS in arcmin or None) for the setup wizard."""
@@ -158,8 +156,6 @@ class FinderSync:
     def sync(self, fresh: bool = True) -> tuple[bool, str]:
         """Solve the current finder view and refine the mount model. Returns (ok, message).
         Always a new solve (`fresh` is for the same interface as SolveTracker)."""
-        if self.safety and (reason := self.safety()):  # every finder exposure is gated (S2/S3)
-            return False, f"I can't look at the sky right now: {reason}."
         enc = self.encoders()  # read encoders and clock at exposure time, not after the solve
         try:
             gray, when = finder_gray(self.camera.capture()), self.clock()
