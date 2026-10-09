@@ -53,7 +53,10 @@
           border: 2px solid var(--dim); border-radius: 12px; }
   #typed input { flex: 1; }
   .on-target #arrow { color: #34c759; }
-  #live { width: 100%; max-width: 900px; border: 2px solid var(--dim); border-radius: 12px; }
+  #livebox { width: 100%; max-width: 900px; }
+  #liveframe { overflow: hidden; border: 2px solid var(--dim); border-radius: 12px; }
+  #live { width: 100%; display: block; transform-origin: center; }
+  #livectl { text-align: center; margin-top: 6px; }
   #gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; width: 100%; max-width: 900px; }
   #gallery img { width: 100%; border: 2px solid var(--dim); border-radius: 12px; }
   body.on-target:not(.day) #arrow { color: var(--fg); }
@@ -65,7 +68,9 @@
   <div id="said">Tap the button and say "what's good tonight?"</div>
   <div id="arrow" hidden>&#x2191;</div>
   <div id="dist"></div>
-  <img id="live" hidden alt="live stack">
+  <div id="livebox" hidden><div id="liveframe"><img id="live" alt="live stack"></div>
+    <div id="livectl"><button class="small" data-exp="down">Darker</button> <button class="small" data-exp="up">Brighter</button>
+      <button class="small" data-zoom="1">1x</button> <button class="small" data-zoom="2">2x</button> <button class="small" data-zoom="4">4x</button></div></div>
   <button id="talk">Tap to talk</button>
   <button id="bigstop">STOP</button>
   <button id="hands" class="small">Hands-free: off</button>
@@ -125,9 +130,9 @@ function handle(m) {
   if (m.type === "picture" && !document.getElementById("gallery").hidden) showPictures();
   if (m.type === "live") {  // live stack preview: same file, rewritten as frames are added
     const img = document.getElementById("live");
-    img.src = `${m.url}?n=${m.frames}`; img.hidden = false;
+    img.src = `${m.url}?n=${m.frames}`; document.getElementById("livebox").hidden = false;
   }
-  if (m.type === "picture") document.getElementById("live").hidden = true;
+  if (m.type === "picture") document.getElementById("livebox").hidden = true;
   if (m.type === "hold") { arrow.hidden = true; dist.textContent = "Hold still"; holding = true; }
   if (m.type === "say" && holding && !m.text.startsWith("Hold still")) {  // e.g. "stop"
     holding = false; dist.textContent = "";
@@ -421,6 +426,14 @@ try {  // reopen the view that was showing before an automatic reload (video com
   if (v === "debug" || v === "finder" || v === "main") setTimeout(() => { if (!view) setView(v); }, 1500);
 } catch {}
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").then(r => r.update());  // installable (V1); check for a new build on every load
+// Live stack controls, same as the camera view's: the stack is a picture, so these change
+// only how it's shown (brightness and center zoom), not the camera.
+let liveGain = 1;
+document.querySelectorAll("#livectl button").forEach(b => b.onclick = () => {
+  if (b.dataset.exp) liveGain = Math.min(4, Math.max(0.25, liveGain * (b.dataset.exp === "up" ? 1.4 : 1 / 1.4)));
+  else document.getElementById("live").style.transform = `scale(${b.dataset.zoom})`;
+  document.getElementById("liveframe").style.filter = `brightness(${liveGain})`;
+});
 // GUI design demo (scripts/dev/sim_pictures.py): ?demo=m42 plays a made-up live stack.
 const demo = new URLSearchParams(location.search).get("demo");
 if (demo) (async () => {
