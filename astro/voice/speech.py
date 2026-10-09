@@ -10,12 +10,22 @@ Audio from the tablet (webm/opus) is converted to 16 kHz mono WAV with ffmpeg.
 import functools
 import io
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 import threading
 import wave
 from pathlib import Path
+
+# Whisper writes non-speech as tags: [BLANK_AUDIO], [ Pause ], [silence], (music), *cough*.
+_TAGS = re.compile(r"\[[^\]]*\]?|\([^)]*\)|\*[^*]*\*")
+
+
+def clean_transcript(text: str) -> str:
+    """What was said, without whisper's non-speech tags ("" if that's all there was)."""
+    return " ".join(_TAGS.sub(" ", text).split())
+
 
 PROMPT = "Astro, go to Jupiter. Astro, stop."  # biases whisper towards the wake word and commands
 CUE_CACHE = 256  # distinct phrases kept as audio
@@ -58,7 +68,7 @@ class Stt:
             out = subprocess.run([binary, "-m", model, "-f", wav, "-nt", "-np", "-ac", str(ctx),
                                   "--prompt", PROMPT],
                                  check=True, capture_output=True, text=True, timeout=30)
-        return " ".join(out.stdout.split())
+        return clean_transcript(out.stdout)
 
 
 class Tts:

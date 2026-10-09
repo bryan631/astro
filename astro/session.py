@@ -62,6 +62,7 @@ NOT_UNDERSTOOD = "Sorry, I didn't catch that. Say 'what's good tonight' or 'go t
 KEEPS_VIDEO = {"goto", "next", "describe", "barlow_on", "barlow_off", "location", "horizon_start",
                "horizon_mark", "stop_capture", "stop"}
 FINDER_FOCUS_TOL = 0.15  # field test: 3% made it flip "sharper"/"passed it" every second
+REPEAT_S = 6.0  # the same spoken cue from the guidance or coaching loop, at most this often
 FOCUS_STEP_S = 1.0  # one finder focus measurement per second while coaching
 MIN_FOCUS_SAMPLES = 3  # focus readings before "done" counts (else the gate was never checked)
 CENTER_STEP_S = 0.5  # main-camera centering cue rate
@@ -139,6 +140,7 @@ class Session:
         self._suggestions: list[str] = []
         self._resolved_at = -1e9
         self._focus_coach: FocusCoach | None = None
+        self._last_said, self._last_said_at = "", -1e9  # tick speech, for _no_repeats
         self._collimation: CollimationCoach | None = None
         self._collimation_at = -1e9
         self._focus_mode = ""  # "finder" or "main"
@@ -647,7 +649,19 @@ class Session:
     # --- guidance loop -------------------------------------------------------------------
     def tick(self, t: float) -> list[dict]:
         with self._lock:
-            return self._tick(t)
+            return self._no_repeats(self._tick(t), t)
+
+    def _no_repeats(self, out: list[dict], t: float) -> list[dict]:
+        """Coaching said the same words every second in the field: say a phrase again only after
+        REPEAT_S (state updates and new phrases go through)."""
+        kept = []
+        for m in out:
+            if m.get("type") == "say":
+                if m["text"] == self._last_said and t - self._last_said_at < REPEAT_S:
+                    continue
+                self._last_said, self._last_said_at = m["text"], t
+            kept.append(m)
+        return kept
 
     def _tick(self, t: float) -> list[dict]:
         if self._video is not None and not self._video[1].running:  # the exposure gate ended it

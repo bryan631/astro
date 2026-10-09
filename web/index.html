@@ -96,7 +96,7 @@ addEventListener("unhandledrejection", e => report(`Page error: ${e.reason && e.
 function stopAudio() { speechSynthesis.cancel(); if (player) player.pause(); }
 function play(blob) {  // server (Piper) speech; newest cue wins
   stopAudio(); player = new Audio(URL.createObjectURL(blob));
-  player.play().catch(e => report(`The browser blocked speech: ${e.message}`));
+  player.play().catch(e => { if (e.name !== "AbortError") report(`The browser blocked speech: ${e.message}`); });  // Abort: a newer phrase cut it off
 }
 function speak(text) {
   if (serverTts) return;  // audio arrives separately as a binary message
