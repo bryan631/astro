@@ -18,6 +18,8 @@
           border: 6px solid var(--fg); background: transparent; color: var(--fg); font-size: 40px; }
   #talk { touch-action: none; }  /* a press is never a scroll (which cancels it) */
   #talk.listening { background: var(--dim); }
+  #bigstop { font-size: 36px; padding: 16px 48px; border: 6px solid var(--fg); border-radius: 16px;
+             background: transparent; color: var(--fg); font-weight: bold; }
   .links { font-size: 22px; } .links a { color: var(--fg); }
   /* Night: pictures in dim red too, so they don't spoil dark-adapted eyes. */
   body:not(.day) #live, body:not(.day) #gallery img, body:not(.day) #camimg {
@@ -53,15 +55,16 @@
 </style>
 </head>
 <body>
-  <div id="said">Hold the button and say "what's good tonight?"</div>
+  <div id="said">Tap the button and say "what's good tonight?"</div>
   <div id="arrow" hidden>&#x2191;</div>
   <div id="dist"></div>
   <img id="live" hidden alt="live stack">
-  <button id="talk">Hold to talk</button>
+  <button id="talk">Tap to talk</button>
+  <button id="bigstop">STOP</button>
   <button id="hands" class="small">Hands-free: off</button>
   <div id="vstate" hidden></div>
   <div id="heard"></div>
-  <form id="typed"><input id="text" placeholder="or type here" autocomplete="off"><button class="small">Send</button><button class="small" type="button" id="cancel">Stop</button></form>
+  <form id="typed"><input id="text" placeholder="or type here" autocomplete="off"><button class="small">Send</button></form>
   <div id="views"><button class="small" data-v="finder">Finder</button> <button class="small" data-v="main">Main camera</button> <button class="small" data-v="debug">Debug</button> <button class="small" id="vid" hidden>Live video</button></div>
   <div id="camview" hidden><div id="camframe"><img id="camimg" alt="camera view"></div><div id="camcap"></div></div>
   <pre id="debugbox" hidden></pre>
@@ -69,7 +72,7 @@
   <div id="gallery" hidden></div>
   <div class="links"><a href="/tonight">Tonight at each spot</a> · <a href="/treeline.html">Record a treeline</a></div>
 <script>
-const HINT = `Hold the button and say "what's good tonight?"`;
+const HINT = `Tap the button and say "what's good tonight?"`;
 const heardEl = document.getElementById("heard"), said = document.getElementById("said"), arrow = document.getElementById("arrow"),
       dist = document.getElementById("dist"), talk = document.getElementById("talk");
 let ws, unavailable = false, armedUntil = 0, handsOn = false, serverStt = false, serverTts = false, player = null;
@@ -155,7 +158,7 @@ document.getElementById("typed").onsubmit = e => {
   e.preventDefault(); const i = document.getElementById("text"); send(i.value); i.value = "";
 };
 // Stop: ends whatever is going on (focus, guidance, a picture, video), same as saying "stop".
-document.getElementById("cancel").onclick = () => { stopAudio(); send("stop"); };
+document.getElementById("bigstop").onclick = () => { stopAudio(); send("stop"); };
 async function showPictures() {
   const box = document.getElementById("gallery");
   const files = await (await fetch("/gallery")).json();
@@ -223,25 +226,29 @@ function setupTalk() {
   setupHandsFree(Rec);
   // While the telescope talks, the big button stops it (in either mode) instead of listening.
   const speakingNow = () => speechSynthesis.speaking || (player && !player.paused && !player.ended);
+  // Tap to talk, tap again to send (holding on a touchscreen was unreliable). A tap also cuts
+  // the telescope's speech. Recording ends by itself after MAX_TALK_MS.
+  const MAX_TALK_MS = 8000;
+  let recording = false, limit = null;
+  const finish = () => { clearTimeout(limit); if (recording) { recording = false; stop(); } };
   setInterval(() => {
-    const s = !!speakingNow(), label = s ? "Hold to talk (stops speech)" : "Hold to talk";
+    const label = recording ? "Tap to send" : "Tap to talk";
     if (talk.textContent !== label) talk.textContent = label;
-    talk.disabled = !s && handsOn;
+    talk.disabled = !recording && handsOn;
   }, 150);
-  let pressed = false;  // this gesture started a recording (a stop tap never does)
   talk.addEventListener("pointerdown", async e => {
     e.preventDefault();
-    stopAudio();  // a press always cuts the speech and records: coaching talks nonstop
-    listen(true); pressed = true;
+    stopAudio();
+    if (recording) { finish(); return; }
+    recording = true; listen(true);
     try {
       await start();
-      if (!pressed) stop();  // let go while the microphone was opening
+      limit = setTimeout(finish, MAX_TALK_MS);
     } catch (err) {  // e.g. microphone permission denied
-      listen(false); said.textContent = `I can't use the microphone: ${err.message}. Type below.`;
+      recording = false; listen(false);
+      said.textContent = `I can't use the microphone: ${err.message}. Type below.`;
     }
   });
-  for (const ev of ["pointerup", "pointerleave", "pointercancel"])
-    talk.addEventListener(ev, () => { if (!pressed) return; pressed = false; stop(); });
 }
 // Live camera views and the debug panel: the page polls what the server last captured.
 let view = "", viewTimer = null, camUrl = null;
