@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily astro log upload
+
+[Timer]
+# Midday, after the night's session. A run missed while the Mele was off (it often is by day)
+# happens at the next boot, a few minutes in so the network is up first.
+OnCalendar=*-*-* 12:00:00
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

@@ -36,9 +36,10 @@ for unit in deploy/*.service deploy/*.timer; do
     | sudo tee "/etc/systemd/system/$(basename "$unit")" >/dev/null
 done
 sudo systemctl daemon-reload
-sudo systemctl enable --now astro.service astro-cert.timer
+sudo systemctl enable --now astro.service astro-cert.timer astro-logs.timer
 cat <<'NOTES'
 Done. Still by hand (see docs/plan.md):
+  - Log upload: scripts/upload-logs.sh --setup, then add the key it prints (see the script).
   - BIOS: power on after AC loss, so the box starts when the battery is switched on.
   - Phone hotspot: join it once so the box reconnects in the field, at a lower priority so
     home WiFi stays the first choice:

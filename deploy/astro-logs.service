@@ -1,0 +1,11 @@
+[Unit]
+Description=Upload astro logs for remote support
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=astro
+WorkingDirectory=/home/astro/astro
+ExecStart=/home/astro/astro/scripts/upload-logs.sh
+# Install with astro-logs.timer: sudo systemctl enable --now astro-logs.timer

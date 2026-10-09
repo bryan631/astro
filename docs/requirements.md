@@ -31,8 +31,8 @@ The current requirements for the project. Each has an ID for reference.
 - **HW1** Main camera SVBONY SV705C (IMX585); prefer 8-bit RAW + ROI; avoid 16-bit initially.
 - **HW2** Finder camera SVBONY SV905C + 25 mm f/1.4 C-mount (5 mm CS-C ring), run at f/2-2.8, ~11x8 deg.
 - **HW3** Computer MeLE Quieter 4C (N150), Ubuntu 24.04 LTS, USB-C PD power.
-- **HW4** Arduino Nano Every reads the IntelliScope encoders, drives dew heaters, reads BME280 (+ optional DS18B20).
-- **HW5** Encoders: 9216 counts/rev per axis, read as 5 V TTL quadrature by the Nano Every. Fallback: the IntelliScope handset over RS-232 ("Q" query).
+- **HW4** Arduino Nano (classic ATmega328P on the scope; Nano Every also supported) reads the IntelliScope encoders, drives dew heaters, reads BME280 (+ optional DS18B20).
+- **HW5** Encoders: analog Hall sensors (two per axis, sine/cosine, 36 cycles/rev) read on the Nano's analog pins and interpolated with atan2 to 9216 counts/rev per axis. Fallback: the IntelliScope handset over RS-232 ("Q" query).
 - **HW6** Two 5 V USB dew heaters via logic-level MOSFETs on PWM pins, powered from the power bank.
 - **HW7** Hardware abstraction: different computers differ only at the lowest driver level.
 - **HW8** Each device has a simulator implementing the same interface; everything runs with no hardware.
@@ -103,7 +103,7 @@ The current requirements for the project. Each has an ID for reference.
 ## 12. Phase 2 (MiniPC + Arduino)
 
 - **P2-1** Ubuntu on the MeLE; `scripts/setup.sh`; systemd services; auto-start; BIOS auto-power-on; Tailscale; WiFi + fallback hotspot; log rotation.
-- **P2-2** Firmware: interrupt quadrature; line protocol `POS`, `ENV`, `HEAT`, `ZERO`, `VER`; checksum; watchdog; dew control from BME280 (Magnus) keeping optics >= 2-3 C above dew point; heater failsafe.
+- **P2-2** Firmware: analog Hall decoding (atan2, ~1 kHz sampling); line protocol `POS`, `ENV`, `HEAT`, `ZERO`, `VER`; checksum; watchdog; dew control from BME280 (Magnus) keeping optics >= 2-3 C above dew point; heater failsafe.
 - **P2-3** Handset fallback driver with the same interface as the MCU encoder driver.
 - **P2-4** Performance on the N150: STT latency, solve time, live-stack frame rate, processing time.
 - **P2-5** Power test: 1 h of stacking + both cameras + heaters on the power bank; no reboot on plug/unplug.
@@ -111,7 +111,7 @@ The current requirements for the project. Each has an ID for reference.
 
 ## 13. Phase 3 (on the telescope)
 
-- **P3-1** Encoder bring-up: pinout/voltage, quadrature, counts/rev, direction (handset fallback if needed).
+- **P3-1** Encoder bring-up: pinout/voltage, signal format, counts/rev, direction (handset fallback if needed). Done 2026-10-08: see docs/plan.md, Parts.
 - **P3-2** Mechanical: finder bracket, heater on the secondary, strain relief, balance, dolly.
 - **P3-3** Calibration wizard: location, solves, finder-main offset, horizon walk (+ Stellarium), focus reference positions (prime/Barlow).
 - **P3-4** First-light checklist: back-focus reach, collimation, solve reliability, guidance feel, dew, battery runtime.
@@ -126,7 +126,7 @@ The current requirements for the project. Each has an ID for reference.
 - **R4** Only one user of a camera at a time (recording, stacking, focus, centering, viewers).
 - **R5** Tests never touch the network (weather, Claude API); captures, pictures, site, horizon and logs from tests go to temporary directories.
 - **R6** Works on the developer's laptop and the MiniPC; no OS-specific paths.
-- **R7** Nightly log upload for remote support.
+- **R7** Nightly log upload for remote support (`scripts/upload-logs.sh`: a daily timer pushes the logs to the private repo `astro-logs`).
 
 ## 15. Conventions and repository
 

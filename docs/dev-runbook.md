@@ -85,13 +85,25 @@ The server then announces `server_stt/server_tts` and the tablet records audio f
 
 ## MiniPC services
     sudo cp deploy/*.service deploy/*.timer /etc/systemd/system/
-    sudo systemctl enable --now astro astro-cert.timer
+    sudo systemctl enable --now astro astro-cert.timer astro-logs.timer
 `scripts/run.sh` serves HTTPS on port 8443 when `certs/` has a cert, plain HTTP otherwise.
 8443 is the real port (the service runs `run.sh`); 8000 is only the dev command above.
 
 Platform defaults are all overridable (R6): the SVBony SDK path (`SVB_LIB`), the MCU serial
 port (`port` in `devices.toml`, else the first `/dev/ttyACM*`, then `/dev/ttyUSB*`), and the repo path and user in
 `deploy/*.service` (rewritten by `setup.sh --minipc`).
+
+## Logs for remote support
+The server writes JSON logs to `data/logs/` (one file per run, newest 20 kept). Every day at noon,
+or at the next boot if the Mele was off, `astro-logs.timer` pushes them, gzipped, with a
+`check.sh` report to the private repo `bryan631/astro-logs` (`<hostname>/`). It uses a deploy key
+that can write to that repo only: run `scripts/upload-logs.sh --setup` once on the Mele and add
+the key it prints (the command is in the script's header). Read them without the Mele:
+
+    gh repo clone bryan631/astro-logs ~/astro-logs   # later: git -C ~/astro-logs pull
+    zcat ~/astro-logs/mele/astro-*.jsonl.gz | jq -c 'select(.level != "INFO")'
+
+The repo must stay private: logs hold the site's location and what was said.
 
 ## Field use: HTTPS with no internet, and access token
 
