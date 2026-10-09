@@ -123,7 +123,12 @@ def build_real_session() -> Session:
     try:
         finder, close_pointing = devices.build_pointing(cfg, solver(), site, clock)
         _hardware_closers.append(close_pointing)
-        main = devices.open_camera(cfg["main"]) if cfg["main"]["driver"] != "none" else None
+        main = None
+        if cfg["main"]["driver"] != "none":
+            try:  # an unplugged main camera mustn't stop the finder, voice and guidance
+                main = devices.open_camera(cfg["main"])
+            except Exception:
+                log.exception("main camera unavailable; running without it")
         if main is not None:
             _hardware_closers.append(main.close)
         override = os.environ.get("ASTRO_DEV_OVERRIDE") == "1"

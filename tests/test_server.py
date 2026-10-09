@@ -32,7 +32,7 @@ def receive_until(ws, kind):
 
 def test_index_served():
     r = TestClient(server.app).get("/")
-    assert r.status_code == 200 and "Hold to talk" in r.text
+    assert r.status_code == 200 and "Tap to talk" in r.text
 
 
 def test_hello_reports_no_server_speech_by_default():
@@ -132,23 +132,23 @@ def test_real_hub_is_shared_and_broadcasts(monkeypatch):
     assert server._real_hub.session is sim_session
 
 
-def test_failed_main_camera_rolls_back_pointing(monkeypatch, tmp_path):
+def test_unplugged_main_camera_runs_without_it(monkeypatch, tmp_path):
     cfg = tmp_path / "devices.toml"
     cfg.write_text('[finder]\ndriver = "svbony"\nmodel = "SV905C"\n'
                    '[main]\ndriver = "svbony"\nmodel = "SV705C"\n[mount]\ndriver = "solve"\n')
     closed = []
     monkeypatch.setenv("ASTRO_DEVICES", str(cfg))
     monkeypatch.setattr(server.devices, "build_pointing",
-                        lambda *a: (object(), lambda: closed.append("pointing")))
+                        lambda *a: (None, lambda: closed.append("pointing")))
 
     def broken_camera(cfg):
         raise RuntimeError("SVB error 1")
 
     monkeypatch.setattr(server.devices, "open_camera", broken_camera)
     server.build_real_session.cache_clear()
-    with pytest.raises(RuntimeError):
-        server.build_real_session()
-    assert closed == ["pointing"]
+    session = server.build_real_session()
+    assert session.main_camera is None and not closed  # finder, voice and guidance still run
+    server.close_hardware()
     server.build_real_session.cache_clear()
 
 

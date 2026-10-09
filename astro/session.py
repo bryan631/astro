@@ -610,7 +610,9 @@ class Session:
                                        for k, v in asdict(sol).items()}
                 info["plate_solve"]["confidence"] = round(sol.confidence, 1)
         for name, cam in (("finder", getattr(f, "camera", None)), ("main", self.main_camera)):
-            if cam is not None:
+            if cam is None:
+                info[f"{name}_camera"] = {"connected": False}
+            else:
                 frame = self.camera_frame(name)
                 info[f"{name}_camera"] = {
                     "exposure_s": cam.exposure_s, "gain": cam.gain,
