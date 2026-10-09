@@ -28,11 +28,27 @@ def default_port() -> str:
     return os.environ.get("ASTRO_MCU_PORT") or (ports[0] if ports else "/dev/ttyACM0")
 
 
+class _Unplugged:
+    """Stands in for the serial port until the board is plugged in."""
+
+    def readline(self) -> bytes:
+        raise OSError("encoder board not connected")
+
+    def write(self, data: bytes) -> int:
+        raise OSError("encoder board not connected")
+
+    def close(self) -> None:
+        pass
+
+
 class Mcu:
     def __init__(self, port=None, serial_factory=serial.Serial):
         """`serial_factory(port, baud, timeout=...)` is replaceable for tests."""
         self._port, self._factory = port, serial_factory
-        self._ser = self._open()
+        try:
+            self._ser = self._open()
+        except (serial.SerialException, OSError):  # unplugged: the reader keeps reopening
+            self._ser = _Unplugged()
         self._lock = threading.Lock()
         self.position = proto.Position(0, 0)
         self.environment: proto.Environment | None = None
@@ -47,7 +63,10 @@ class Mcu:
         self._pinger = threading.Thread(target=self._ping_loop, daemon=True)
 
     def start(self) -> "Mcu":
-        self._send(proto.frame("VER?"))
+        try:
+            self._send(proto.frame("VER?"))
+        except (serial.SerialException, OSError):
+            pass  # not plugged in yet: asked again on its BOOT
         self._reader.start()
         self._pinger.start()
         return self

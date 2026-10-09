@@ -8,12 +8,13 @@ if not os.environ.get("ASTRO_REQUIRE_SOLVER"):
     pytest.importorskip("tetra3", reason="run scripts/install-solver.sh")
 
 from astro.devices.sim.finder import SimFinderCamera
-from astro.devices.sim.scope import SimEncoders, SimScope
+from astro.devices.sim.scope import SimEncoders, SimScope, SimUser
 from astro.pointing.coords import Site, radec_to_altaz
 from astro.pointing.finder_sync import FinderSync, check_focus
 from astro.pointing.geometry import separation_deg
 from astro.pointing.mount_model import MountModel
-from astro.pointing.platesolve import FinderSolver
+from astro.pointing.platesolve import FinderSolver, finder_gray
+from astro.session import Session
 from tests import frames
 
 WPB = Site(26.7, -80.1)
@@ -76,15 +77,11 @@ def test_sharp_vs_soft_hfr(solver):
 
 
 def make_session(solver, alt=60, az=200, **cam):
-    from astro.session import Session
-
     scope, fs = make(solver, alt, az, **cam)
     return scope, fs, Session(WPB, clock=lambda: EVENING, finder=fs)
 
 
 def test_goto_syncs_first_then_guides_true_scope_onto_target(solver):
-    from astro.devices.sim.scope import SimUser
-
     scope, _, s = make_session(solver)
     said = [m["text"] for m in s.handle("go to albireo")]
     assert said == ["Got it, I know where we're pointing.", "Let's find Albireo."]
@@ -141,15 +138,11 @@ DATA = __import__("pathlib").Path(__file__).parent / "data"
 
 
 def test_real_capped_frame_has_no_stars():
-    from astro.pointing.platesolve import finder_gray
-
     report = check_focus(finder_gray(frames.load("lens_cap")))
     assert report.stars == 0 and "can't see any stars" in report.reason
 
 
 def test_real_one_star_frame_is_not_called_out_of_focus():
-    from astro.pointing.platesolve import finder_gray
-
     report = check_focus(finder_gray(frames.load("one_star_gain1000")))
     assert report.stars == 1 and "a star or two" in report.reason
 

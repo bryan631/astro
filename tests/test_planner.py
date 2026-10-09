@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from astro.planner.catalog import load_targets
 from astro.planner.horizon import HorizonMask
-from astro.planner.tonight import next_dark, night_times, plan
+from astro.planner.tonight import moonlight_factor, next_dark, night_times, plan
 from astro.pointing.coords import Site
 
 WPB = Site(lat_deg=26.7, lon_deg=-80.1)
@@ -49,8 +49,6 @@ def test_next_dark_plans_the_coming_night_when_asked_by_day():
 
 
 def test_moon_phase_scales_the_moonlight_penalty():
-    from astro.planner.tonight import moonlight_factor
-
     assert moonlight_factor("galaxy", 20, 1.0) == 0.5  # full Moon nearby: halved
     assert moonlight_factor("galaxy", 90, 1.0) == 0.75  # full Moon far away: still hurts
     assert moonlight_factor("galaxy", 20, 0.0) == 1.0  # new Moon: no harm

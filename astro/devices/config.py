@@ -1,17 +1,23 @@
 """Build the real devices named in config/devices.toml."""
 
+import logging
 import tomllib
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
 from astro.devices.base import Camera
+from astro.devices.handset import Handset
+from astro.devices.mcu import Mcu
+from astro.devices.svbony import SvbonyCamera  # the vendor SDK itself loads on connect
 from astro.pointing.coords import Site
 from astro.pointing.encoders import COUNTS_PER_REV, EncoderAxis
 from astro.pointing.finder_sync import FinderSync
 from astro.pointing.mount_model import MountModel
 from astro.pointing.platesolve import FinderSolver
 from astro.pointing.solve_tracker import SolveTracker
+
+log = logging.getLogger(__name__)
 
 
 def load(path: Path) -> dict:
@@ -22,12 +28,14 @@ def load(path: Path) -> dict:
 
 
 def open_camera(cfg: dict) -> Camera:
-    from astro.devices.svbony import SvbonyCamera  # needs the vendor SDK; import only when used
-
     if cfg["driver"] != "svbony":
         raise ValueError(f"unknown camera driver {cfg['driver']!r}")
     cam = SvbonyCamera(cfg["model"])
-    cam.connect()
+    try:
+        cam.connect()
+    except Exception:  # unplugged: start anyway, and keep trying to reconnect on each capture
+        log.exception("%s not connected; will keep trying", cfg["model"])
+        cam._lost = True
     if "exposure_s" in cfg:
         cam.set_exposure(cfg["exposure_s"])
     if "gain" in cfg:
@@ -103,10 +111,7 @@ def build_pointing(cfg: dict, solver: FinderSolver, site: Site, clock: Callable[
 def _open_encoders(mount: dict):
     """The encoder source for the mount driver; caller closes it if anything later fails."""
     if mount["driver"] == "handset":
-        from astro.devices.handset import Handset
-
         return Handset(mount.get("port") or "/dev/ttyUSB0")
-    from astro.devices.mcu import Mcu
 
     mcu = Mcu(mount.get("port") or None)
     try:

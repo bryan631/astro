@@ -2,6 +2,7 @@
 
 import pytest
 
+import astro.devices.svbony as svb
 from astro.devices.base import Roi
 from astro.devices.svbony import (
     EXPOSURE,
@@ -158,8 +159,6 @@ def test_temperature_in_tenths_of_a_degree():
 
 
 def test_failed_reopen_retries_with_backoff(monkeypatch):
-    import astro.devices.svbony as svb
-
     sdk = FakeSdk(timeouts=1)
     cam = connected(sdk)
     real_open, fails = sdk.SVBOpenCamera, [2]
@@ -184,8 +183,6 @@ def test_failed_reopen_retries_with_backoff(monkeypatch):
 
 
 def test_close_cancels_reconnecting():
-    import astro.devices.svbony as svb
-
     sdk = FakeSdk(timeouts=1)
     cam = connected(sdk)
     sdk.SVBOpenCamera = lambda cid: 2

@@ -1,5 +1,9 @@
+import io
+import json
 from datetime import UTC, datetime
 
+from astro.planner import weather
+from astro.planner.weather import forecast_text
 from astro.pointing.coords import Site
 from astro.session import Session
 
@@ -61,8 +65,6 @@ def hourly(lat, lon):
 
 
 def test_forecast_text_starts_at_the_current_hour():
-    from astro.planner.weather import forecast_text
-
     lines = forecast_text(26.6, -80.1, hours=3, get=hourly).splitlines()
     assert lines[0] == "Now 20:15 local; cloud cover 90%."
     assert lines[1].startswith("10-08 20:00: clouds 90%")
@@ -73,8 +75,6 @@ def test_forecast_text_starts_at_the_current_hour():
 
 
 def test_forecast_text_warns_of_dew():
-    from astro.planner.weather import forecast_text
-
     def dewy(lat, lon):
         data = hourly(lat, lon)
         data["hourly"]["dew_point_2m"] = [70, 71, 72, 75, 76, 77]  # air stays 77.4F
@@ -85,11 +85,6 @@ def test_forecast_text_warns_of_dew():
 
 
 def test_null_forecast_hours_are_skipped(monkeypatch):
-    import io
-    import json
-
-    from astro.planner import weather
-
     body = {"hourly": {"time": ["2026-10-08T21:00", "2026-10-08T22:00"], "cloud_cover": [40, None]}}
     monkeypatch.setattr(weather.urllib.request, "urlopen",
                         lambda url, timeout: io.BytesIO(json.dumps(body).encode()))

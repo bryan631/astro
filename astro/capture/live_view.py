@@ -3,6 +3,7 @@
 Runs until stopped (or the exposure gate says no), uses a short exposure for speed, asks the
 gate before every frame, and puts the camera's settings back.
 """
+import logging
 import threading
 from collections.abc import Callable
 from contextlib import AbstractContextManager
@@ -13,6 +14,8 @@ from astro.devices.base import Camera, Roi
 
 LOW_PEAK, HIGH_PEAK = 60, 220  # 8-bit brightest 0.5% of pixels: outside this, change the exposure
 STEP = 1.6  # exposure change per frame
+log = logging.getLogger(__name__)
+MAX_FAILURES = 3  # captures in a row before the video gives up
 
 
 class LiveView:
@@ -57,13 +60,17 @@ class LiveView:
         self._stop.set()
         if self._thread.is_alive() and threading.current_thread() is not self._thread:
             self._thread.join()
-        with self.lock:
-            self.camera.set_exposure(self._saved[0])
-            self.camera.set_gain(self._saved[1])
-            if self.roi is not None:
-                self.camera.set_roi(None)
+        try:
+            with self.lock:
+                self.camera.set_exposure(self._saved[0])
+                self.camera.set_gain(self._saved[1])
+                if self.roi is not None:
+                    self.camera.set_roi(None)
+        except (RuntimeError, OSError) as e:  # unplugged: nothing to put back
+            log.warning("couldn't restore camera settings: %r", e)
 
     def _run(self) -> None:
+        failures = 0
         while not self._stop.is_set():
             if (reason := self.allowed()) is not None:
                 self.stopped_because = reason
@@ -73,8 +80,15 @@ class LiveView:
                     frame = self.camera.capture()  # the camera's tap keeps it for the stream
                     if self.exposure_range is not None:
                         self._auto_expose(frame)
-            except (RuntimeError, OSError):  # a hiccup: try again, the page shows the last frame
+            except (RuntimeError, OSError) as e:  # a hiccup: try again, the page shows the last frame
+                log.warning("live video capture failed: %r", e)
+                failures += 1
+                if failures >= MAX_FAILURES:  # unplugged: say so instead of a frozen picture
+                    self.stopped_because = "the camera isn't responding. Is it unplugged?"
+                    return
                 self._stop.wait(0.5)
+                continue
+            failures = 0
 
     def _auto_expose(self, frame: np.ndarray) -> None:
         low, high = self.exposure_range

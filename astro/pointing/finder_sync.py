@@ -153,14 +153,18 @@ class FinderSync:
         return self.model.to_sky(*self.encoders())
 
     def focus_report(self) -> FocusReport:
-        return check_focus(finder_gray(self.camera.capture()))
+        return check_focus(finder_gray(self.camera.capture()))  # callers handle a dead camera
 
-    def sync(self) -> tuple[bool, str]:
-        """Solve the current finder view and refine the mount model. Returns (ok, message)."""
+    def sync(self, fresh: bool = True) -> tuple[bool, str]:
+        """Solve the current finder view and refine the mount model. Returns (ok, message).
+        Always a new solve (`fresh` is for the same interface as SolveTracker)."""
         if self.safety and (reason := self.safety()):  # every finder exposure is gated (S2/S3)
             return False, f"I can't look at the sky right now: {reason}."
         enc = self.encoders()  # read encoders and clock at exposure time, not after the solve
-        gray, when = finder_gray(self.camera.capture()), self.clock()
+        try:
+            gray, when = finder_gray(self.camera.capture()), self.clock()
+        except (RuntimeError, OSError):
+            return False, "The finder camera isn't responding. Is it unplugged?"
         focus = check_focus(gray)
         if not focus.ok:
             return False, focus.reason

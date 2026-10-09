@@ -1,9 +1,16 @@
+import glob
 import math
+import time
 
 import pytest
+import serial
 
+from astro.devices import mcu
+from astro.devices import mcu as mcu_module
 from astro.devices.dew import heater_percent
+from astro.devices.mcu import Mcu
 from astro.devices.mcu_protocol import (
+    Boot,
     Environment,
     McuError,
     Position,
@@ -63,8 +70,6 @@ class FakeSerial:
         self.lines, self.written = list(lines), []
 
     def readline(self):
-        import time
-
         if self.lines:
             return self.lines.pop(0)
         time.sleep(0.01)
@@ -78,15 +83,11 @@ class FakeSerial:
 
 
 def make_mcu(lines):
-    from astro.devices.mcu import Mcu
-
     fake = FakeSerial(lines)
     return Mcu("/dev/null", serial_factory=lambda *a, **k: fake), fake
 
 
 def test_mcu_tracks_position_and_drives_heaters_from_env():
-    import time
-
     mcu, fake = make_mcu([frame("VER astro-mcu 0.1"), b"garbage\n", frame("POS 100 -20"),
                           frame("ENV 24 90 nan")])
     mcu.start()
@@ -108,8 +109,6 @@ def test_empty_valid_line_dropped():
 
 
 def test_close_waits_for_reader_before_heaters_off():
-    import time
-
     mcu, fake = make_mcu([frame("ENV 24 90 nan")] * 50)
     mcu.start()
     time.sleep(0.05)
@@ -128,17 +127,12 @@ class FlakySerial(FakeSerial):
     def readline(self):
         if not self.lines and self.fail_once:
             self.fail_once = False
-            import serial
 
             raise serial.SerialException("device disconnected")
         return super().readline()
 
 
 def test_unplug_reopens_the_port():
-    import time
-
-    from astro.devices.mcu import Mcu
-
     opened = []
 
     def factory(*a, **k):
@@ -154,10 +148,6 @@ def test_unplug_reopens_the_port():
 
 
 def test_heaters_off_when_readings_stop(monkeypatch):
-    import time
-
-    from astro.devices import mcu as mcu_module
-
     monkeypatch.setattr(mcu_module, "PING_EVERY_S", 0.05)
     monkeypatch.setattr(mcu_module, "ENV_STALE_S", 0.1)
     m, fake = make_mcu([frame("ENV 24 90 nan")])
@@ -168,8 +158,6 @@ def test_heaters_off_when_readings_stop(monkeypatch):
 
 
 def test_boot_after_positions_means_reboot():
-    from astro.devices.mcu_protocol import Boot
-
     m, _ = make_mcu([])
     reboots = []
     m.on_reboot = lambda: reboots.append(1)
@@ -181,16 +169,12 @@ def test_boot_after_positions_means_reboot():
 
 
 def test_boot_asks_for_version_again():
-    from astro.devices.mcu_protocol import Boot
-
     m, fake = make_mcu([])
     m.handle(Boot("astro-mcu", "0.1"))  # a VER? sent before the reset finished was lost
     assert fake.written == [frame("VER?")]
 
 
 def test_boot_invalidates_even_if_version_request_fails():
-    from astro.devices.mcu_protocol import Boot
-
     m, fake = make_mcu([])
     reboots = []
     m.on_reboot = lambda: reboots.append(1)
@@ -206,14 +190,10 @@ def test_boot_invalidates_even_if_version_request_fails():
 
 class WriteFailsSerial(FakeSerial):
     def write(self, data):
-        import serial
-
         raise serial.SerialException("unplugged")
 
 
 def test_close_still_closes_the_port_when_heater_writes_fail():
-    from astro.devices.mcu import Mcu
-
     port = WriteFailsSerial([])
     closed = []
     port.close = lambda: closed.append(1)
@@ -223,10 +203,6 @@ def test_close_still_closes_the_port_when_heater_writes_fail():
 
 
 def test_write_error_while_handling_env_reopens_instead_of_dying():
-    import time
-
-    from astro.devices.mcu import Mcu
-
     opened = []
 
     def factory(*a, **k):
@@ -247,9 +223,6 @@ def test_write_error_while_handling_env_reopens_instead_of_dying():
     ([], "/dev/ttyACM0"),
 ])
 def test_default_port(monkeypatch, ports, expected):
-    import glob
-
-    from astro.devices import mcu
     monkeypatch.delenv("ASTRO_MCU_PORT", raising=False)
     monkeypatch.setattr(glob, "glob", lambda pat: [p for p in ports if p.startswith(pat[:-1])])
     assert mcu.default_port() == expected

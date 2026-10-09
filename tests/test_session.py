@@ -1,9 +1,12 @@
 import re
 from datetime import UTC, datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
 from astro.devices.sim.scope import SimScope, SimUser
+from astro.guidance.engine import Guide
+from astro.pointing import coords
 from astro.pointing.coords import Site
 from astro.session import Session
 
@@ -81,7 +84,6 @@ def test_agent_list_uses_local_times():
 
 def test_timezone_lookup_uses_exact_coordinates(monkeypatch):
     """Rounding could move a site near a time-zone border into the neighboring zone."""
-    from astro.pointing import coords
 
     seen = []
 
@@ -128,8 +130,6 @@ def test_learns_the_users_left_and_right():
 
 
 def _guiding_session(az):
-    from astro.guidance.engine import Guide
-
     pos = {"alt": 45.0, "az": az}
     s = Session(WPB, lambda: (pos["alt"], pos["az"]), clock=lambda: EVENING)
     s.target = "Albireo"
@@ -169,8 +169,6 @@ def test_probe_is_dropped_when_guidance_stops():
 
 
 def test_stale_solve_fix_holds_cues_until_a_fresh_one():
-    from types import SimpleNamespace
-
     s, pos = _guiding_session(100.0)
     age = [5.0]
     s.finder = SimpleNamespace(synced=True, fix_age=lambda: age[0],
@@ -185,8 +183,6 @@ def test_stale_solve_fix_holds_cues_until_a_fresh_one():
 
 
 def test_stale_fix_holds_centering_too():
-    from types import SimpleNamespace
-
     s, pos = _guiding_session(100.0)
     s.guide, s._centering = None, True
     s.finder = SimpleNamespace(synced=True, fix_age=lambda: 5.0,

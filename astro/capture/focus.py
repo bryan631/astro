@@ -27,8 +27,9 @@ def half_flux_radius(cutout: np.ndarray) -> float:
 class FocusCoach:
     """Feed a sharpness score (higher = better); get short spoken feedback."""
 
-    def __init__(self, tolerance: float = 0.03):
-        self.tol = tolerance
+    def __init__(self, tolerance: float = 0.03, smooth: int = 1):
+        """`smooth`: average this many readings, for noisy scores (finder star counts)."""
+        self.tol, self.smooth, self._recent = tolerance, smooth, []
         self.best: float | None = None
         self.last: float | None = None
         self.samples = 0  # readings so far ("done" too early means focus was never checked)
@@ -36,6 +37,8 @@ class FocusCoach:
 
     def update(self, score: float) -> str | None:
         self.samples += 1
+        self._recent = [*self._recent[-(self.smooth - 1):], score] if self.smooth > 1 else [score]
+        score = sum(self._recent) / len(self._recent)
         prev, self.last = self.last, score
         if self.best is None or score > self.best:
             self.best = score

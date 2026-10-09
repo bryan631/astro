@@ -6,6 +6,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
+
+from astro import server
 
 WEB = Path(__file__).resolve().parents[1] / "web"
 
@@ -23,11 +26,6 @@ def test_page_script_parses(tmp_path, page):
 
 
 def test_installable_pwa_files_are_served():
-
-    from fastapi.testclient import TestClient
-
-    from astro import server
-
     client = TestClient(server.app)
     manifest = client.get("/manifest.json").json()
     assert {i["sizes"] for i in manifest["icons"]} == {"192x192", "512x512"}

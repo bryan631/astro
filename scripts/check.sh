@@ -57,6 +57,9 @@ local_checks() {
   else warn "can't read the service log (not in group systemd-journal or adm?)"; fi
   grep -qE '^ANTHROPIC_API_KEY=.+' ~astro/astro/.env 2>/dev/null && ok "Claude API key in .env" \
     || warn "no Claude API key in ~/astro/.env: only the basic commands work"
+  local up; up=$(t systemctl show -p Result --value astro-logs.service)
+  [ "$up" = success ] && ok "log upload: last run ok" \
+    || warn "log upload: last run '${up:-not installed}': journalctl -u astro-logs; scripts/upload-logs.sh --setup"
   local cert; cert=$(ls ~astro/astro/certs/*.crt 2>/dev/null | head -1)
   if [ -n "$cert" ]; then
     openssl x509 -checkend 604800 -noout -in "$cert" >/dev/null && ok "cert valid > 7 days" || warn "cert expires within 7 days: scripts/tailscale-cert.sh"

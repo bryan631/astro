@@ -1,7 +1,8 @@
+import numpy as np
 import pytest
 
 from astro.pointing.geometry import separation_deg
-from astro.pointing.mount_model import MountModel, Sync
+from astro.pointing.mount_model import MAX_SYNCS, MountModel, Sync
 
 TRUE = MountModel(az_offset_deg=123.4, alt_offset_deg=-1.5, tilt_n_deg=0.8, tilt_e_deg=-0.5)
 POINTS = [(30, 10), (60, 100), (20, 200), (45, 290), (75, 45)]  # encoder (alt, az)
@@ -42,8 +43,6 @@ def test_three_syncs_recover_tilt_everywhere():
 
 
 def test_noisy_syncs_stay_within_guidance_tolerance():
-    import numpy as np
-
     rng = np.random.default_rng(1)
     m = MountModel()
     for a, z in POINTS:
@@ -62,8 +61,6 @@ def test_false_solve_is_dropped():
 
 
 def test_history_is_capped():
-    from astro.pointing.mount_model import MAX_SYNCS
-
     m = MountModel()
     for i in range(MAX_SYNCS + 5):
         m.add_sync(make_sync(20 + i * 3, i * 25))

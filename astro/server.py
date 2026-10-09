@@ -15,6 +15,7 @@ import logging
 import math
 import os
 import re
+import socket
 import threading
 import time
 import wave
@@ -71,6 +72,7 @@ log = logging.getLogger("astro.server")
 LOGGED = {"say", "picture", "get_location"}  # not the 10 Hz "state" or "live" updates
 GALLERY = ROOT / "data" / "gallery"
 UTTERANCES = ROOT / "data" / "utterances"  # ASTRO_SAVE_AUDIO=1: what the tablet sent, to tune voice
+UTTERANCE_KEEP_DAYS, UTTERANCE_MAX_BYTES = 60, 2 * 1024**3  # then the oldest go
 LIVE = ROOT / "data" / "live"  # live-stack previews while they build (not gallery pictures)
 
 # Module state: speech engines, and the shared hubs (one per process; see get_hub).
@@ -123,12 +125,17 @@ def build_real_session() -> Session:
     try:
         finder, close_pointing = devices.build_pointing(cfg, solver(), site, clock)
         _hardware_closers.append(close_pointing)
-        main = devices.open_camera(cfg["main"]) if cfg["main"]["driver"] != "none" else None
+        main = None
+        if cfg["main"]["driver"] != "none":
+            try:  # an unplugged main camera mustn't stop the finder, voice and guidance
+                main = devices.open_camera(cfg["main"])
+            except Exception:
+                log.exception("main camera unavailable; running without it")
         if main is not None:
             _hardware_closers.append(main.close)
         override = os.environ.get("ASTRO_DEV_OVERRIDE") == "1"
         return Session(site, clock=clock, developer_override=override, finder=finder,
-                       main_camera=main, main_sensor=main.sensor_size if main else MAIN_SENSOR_PX,
+                       main_camera=main, main_sensor=main.sensor_size if main and main.connected else MAIN_SENSOR_PX,
                        data_dir=ROOT / "data", on_site_change=lambda s: site_store.save(ROOT, s),
                        horizon=horizon_store.load(ROOT),
                        on_horizon_change=lambda m: horizon_store.save(ROOT, m),
@@ -406,6 +413,18 @@ def save_utterance(audio: bytes, text: str, handsfree: bool) -> None:
     ext = "wav" if audio[:4] == b"RIFF" else "webm"
     Path(f"{stem}.{ext}").write_bytes(audio)
     Path(f"{stem}.json").write_text(json.dumps({"heard": text, "handsfree": handsfree}))
+    prune_media(UTTERANCES, UTTERANCE_KEEP_DAYS, UTTERANCE_MAX_BYTES)
+
+
+def prune_media(folder: Path, keep_days: float, max_bytes: int) -> None:
+    """Delete files older than `keep_days`, then the oldest until the folder fits `max_bytes`."""
+    files = sorted((f for f in folder.iterdir() if f.is_file()), key=lambda f: f.stat().st_mtime)
+    cutoff, total = time.time() - keep_days * 86400, sum(f.stat().st_size for f in files)
+    for f in files:
+        if f.stat().st_mtime >= cutoff and total <= max_bytes:
+            break
+        total -= f.stat().st_size
+        f.unlink(missing_ok=True)
 
 
 async def handle_spoken(hub: Hub, socket: WebSocket, conn: dict, text: str) -> None:
@@ -418,6 +437,7 @@ async def handle_spoken(hub: Hub, socket: WebSocket, conn: dict, text: str) -> N
         if command is None and now < conn["armed_until"]:
             command = text
         if command is None:
+            log.info("ignored", extra={"data": {"text": text}})  # tune the wake word from these
             await socket.send_json({"type": "ignored", "text": text})
             return
         if not command:
@@ -539,6 +559,29 @@ def gallery() -> list[str]:
     return [p.name for p in files]
 
 
+_net = {"at": -1e9, "ok": False}
+
+
+def internet_ok() -> bool:
+    """Can the Mele reach Claude's servers? Checked at most every 30 s."""
+    if time.monotonic() - _net["at"] > 30:
+        try:
+            socket.create_connection(("api.anthropic.com", 443), timeout=2).close()
+            ok = True
+        except OSError:
+            ok = False
+        _net.update(at=time.monotonic(), ok=ok)
+    return _net["ok"]
+
+
+@app.get("/api/status")
+def api_status() -> dict:
+    """The page's status line: cameras, encoders, internet and Claude."""
+    hub = running_hub()
+    return {**hub.session.connections(), "internet": internet_ok(), "claude": hub.agent.status(),
+            "build": web_build()}  # the page reloads itself when this changes
+
+
 @app.get("/api/debug")
 def api_debug() -> dict:
     return running_hub().session.debug_info()
@@ -584,9 +627,14 @@ async def api_camera_stream(name: str) -> StreamingResponse:
 @app.get("/sw.js")
 def service_worker() -> Response:
     """sw.js stamped with a hash of the web files: every deploy changes it, so tablets update."""
+    return Response(f'const BUILD = "{web_build()}";\n{(ROOT / "web" / "sw.js").read_text()}',
+                    media_type="text/javascript")
+
+
+def web_build() -> str:
+    """A hash of the web files: changes with every deploy of the page."""
     web = ROOT / "web"
-    build = hashlib.sha256(b"".join(f.read_bytes() for f in sorted(web.glob("*")) if f.is_file())).hexdigest()[:12]
-    return Response(f'const BUILD = "{build}";\n{(web / "sw.js").read_text()}', media_type="text/javascript")
+    return hashlib.sha256(b"".join(f.read_bytes() for f in sorted(web.glob("*")) if f.is_file())).hexdigest()[:12]
 
 
 app.mount("/pictures", StaticFiles(directory=GALLERY, check_dir=False), name="pictures")

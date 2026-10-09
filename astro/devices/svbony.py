@@ -84,6 +84,10 @@ class SvbonyCamera:
         return BAYER[self.prop.bayer]
 
     @property
+    def connected(self) -> bool:
+        return self._id is not None
+
+    @property
     def sensor_size(self) -> tuple[int, int]:
         return int(self.prop.max_w), int(self.prop.max_h)
 

@@ -1,5 +1,6 @@
 from astro.guidance.engine import Guide, cue_phrases
-from astro.voice.speech import Tts
+from astro.voice.speech import Tts, audio_ctx
+from tests.test_guidance import run_session
 
 
 class CountingTts(Tts):
@@ -22,7 +23,6 @@ def test_tts_warms_and_caches_per_phrase():
 def test_cue_phrases_match_everything_the_guide_says():
     """Every phrase spoken in simulated sessions (all directions, both left/right conventions,
     overshoots) is pre-rendered, and every pre-rendered phrase is actually used."""
-    from tests.test_guidance import run_session
 
     seen = set()
     trips = [((20, 10), (55, 80)), ((60, 350), (40, 20)), ((50, 100), (20, 60)),
@@ -38,8 +38,6 @@ def test_cue_phrases_match_everything_the_guide_says():
 
 
 def test_audio_ctx_covers_the_utterance():
-    from astro.voice.speech import audio_ctx
-
     assert audio_ctx(2.0) == 512  # short command: minimum window
     assert audio_ctx(8.0) == 1200  # 8 s * 3 margin * 50 frames/s
     assert audio_ctx(60.0) == 1500  # never more than whisper's full 30 s window

@@ -1,4 +1,11 @@
+from datetime import datetime, timedelta, timezone
+
+from astropy.time import Time
+
 from astro.planner.moon_features import best_features, lit_side
+from astro.planner.tonight import moon_minus_sun_deg, plan
+from astro.pointing.coords import Site
+from astro.session import Session
 
 
 def names(d):
@@ -23,14 +30,6 @@ def test_waxing_crescent_shows_the_east_and_waning_the_west():
 
 
 def test_plan_lists_moon_features_and_goto_aims_at_the_moon():
-    from datetime import datetime, timedelta, timezone
-
-    from astropy.time import Time
-
-    from astro.planner.tonight import moon_minus_sun_deg, plan
-    from astro.pointing.coords import Site
-    from astro.session import Session
-
     site = Site(26.7, -80.1)
     evening = datetime(2026, 10, 19, 20, 0, tzinfo=timezone(timedelta(hours=-4)))  # ~1st qtr
     assert 60 < moon_minus_sun_deg(Time(evening)) < 120

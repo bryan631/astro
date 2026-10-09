@@ -28,7 +28,7 @@ The end user must never need a keyboard, terminal, or config file.
 | Main camera: SVBONY SV705C | IMX585 color, 3840×2160, 2.9µm, USB3. SVBony SDK (closed binary). Prefer 8-bit RAW + ROI for planets. Avoid 16-bit initially (known SDK bugs). |
 | Finder/solver camera: SVBONY SV905C + 25mm f/1.4 C-mount lens (5mm CS-C ring) | IMX225 color, 1280×960, 3.75µm, 4.8×3.6mm sensor. ≈11°×8° FOV, ≈31″/px. Exposure 64µs–20s. Run lens at f/2–2.8. |
 | Computer (arriving): MeLE Quieter 4C, Intel N150, 16GB/512GB, fanless | Target OS: Ubuntu LTS. Powered by USB-C PD (C1 port, 12–20V). |
-| Microcontroller (arriving): Arduino Nano Every on screw-terminal board, USB-C | 5V logic. Reads IntelliScope encoders, drives dew heaters, reads BME280 (+ optional DS18B20). |
+| Microcontroller: classic Arduino Nano (ATmega328P, CH340) on a screw-terminal board; the firmware also builds for the Nano Every | 5V logic. Reads IntelliScope encoders, drives dew heaters, reads BME280 (+ optional DS18B20). |
 | Encoders | IntelliScope Hall-effect (2 Allegro A3515 per axis): two analog sine waves a quarter cycle apart, ~0.2-4.7 V, 36 cycles/rev; the Nano reads them on A2/A3/A6/A7 and interpolates with atan2 to 9216 counts/rev. RJ12 (scope end, white on pin 1): white 5V, blue GND, yellow/black alt, green/red az. Verified on the scope: 90 deg altitude = 2331 counts, repeatable to ~8. Fallback: the IntelliScope handset over RS-232 ("Q" command). |
 | Dew | Two 5V USB heater strips (secondary holder, finder lens) via logic-level MOSFET modules on Nano PWM pins; powered from power bank, not the Nano. |
 | Power | 100W USB-C PD power bank. |
@@ -51,7 +51,7 @@ tablet (PWA, HTTPS) ──WebSocket/HTTP── server (Python, FastAPI)
                                          ├─ process/   PSS (planets), Siril + GraXpert (DSO) pipelines
                                          ├─ voice/     whisper.cpp STT, Piper TTS, LLM agent + tools, offline intents
                                          └─ store/     SQLite: locations, horizon masks, sessions, images, calibration
-mcu firmware (Arduino, Nano Every) ──USB serial── devices/mcu
+mcu firmware (Arduino Nano)       ──USB serial── devices/mcu
 ```
 Every device has a simulator implementing the same interface so everything runs with no hardware.
 
@@ -129,14 +129,15 @@ Phase 1 is done when: in sim mode a full session works end-to-end via the tablet
 ## Phase 2 — MiniPC + Arduino arrive (no telescope)
 1. Install Ubuntu LTS on the MeLE; run `scripts/setup.sh`; systemd services; auto-start on boot;
    auto-power-on in BIOS; Tailscale; WiFi + fallback hotspot; log rotation.
-2. Firmware (Nano Every)
-   - Quadrature decoding on 4 pins via interrupts (encoder rates are low, ~1k edges/s max).
+2. Firmware (Arduino Nano)
+   - Encoder decoding: the IntelliScope sensors turned out analog (see Parts), so the Nano samples
+     4 analog pins at ~1 kHz and interpolates with atan2 instead of counting quadrature edges.
    - Line-based serial protocol, e.g. `POS <az_counts> <alt_counts>` at 20 Hz, `ENV <T> <RH> <dewpoint> <optic_T>`,
      commands `HEAT <ch> <0-100>`, `ZERO`, `VER`. Version + checksum. Watchdog.
    - Dew control: Magnus-formula dew point from BME280; PID or simple stepped PWM to keep optics
      ≥2–3°C above dew point; failsafe heaters off on lost host heartbeat.
-   - Test without encoders: simulate quadrature with jumpers or a spare pin; verify counts, direction,
-     no missed edges at 5× expected rate.
+   - Tested on the scope (2026-10-08): 90 deg of altitude repeats to ~8 counts; full azimuth turns
+     read 9041-9216 of 9216 counts once the base bolt was snug.
 3. Handset fallback driver: USB-RS232 → IntelliScope "Q" position query, same interface as the MCU encoder driver.
 4. Performance on N150: STT latency, solve time, live-stack frame rate, processing time per session.
 5. Power test: run a stacking job + both cameras + heaters on the power bank for 1h; confirm no reboot
@@ -145,8 +146,8 @@ Phase 1 is done when: in sim mode a full session works end-to-end via the tablet
    simulated encoders.
 
 ## Phase 3 — On the telescope (Florida)
-1. Encoder bring-up: identify RJ pinout/voltage with multimeter + logic analyzer (sigrok/PulseView).
-   Confirm quadrature, counts/rev, direction. If not clean quadrature, use the handset fallback.
+1. Encoder bring-up (done 2026-10-08): RJ12 pinout and voltage found with a multimeter and the
+   original controller; analog Hall signals, decoded on the Nano; counts/rev and direction calibrated.
 2. Mechanical: finder camera in finder bracket; heater on secondary holder (wire along one spider vane);
    cable strain relief; balance (counterweight if tube droops); dolly.
 3. Calibration wizard (voice-led, developer runs it once per location):
@@ -169,7 +170,7 @@ Phase 1 is done when: in sim mode a full session works end-to-end via the tablet
 
 ## Known risks / open questions
 - SV705C Linux SDK stability (fallback: ZWO ASI585MC).
-- Encoder signal format/voltage unverified; handset fallback exists.
+- Azimuth encoder slips if the base's central bolt is loose (the disk turns with the base): keep it snug.
 - Camera may not reach focus without the Barlow on this Newtonian.
 - No tracking: DSO imaging limited to short subs on bright targets. Phase 2+ option: EQ platform.
 - Dew: bring the scope out 30–60 min early; don't move from AC directly to humid air.

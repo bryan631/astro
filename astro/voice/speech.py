@@ -10,6 +10,7 @@ Audio from the tablet (webm/opus) is converted to 16 kHz mono WAV with ffmpeg.
 import functools
 import io
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -17,6 +18,18 @@ import threading
 import wave
 from pathlib import Path
 
+# Whisper writes non-speech as tags: [BLANK_AUDIO], [ Pause ], [silence], (music), *cough*.
+_TAGS = re.compile(r"\[[^\]]*\]?|\([^)]*\)|\*[^*]*\*")
+
+
+def clean_transcript(text: str) -> str:
+    """What was said, without whisper's non-speech tags ("" if that's all there was)."""
+    return " ".join(_TAGS.sub(" ", text).split())
+
+
+# Brings quiet speech (whispering at 5 AM) up to a steady level for whisper, whatever the
+# background: a dynamic normalizer adapts to each recording rather than a fixed gain.
+LEVEL = "dynaudnorm=f=150:g=15:m=30"
 PROMPT = "Astro, go to Jupiter. Astro, stop."  # biases whisper towards the wake word and commands
 CUE_CACHE = 256  # distinct phrases kept as audio
 WAV_BYTES_PER_S = 16000 * 2  # ffmpeg output: 16 kHz mono 16-bit
@@ -52,13 +65,13 @@ class Stt:
         with tempfile.TemporaryDirectory() as d:
             src, wav = Path(d) / "in", Path(d) / "in.wav"
             src.write_bytes(audio)
-            subprocess.run(["ffmpeg", "-loglevel", "error", "-i", src, "-ar", "16000", "-ac", "1", wav],
+            subprocess.run(["ffmpeg", "-loglevel", "error", "-i", src, "-af", LEVEL, "-ar", "16000", "-ac", "1", wav],
                            check=True, timeout=20)
             ctx = audio_ctx(wav.stat().st_size / WAV_BYTES_PER_S)
             out = subprocess.run([binary, "-m", model, "-f", wav, "-nt", "-np", "-ac", str(ctx),
                                   "--prompt", PROMPT],
                                  check=True, capture_output=True, text=True, timeout=30)
-        return " ".join(out.stdout.split())
+        return clean_transcript(out.stdout)
 
 
 class Tts:
@@ -89,7 +102,7 @@ class Tts:
             return self._synthesize_cli(text)
 
     def _synthesize_in_process(self, text: str) -> bytes:
-        from piper import PiperVoice
+        from piper import PiperVoice  # noqa: PLC0415 - optional; the CLI is the fallback
 
         with self._lock:  # load once; one synthesis at a time on the shared voice
             if self._voice is None:

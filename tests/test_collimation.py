@@ -1,7 +1,11 @@
+from datetime import datetime, timedelta, timezone
+
 import numpy as np
 import pytest
 
 from astro.capture.collimation import CollimationCoach, analyze
+from astro.pointing.coords import Site
+from astro.session import Session
 
 
 def donut(shadow_dx=0.0, shadow_dy=0.0, radius=40, size=160):
@@ -38,11 +42,6 @@ def test_coach_says_better_worse_and_done():
 
 
 def test_session_coaches_until_centered_then_asks_to_refocus():
-    from datetime import datetime, timedelta, timezone
-
-    from astro.pointing.coords import Site
-    from astro.session import Session
-
     frames = [donut(shadow_dx=8), donut(shadow_dx=4), donut()]
 
     class Camera:
@@ -67,11 +66,6 @@ def test_small_turns_add_up_to_better():
 
 
 def test_collimation_blocks_capture_and_drops_the_focus_gate():
-    from datetime import datetime, timedelta, timezone
-
-    from astro.pointing.coords import Site
-    from astro.session import Session
-
     evening = datetime(2026, 10, 3, 21, 0, tzinfo=timezone(timedelta(hours=-4)))
     s = Session(Site(26.7, -80.1), lambda: (45, 180), clock=lambda: evening,
                 main_camera=object())
