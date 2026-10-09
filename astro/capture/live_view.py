@@ -12,7 +12,7 @@ import numpy as np
 from astro.devices.base import Camera, Roi
 
 LOW_PEAK, HIGH_PEAK = 60, 220  # 8-bit brightest 0.5% of pixels: outside this, change the exposure
-STEP = 1.6  # exposure change per frame
+STEP = 2.0  # exposure change per frame
 log = logging.getLogger(__name__)
 MAX_FAILURES = 3  # captures in a row before the video gives up
 
