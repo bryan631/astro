@@ -12,6 +12,7 @@ MIN_RANGE = 40  # 8-bit counts: a dark frame stays dark instead of stretching it
 
 
 def jpeg(raw: np.ndarray, bayer: str) -> bytes:
+    """Turned 180 degrees: the optics show the world upside down, the page shows it upright."""
     rgb = superpixel_rgb(raw, bayer)
     lo = np.percentile(rgb, 50)  # the sky background is the typical pixel
     if lo > DAY_MEDIAN:  # day mode (a room or daylight): show it as it is, no sky stretch
@@ -19,6 +20,7 @@ def jpeg(raw: np.ndarray, bayer: str) -> bytes:
     else:
         hi = max(np.percentile(rgb, 99.8), lo + MIN_RANGE)
         img = Image.fromarray((((rgb - lo) / (hi - lo)).clip(0, 1) ** 0.6 * 255).astype(np.uint8))
+    img = img.rotate(180)
     if img.width > MAX_WIDTH:
         img = img.resize((MAX_WIDTH, round(img.height * MAX_WIDTH / img.width)))
     out = io.BytesIO()
