@@ -32,7 +32,12 @@
   #heard { font-size: 24px; min-height: 1.3em; opacity: .8; }
   #views button.on { border-color: var(--fg); border-width: 4px; }
   #camview { width: 100%; max-width: 900px; text-align: center; }
-  #camimg { width: 100%; border: 2px solid var(--dim); border-radius: 12px; }
+  #camimg { width: 100%; border: 2px solid var(--dim); border-radius: 12px; display: block; }
+  /* Crosshair on the image's center: line up the finder with the main camera. */
+  #camframe { position: relative; }
+  #camframe::before, #camframe::after { content: ""; position: absolute; background: #f00; opacity: .7; pointer-events: none; }
+  #camframe::before { left: 0; right: 0; top: 50%; height: 1px; }
+  #camframe::after { top: 0; bottom: 0; left: 50%; width: 1px; }
   #camcap { font-size: 20px; opacity: .8; }
   #debugbox { width: 100%; max-width: 900px; font: 20px/1.35 ui-monospace, monospace; white-space: pre-wrap;
               border: 2px solid var(--dim); border-radius: 12px; padding: 12px; margin: 0; }
@@ -58,7 +63,7 @@
   <div id="heard"></div>
   <form id="typed"><input id="text" placeholder="or type here" autocomplete="off"><button class="small">Send</button></form>
   <div id="views"><button class="small" data-v="finder">Finder</button> <button class="small" data-v="main">Main camera</button> <button class="small" data-v="debug">Debug</button> <button class="small" id="vid" hidden>Live video</button></div>
-  <div id="camview" hidden><img id="camimg" alt="camera view"><div id="camcap"></div></div>
+  <div id="camview" hidden><div id="camframe"><img id="camimg" alt="camera view"></div><div id="camcap"></div></div>
   <pre id="debugbox" hidden></pre>
   <div><button class="small" id="mode">Day mode</button> <button class="small" id="pics">Pictures</button> <button class="small" id="beeps">Beeps off</button></div>
   <div id="gallery" hidden></div>
