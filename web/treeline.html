@@ -39,7 +39,7 @@
 <div class="row"><button id="mark" disabled>Mark</button><button id="undo" disabled>Undo</button>
   <button id="save" disabled>Save</button></div>
 <p id="status"></p>
-<p class="help">The compass is only good to about 5 degrees: fine for planning. A treeline walk with
+<p class="help">The compass is only good to about 5 degrees (the server turns magnetic north to true north): fine for planning. A treeline walk with
   the telescope later replaces this one. <a href="/tonight" style="color: inherit">Tonight's report</a></p>
 <script>
 const $ = id => document.getElementById(id);
@@ -82,7 +82,7 @@ $("save").onclick = () => {
     try {
       const r = await fetch("/api/spots", {method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({name, lat: p.coords.latitude, lon: p.coords.longitude,
-                              elevation: p.coords.altitude, points: marks})});
+                              elevation: p.coords.altitude, points: marks, north: "magnetic"})});
       const out = await r.json();
       status(r.ok ? out.said : `Not saved: ${out.detail}`);
       if (r.ok) { marks.length = 0; update(); }

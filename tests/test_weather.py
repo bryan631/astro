@@ -82,3 +82,15 @@ def test_forecast_text_warns_of_dew():
 
     assert forecast_text(26.6, -80.1, get=dewy).splitlines()[-1].startswith(
         "Dew likely from 10-08 21:00")
+
+
+def test_null_forecast_hours_are_skipped(monkeypatch):
+    import io
+    import json
+
+    from astro.planner import weather
+
+    body = {"hourly": {"time": ["2026-10-08T21:00", "2026-10-08T22:00"], "cloud_cover": [40, None]}}
+    monkeypatch.setattr(weather.urllib.request, "urlopen",
+                        lambda url, timeout: io.BytesIO(json.dumps(body).encode()))
+    assert weather.hourly_cloud_cover(1, 2) == {"2026-10-08T21:00": 40.0}

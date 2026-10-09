@@ -6,7 +6,10 @@ The same TOML, stored as the SPOTS_TOML repo secret, feeds the online "Tonight" 
 import json
 import tomllib
 from dataclasses import dataclass, replace
+from datetime import datetime
 from pathlib import Path
+
+from pygeomag import GeoMag
 
 from astro.planner.horizon import HorizonMask
 from astro.pointing.coords import Site
@@ -61,3 +64,9 @@ def upsert(spots: list[Spot], spot: Spot) -> list[Spot]:
 
 def with_mask(spots: list[Spot], name: str, mask: HorizonMask) -> list[Spot]:
     return [replace(s, mask=mask) if s.name.lower() == name.lower() else s for s in spots]
+
+
+def declination_deg(lat: float, lon: float, when: datetime) -> float:
+    """Magnetic declination (east positive, World Magnetic Model): true az = magnetic az + this."""
+    year = when.year + (when.timetuple().tm_yday - 0.5) / 365.25
+    return float(GeoMag().calculate(glat=lat, glon=lon, alt=0, time=year).d)

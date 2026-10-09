@@ -488,7 +488,8 @@ async def tonight() -> HTMLResponse:
     """What every spot can see tonight with the cloud forecast; doesn't start the hardware."""
     spots, _ = spot_store.load(ROOT)
     spots = spots or [spot_store.Spot("Here", load_site(), horizon_store.load(ROOT))]
-    night = await asyncio.to_thread(tonight_report.build, spots, utcnow())
+    clouds = (lambda lat, lon: None) if OFFLINE else tonight_report.hourly_cloud_cover
+    night = await asyncio.to_thread(tonight_report.build, spots, utcnow(), clouds)
     return HTMLResponse(tonight_report.render_html(night, spots))
 
 
@@ -501,21 +502,26 @@ def api_spots() -> list[str]:
 async def api_save_spot(request: Request) -> dict:
     """A treeline from the tablet walk: {name, lat, lon, elevation?, points: [[az, alt], ...]}."""
     data = await request.json()
-    name, points = str(data.get("name", "")).strip(), data.get("points") or []
+    if not isinstance(data, dict) or not isinstance(data.get("points"), list):
+        raise HTTPException(400, "A spot needs a name and at least three treeline marks.")
+    name, points = str(data.get("name", "")).strip(), data["points"]
     if not name or len(points) < 3:
         raise HTTPException(400, "A spot needs a name and at least three treeline marks.")
     try:
         lat, lon, elev = (float(data["lat"]), float(data["lon"]), float(data.get("elevation") or 0))
-        marks = tuple(sorted((float(az) % 360, float(alt)) for az, alt in points))
+        if not (all(map(math.isfinite, (lat, lon, elev))) and -90 <= lat <= 90 and -180 <= lon <= 180):
+            raise ValueError("that location doesn't look right")
+        # A phone compass points to magnetic north: turn its azimuths to true north.
+        turn = spot_store.declination_deg(lat, lon, utcnow()) if data.get("north") == "magnetic" else 0.0
+        marks = tuple(sorted(((float(az) + turn) % 360, float(alt)) for az, alt in points))
     except (KeyError, TypeError, ValueError) as e:
         raise HTTPException(400, f"Bad spot data: {e}") from e
-    if not (all(map(math.isfinite, (lat, lon, elev, *(v for m in marks for v in m))))
-            and -90 <= lat <= 90 and -180 <= lon <= 180 and all(-10 <= a <= 90 for _, a in marks)):
-        raise HTTPException(400, "That location or treeline doesn't look right.")
+    if not all(math.isfinite(az) and -10 <= alt <= 90 for az, alt in marks):
+        raise HTTPException(400, "That treeline doesn't look right.")
     spot = spot_store.Spot(name, Site(lat, lon, elev), HorizonMask(marks))
     hub = _sim_hub if SIM else _real_hub
     if hub is not None:  # the running session switches to it (site, treeline, planning)
-        msgs = hub.session.save_spot(spot)
+        msgs = await asyncio.to_thread(hub.session.save_spot, spot)  # the tick may hold its lock
         for m in msgs:
             await hub.broadcast(m)
         return {"saved": name, "said": msgs[0]["text"]}

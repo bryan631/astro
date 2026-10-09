@@ -71,8 +71,8 @@ class LiveView:
             try:
                 with self.lock:
                     frame = self.camera.capture()  # the camera's tap keeps it for the stream
-                if self.exposure_range is not None:
-                    self._auto_expose(frame)
+                    if self.exposure_range is not None:
+                        self._auto_expose(frame)
             except (RuntimeError, OSError):  # a hiccup: try again, the page shows the last frame
                 self._stop.wait(0.5)
 
