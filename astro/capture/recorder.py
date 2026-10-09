@@ -5,7 +5,6 @@ import re
 import shutil
 import threading
 import time
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,13 +24,8 @@ def safe_name(name: str) -> str:
 ROI_PX = 512  # square planet ROI, sensor pixels
 RECENTER_EVERY = 50  # frames between drift checks
 RECENTER_FRACTION = 0.25  # re-center when the planet drifts this far from the ROI center
-SAFETY_CHECK_S = 1.0  # pointing safety (Sun, daytime) is re-checked this often while recording
 KEEP_RECORDINGS = 3  # raw SER videos kept after processing (names sort by time)
 MIN_FREE_BYTES = 2 * 1024**3  # a 60 s recording is ~1.5 GB
-
-# Returns a spoken reason when exposing now is unsafe, else None (see astro/safety.py).
-SafetyCheck = Callable[[], str | None]
-
 
 def prune(out_dir: Path, keep: int = KEEP_RECORDINGS) -> None:
     """Delete all but the newest `keep` recordings (each is ~1.5 GB; pictures are kept)."""
@@ -54,9 +48,8 @@ class Recording:
 
 
 class Recorder:
-    def __init__(self, camera: Camera, sensor_size: tuple[int, int], out_dir: Path,
-                 safety: SafetyCheck):
-        self.camera, self.sensor, self.out_dir, self.safety = camera, sensor_size, out_dir, safety
+    def __init__(self, camera: Camera, sensor_size: tuple[int, int], out_dir: Path):
+        self.camera, self.sensor, self.out_dir = camera, sensor_size, out_dir
         self._stop = threading.Event()
         self.current: Recording | None = None
 
@@ -67,12 +60,10 @@ class Recorder:
     def start(self, name: str, seconds: float) -> Recording:
         """Find the planet, set the ROI and record in a background thread.
 
-        Raises CaptureRefused (with a spoken reason) if busy, unsafe, or no planet is in view.
+        Raises CaptureRefused (with a spoken reason) if busy or no planet is in view.
         """
         if self.busy:
             raise CaptureRefused("I'm already recording.")
-        if reason := self.safety():
-            raise CaptureRefused(f"I can't take pictures now: {reason}.")
         self.out_dir.mkdir(parents=True, exist_ok=True)
         if shutil.disk_usage(self.out_dir).free < MIN_FREE_BYTES:
             raise CaptureRefused("The disk is nearly full, so I can't record. "
@@ -105,15 +96,9 @@ class Recorder:
 
     def _run(self, rec: Recording, roi: Roi, seconds: float) -> None:
         end = time.monotonic() + seconds
-        checked = -1e9  # check on the first frame
         try:
             with SerWriter(rec.path, roi.width, roi.height, bayer=self.camera.bayer) as ser:
                 while time.monotonic() < end and not self._stop.is_set():
-                    if time.monotonic() - checked >= SAFETY_CHECK_S:
-                        checked = time.monotonic()
-                        if reason := self.safety():
-                            rec.error = f"I stopped recording: {reason}."
-                            break
                     frame = self.camera.capture()
                     ser.write(frame)
                     rec.frames += 1

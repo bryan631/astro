@@ -37,6 +37,7 @@
   #camimg { width: 100%; border: 2px solid var(--dim); border-radius: 12px; display: block; }
   /* Crosshair on the image's center: line up the finder with the main camera. */
   #camframe { position: relative; }
+  #camctl { text-align: center; margin-top: 6px; }
   #camframe::before, #camframe::after { content: ""; position: absolute; background: #f00; opacity: .7; pointer-events: none; }
   #camframe::before { left: 0; right: 0; top: 50%; height: 1px; }
   #camframe::after { top: 0; bottom: 0; left: 50%; width: 1px; }
@@ -44,13 +45,18 @@
   #debugbox { width: 100%; max-width: 900px; font: 20px/1.35 ui-monospace, monospace; white-space: pre-wrap;
               border: 2px solid var(--dim); border-radius: 12px; padding: 12px; margin: 0; }
   #status { font-size: 18px; opacity: .85; text-align: center; }
+  #checks { display: block; text-align: center; font-size: 18px; }
+  #checks[hidden] { display: none; }
   #status .bad { text-decoration: underline; font-weight: bold; }
   #typed { display: flex; gap: 8px; width: 100%; max-width: 600px; }
   #typed input, button.small { font-size: 24px; padding: 12px; background: var(--bg); color: var(--fg);
           border: 2px solid var(--dim); border-radius: 12px; }
   #typed input { flex: 1; }
   .on-target #arrow { color: #34c759; }
-  #live { width: 100%; max-width: 900px; border: 2px solid var(--dim); border-radius: 12px; }
+  #livebox { width: 100%; max-width: 900px; }
+  #liveframe { overflow: hidden; border: 2px solid var(--dim); border-radius: 12px; }
+  #live { width: 100%; display: block; transform-origin: center; }
+  #livectl { text-align: center; margin-top: 6px; }
   #gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; width: 100%; max-width: 900px; }
   #gallery img { width: 100%; border: 2px solid var(--dim); border-radius: 12px; }
   body.on-target:not(.day) #arrow { color: var(--fg); }
@@ -58,10 +64,13 @@
 </head>
 <body>
   <div id="status"></div>
+  <label id="checks" hidden><input type="checkbox" id="checksoff"> Skip safety checks (daytime)</label>
   <div id="said">Tap the button and say "what's good tonight?"</div>
   <div id="arrow" hidden>&#x2191;</div>
   <div id="dist"></div>
-  <img id="live" hidden alt="live stack">
+  <div id="livebox" hidden><div id="liveframe"><img id="live" alt="live stack"></div>
+    <div id="livectl"><button class="small" data-exp="down">Darker</button> <button class="small" data-exp="up">Brighter</button>
+      <button class="small" data-zoom="1">1x</button> <button class="small" data-zoom="2">2x</button> <button class="small" data-zoom="4">4x</button></div></div>
   <button id="talk">Tap to talk</button>
   <button id="bigstop">STOP</button>
   <button id="hands" class="small">Hands-free: off</button>
@@ -69,7 +78,9 @@
   <div id="heard"></div>
   <form id="typed"><input id="text" placeholder="or type here" autocomplete="off"><button class="small">Send</button></form>
   <div id="views"><button class="small" data-v="finder">Finder</button> <button class="small" data-v="main">Main camera</button> <button class="small" data-v="debug">Debug</button> <button class="small" id="vid" hidden>Live video</button></div>
-  <div id="camview" hidden><div id="camframe"><img id="camimg" alt="camera view"></div><div id="camcap"></div></div>
+  <div id="camview" hidden><div id="camframe"><img id="camimg" alt="camera view"></div><div id="camcap"></div>
+    <div id="camctl"><button class="small" data-exp="down">Darker</button> <button class="small" data-exp="up">Brighter</button>
+      <button class="small" data-zoom="1">1x</button> <button class="small" data-zoom="2">2x</button> <button class="small" data-zoom="4">4x</button></div></div>
   <pre id="debugbox" hidden></pre>
   <div><button class="small" id="mode">Day mode</button> <button class="small" id="pics">Pictures</button> <button class="small" id="beeps">Beeps off</button></div>
   <div id="gallery" hidden></div>
@@ -119,9 +130,9 @@ function handle(m) {
   if (m.type === "picture" && !document.getElementById("gallery").hidden) showPictures();
   if (m.type === "live") {  // live stack preview: same file, rewritten as frames are added
     const img = document.getElementById("live");
-    img.src = `${m.url}?n=${m.frames}`; img.hidden = false;
+    img.src = `${m.url}?n=${m.frames}`; document.getElementById("livebox").hidden = false;
   }
-  if (m.type === "picture") document.getElementById("live").hidden = true;
+  if (m.type === "picture") document.getElementById("livebox").hidden = true;
   if (m.type === "hold") { arrow.hidden = true; dist.textContent = "Hold still"; holding = true; }
   if (m.type === "say" && holding && !m.text.startsWith("Hold still")) {  // e.g. "stop"
     holding = false; dist.textContent = "";
@@ -274,7 +285,11 @@ async function pollStatus() {
     item("Tablet link", link, link ? "" : "reconnecting"), item("Finder", s.finder), item("Main camera", s.main),
     item("Encoders", s.encoders), item("Internet", s.internet),
     s.claude ? item("Claude", claudeOk, claudeOk ? "" : `(${s.claude})`) : ""].filter(Boolean).join(" · ");
+  document.getElementById("checks").hidden = !s.daytime;
+  document.getElementById("checksoff").checked = !!s.checks_off;
 }
+document.getElementById("checksoff").onchange = e =>
+  wsSend(JSON.stringify({type: "checks", off: e.target.checked}));
 setInterval(pollStatus, 5000); setTimeout(pollStatus, 1500);
 // Live camera views and the debug panel: the page polls what the server last captured.
 let view = "", viewTimer = null, camUrl = null;
@@ -299,6 +314,10 @@ function setView(what, video = false) {
 }
 // Buttons are silent: the server answers only with the view (spoken requests are spoken to).
 const video = (camera, then) => wsSend(JSON.stringify({type: "video", camera, then}));
+// Camera controls: exposure (live video only; turns auto-exposure off) and digital zoom.
+document.querySelectorAll("#camctl button").forEach(b => b.onclick = () =>
+  wsSend(JSON.stringify({type: "camera", camera: view, exposure: b.dataset.exp,
+                         zoom: b.dataset.zoom ? Number(b.dataset.zoom) : undefined})));
 document.getElementById("vid").onclick = () => videoOn ? video(null, view) : video(view);
 document.querySelectorAll("#views button[data-v]").forEach(b => b.onclick = () => {
   const next = view === b.dataset.v ? "" : b.dataset.v;
@@ -407,6 +426,26 @@ try {  // reopen the view that was showing before an automatic reload (video com
   if (v === "debug" || v === "finder" || v === "main") setTimeout(() => { if (!view) setView(v); }, 1500);
 } catch {}
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").then(r => r.update());  // installable (V1); check for a new build on every load
+// Live stack controls, same as the camera view's: the stack is a picture, so these change
+// only how it's shown (brightness and center zoom), not the camera.
+let liveGain = 1;
+document.querySelectorAll("#livectl button").forEach(b => b.onclick = () => {
+  if (b.dataset.exp) liveGain = Math.min(4, Math.max(0.25, liveGain * (b.dataset.exp === "up" ? 1.4 : 1 / 1.4)));
+  else document.getElementById("live").style.transform = `scale(${b.dataset.zoom})`;
+  document.getElementById("liveframe").style.filter = `brightness(${liveGain})`;
+});
+// GUI design demo (scripts/dev/sim_pictures.py): ?demo=m42 plays a made-up live stack.
+const demo = new URLSearchParams(location.search).get("demo");
+if (demo) (async () => {
+  for (let n = 1; n <= 15; n++) {
+    handle({type: "live", url: `/live/sim_${demo}_${String(n).padStart(2, "0")}.png`, frames: n * 4});
+    handle({type: "notice", text: `Stacking ${demo.toUpperCase()}: ${n * 4} frames`});
+    await new Promise(r => setTimeout(r, 1500));
+  }
+  handle({type: "picture", file: `sim_${demo}.png`});
+  handle({type: "say", text: "Done. It's in Pictures."});
+  showPictures();
+})();
 </script>
 </body>
 </html>

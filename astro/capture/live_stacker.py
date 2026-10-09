@@ -13,7 +13,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from astro.capture.recorder import CaptureRefused, SafetyCheck, safe_name
+from astro.capture.recorder import CaptureRefused, safe_name
 from astro.devices.base import Camera
 from astro.process.finish import finish, save_fits
 from astro.process.livestack import LiveStack, stretch
@@ -22,7 +22,6 @@ SUB_EXPOSURE_S = 0.2  # ~6 px of drift at prime focus: still round-ish stars
 SUB_GAIN = 300
 PREVIEW_EVERY_S = 3.0  # refresh the tablet's live view this often
 MAX_SKIPS_IN_A_ROW = 10  # target drifted away, or clouds
-SAFETY_CHECK_S = 1.0
 
 
 @dataclass
@@ -38,10 +37,10 @@ class LiveSession:
 
 
 class LiveStacker:
-    def __init__(self, camera: Camera, out_dir: Path, safety: SafetyCheck,
+    def __init__(self, camera: Camera, out_dir: Path,
                  preview_dir: Path | None = None):
         """`out_dir` gets finished pictures (the gallery); previews go to `preview_dir`."""
-        self.camera, self.out_dir, self.safety = camera, out_dir, safety
+        self.camera, self.out_dir = camera, out_dir
         self.preview_dir = preview_dir or out_dir.parent / "live"
         self._stop = threading.Event()
         self.current: LiveSession | None = None
@@ -54,8 +53,6 @@ class LiveStacker:
     def start(self, name: str, seconds: float) -> LiveSession:
         if self.busy:
             raise CaptureRefused("I'm already stacking.")
-        if reason := self.safety():
-            raise CaptureRefused(f"I can't take pictures now: {reason}.")
         # Remember the camera's mode so planetary work afterwards isn't stuck at 0.2 s / gain 300.
         self._restore = (self.camera.exposure_s, self.camera.gain)
         try:
@@ -80,16 +77,10 @@ class LiveStacker:
     def _run(self, live: LiveSession, seconds: float) -> None:
         stack = LiveStack(self.camera.bayer)
         end = time.monotonic() + seconds
-        checked = saved = -1e9  # check (and save) on the first frame
+        saved = -1e9  # save on the first frame
         skips_in_a_row = 0
         try:
             while time.monotonic() < end and not self._stop.is_set():
-                now = time.monotonic()
-                if now - checked >= SAFETY_CHECK_S:
-                    checked = now
-                    if reason := self.safety():
-                        live.error = f"I stopped stacking: {reason}."
-                        break
                 if stack.add(self.camera.capture()):
                     live.frames, skips_in_a_row = stack.status.frames_added, 0
                 else:

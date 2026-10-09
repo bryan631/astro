@@ -1,10 +1,8 @@
-import time
 from types import SimpleNamespace
 
 import numpy as np
 from scipy import ndimage
 
-from astro.capture.live_stacker import LiveStacker
 from astro.process import livestack
 from astro.process.livestack import LiveStack, stretch
 from astro.process.planet import _LAYOUT
@@ -93,23 +91,6 @@ class SkyCamera:
     def capture(self):
         self.n += 1
         return observe(self.scene, 0.2 * self.n, (0.5 * self.n, 0), self.rng)
-
-
-def test_safety_stop_mid_stack_keeps_frames_and_restores_camera(tmp_path):
-    unsafe = {"reason": None}
-    cam = SkyCamera()
-    stacker = LiveStacker(cam, tmp_path, lambda: unsafe["reason"])
-    live = stacker.start("M27", 30)
-    assert cam.exposure_s == 0.2 and cam.gain == 300
-    while live.frames < 3:
-        time.sleep(0.02)
-    unsafe["reason"] = "daytime lockout"
-    assert live.done.wait(5)
-    assert "daytime lockout" in live.error and live.frames >= 3
-    assert live.picture.exists() and not live.preview.exists()  # moved into the gallery
-    assert live.picture.with_suffix(".fits").exists()  # linear stack kept for Siril/GraXpert
-    assert not list(live.preview.parent.glob("*.tmp"))  # no half-written previews left behind
-    assert (cam.exposure_s, cam.gain) == (0.01, 0)  # planetary mode restored
 
 
 def test_four_stars_anchor_the_stack_three_do_not(monkeypatch):

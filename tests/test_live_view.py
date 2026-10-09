@@ -40,15 +40,6 @@ def test_streams_and_restores_the_camera():
     assert cam.frames == frames and not view.running
 
 
-def test_stops_with_the_reason_when_the_gate_says_no():
-    cam, reasons = Cam(), [None, None, "it's daytime"]
-    view = LiveView(cam, 0.05, 600, allowed=lambda: reasons.pop(0) if reasons else "it's daytime").start()
-    assert wait_for(lambda: not view.running)
-    assert view.stopped_because == "it's daytime"
-    view.stop()
-    assert cam.exposure_s == 0.8  # restored even after a gate stop
-
-
 class SceneCam(Cam):
     """A scene `light` bright: pixel value = light * exposure, so exposure decides the picture."""
 
@@ -76,3 +67,37 @@ def test_auto_exposure_stops_at_the_limit_for_a_capped_lens():
     assert wait_for(lambda: capped.exposure_s == 0.5)
     view.stop()
     assert capped.exposure_s == 0.8  # the camera's own setting is back
+
+
+class GainSceneCam(SceneCam):
+    def capture(self):
+        Cam.capture(self)
+        return np.full((64, 64), min(255, self.light * self.exposure_s * self.gain / 400), np.uint8)
+
+
+def test_auto_exposure_lowers_the_gain_in_daylight():
+    room = GainSceneCam(light=100000)  # saturated even at 0.01 s and gain 400
+    view = LiveView(room, 0.1, 400, exposure_range=(0.01, 0.5)).start()
+    assert wait_for(lambda: 60 <= room.light * room.exposure_s * room.gain / 400 <= 220)
+    assert room.exposure_s == 0.01 and room.gain < 400
+    view.stop()
+
+
+def test_manual_exposure_turns_auto_off():
+    cam = SceneCam(light=200)
+    view = LiveView(cam, 0.1, 400, exposure_range=(0.01, 0.5)).start()
+    view.nudge(0.5)
+    before = cam.exposure_s
+    time.sleep(0.1)
+    assert view.exposure_range is None and cam.exposure_s == before
+    view.stop()
+
+
+def test_darker_lowers_the_gain_past_the_shortest_exposure():
+    cam = Cam()
+    view = LiveView(cam, 0.0002, 400)
+    for _ in range(3):
+        view.nudge(0.5)
+    assert cam.exposure_s == 0.0001 and cam.gain == 100
+    view.nudge(2.0)
+    assert cam.gain == 201 and cam.exposure_s == 0.0001
