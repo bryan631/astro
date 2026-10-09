@@ -222,14 +222,14 @@ function setupTalk() {
   // While the telescope talks, the big button stops it (in either mode) instead of listening.
   const speakingNow = () => speechSynthesis.speaking || (player && !player.paused && !player.ended);
   setInterval(() => {
-    const s = !!speakingNow(), label = s ? "Tap to stop talking" : "Hold to talk";
+    const s = !!speakingNow(), label = s ? "Hold to talk (stops speech)" : "Hold to talk";
     if (talk.textContent !== label) talk.textContent = label;
     talk.disabled = !s && handsOn;
   }, 150);
   let pressed = false;  // this gesture started a recording (a stop tap never does)
   talk.addEventListener("pointerdown", async e => {
     e.preventDefault();
-    if (speakingNow()) { stopAudio(); return; }  // a tap to stop, not a command
+    stopAudio();  // a press always cuts the speech and records: coaching talks nonstop
     listen(true); pressed = true;
     try {
       await start();
