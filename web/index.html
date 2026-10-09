@@ -407,6 +407,18 @@ try {  // reopen the view that was showing before an automatic reload (video com
   if (v === "debug" || v === "finder" || v === "main") setTimeout(() => { if (!view) setView(v); }, 1500);
 } catch {}
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").then(r => r.update());  // installable (V1); check for a new build on every load
+// GUI design demo (scripts/dev/sim_pictures.py): ?demo=m42 plays a made-up live stack.
+const demo = new URLSearchParams(location.search).get("demo");
+if (demo) (async () => {
+  for (let n = 1; n <= 15; n++) {
+    handle({type: "live", url: `/live/sim_${demo}_${String(n).padStart(2, "0")}.png`, frames: n * 4});
+    handle({type: "notice", text: `Stacking ${demo.toUpperCase()}: ${n * 4} frames`});
+    await new Promise(r => setTimeout(r, 1500));
+  }
+  handle({type: "picture", file: `sim_${demo}.png`});
+  handle({type: "say", text: "Done. It's in Pictures."});
+  showPictures();
+})();
 </script>
 </body>
 </html>
