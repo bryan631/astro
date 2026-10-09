@@ -8,4 +8,7 @@ self.addEventListener("activate", e => e.waitUntil((async () => {
   const pages = await self.clients.matchAll({type: "window"});
   await Promise.all(pages.map(c => c.navigate(c.url).catch(() => {})));
 })()));
-self.addEventListener("fetch", e => e.respondWith(fetch(e.request, {cache: "no-cache"})));
+self.addEventListener("fetch", e => {
+  if (new URL(e.request.url).pathname.startsWith("/api/")) return;  // live streams stall through a worker
+  e.respondWith(fetch(e.request, {cache: "no-cache"}));
+});
