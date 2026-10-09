@@ -41,7 +41,7 @@ from astro.planner.tonight import PLANET_NOTES, PLANETS, next_dark, plan
 from astro.pointing.coords import Site, body_altaz, radec_to_altaz
 from astro.pointing.finder_sync import FinderSync, check_focus
 from astro.pointing.geometry import separation_deg
-from astro.pointing.main_offset import MainOffset
+from astro.pointing.main_offset import MainOffset, local_delta
 from astro.pointing.platesolve import finder_gray
 from astro.process.planet import MIN_FRAMES, StackResult, process_ser
 from astro.safety import DAYTIME_SUN_ALT_DEG, SafetyResult, check_target
@@ -283,6 +283,8 @@ class Session:
             return self._wizard_command(intent.name)
         if intent is None:
             return [say(NOT_UNDERSTOOD)]
+        if intent.name == "centered":
+            return self.mark_centered(intent.target or "")
         if intent.name == "goto":
             name = match_name(intent.target or "", self.names())
             return self.goto(name) if name else [say(f"I don't know {intent.target}.")]
@@ -796,6 +798,25 @@ class Session:
         word = next((w for w in ("left", "right") if w in spoken.split(", ")[0].split()), None)
         if word:
             self._direction_probe = (word, az, t)
+
+    def mark_centered(self, spoken: str) -> list[dict]:
+        """The named object is centered in the main camera: plate-solve the finder now and keep
+        the difference as the finder-to-main offset (instead of lining up the bracket)."""
+        name = match_name(spoken, self.names())
+        if name is None:
+            return [say(f"I don't know {spoken}. Say, for example, 'Saturn is centered'.")]
+        if self.finder is None:
+            return [say("There's no finder camera connected.")]
+        ok, msg = self.finder.sync()
+        if not ok:
+            return [say(msg)]
+        alt, az = self.position()  # the finder model, before any offset
+        t_alt, t_az = self.altaz_of(name)
+        d_az, d_alt = local_delta(alt, az, t_alt, t_az)
+        self.centerer.offset = MainOffset(float(d_az), float(d_alt), 1)
+        self._save_calibration()
+        return [say(f"Got it. The main camera points {np.hypot(d_az, d_alt):.1f} degrees from the "
+                    "finder, and I'll allow for that from now on.")]
 
     def _aim(self, alt: float, az: float) -> tuple[float, float]:
         """Where the finder model should point so the target lands in the main camera."""

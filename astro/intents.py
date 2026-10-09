@@ -13,7 +13,7 @@ class Intent:
     name: str  # goto, stop, next, tonight, capture, stop_capture, focus, finder_focus, sync,
     # where, barlow_on, barlow_off, location, horizon_start, horizon_mark, setup, ready, skip,
     # describe, collimate, view_finder, view_main, view_debug, view_hide,
-    # video_finder, video_main, video_stop
+    # video_finder, video_main, video_stop, centered
     target: str | None = None
 
 
@@ -40,6 +40,8 @@ _PATTERNS = [
     ("view_main", r"\b(show|open|view|see|display)( me)?( the)?( live)? (main|big|telescope) (camera|view|image)\b|\bmain (camera|view)\b"),
     ("view_debug", r"\b(show|open|view|display)( me)?( the)? (debug|diagnostics?|details?)\b|^debug\b"),
     ("view_hide", r"^(hide|close|clear)\b|\b(hide|close)( the)? (camera|cameras|debug|details?|views?|picture)\b"),
+    # "Saturn is centered": the main camera is on it, so learn the finder-to-main offset.
+    ("centered", r"^(?:the\s+)?(.+?)\s+(?:is|'s)\s+(?:centered|centred|in the middle)\b"),
     ("sync", r"\b(sync|align|plate ?solve|find (out )?where (we are|i am|it is) pointing)\b"),
     ("horizon_mark", r"^(mark|mark it|mark this|here)\b"),
     ("location", r"\b(set|update|use|get|find) (my |our |the )?(location|position|gps)\b"),
@@ -70,7 +72,7 @@ def parse(text: str) -> Intent | None:
         m = re.search(pattern, t)
         if not m:
             continue
-        if name in ("goto", "describe"):
+        if name in ("goto", "describe", "centered"):
             target = _goto_target(m.group(1))
             if target is None:
                 continue  # e.g. "show me what's good tonight" -> tonight
