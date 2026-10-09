@@ -3,6 +3,7 @@
 Runs until stopped (or the exposure gate says no), uses a short exposure for speed, asks the
 gate before every frame, and puts the camera's settings back.
 """
+import logging
 import threading
 from collections.abc import Callable
 from contextlib import AbstractContextManager
@@ -13,6 +14,7 @@ from astro.devices.base import Camera, Roi
 
 LOW_PEAK, HIGH_PEAK = 60, 220  # 8-bit brightest 0.5% of pixels: outside this, change the exposure
 STEP = 1.6  # exposure change per frame
+log = logging.getLogger(__name__)
 
 
 class LiveView:
@@ -73,7 +75,8 @@ class LiveView:
                     frame = self.camera.capture()  # the camera's tap keeps it for the stream
                     if self.exposure_range is not None:
                         self._auto_expose(frame)
-            except (RuntimeError, OSError):  # a hiccup: try again, the page shows the last frame
+            except (RuntimeError, OSError) as e:  # a hiccup: try again, the page shows the last frame
+                log.warning("live video capture failed: %r", e)
                 self._stop.wait(0.5)
 
     def _auto_expose(self, frame: np.ndarray) -> None:
