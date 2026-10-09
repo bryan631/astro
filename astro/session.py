@@ -1131,7 +1131,7 @@ class Session:
         return result
 
     def daytime(self) -> bool:
-        return body_altaz("sun", self.site, self.clock())[0] > DAYTIME_SUN_ALT_DEG
+        return bool(body_altaz("sun", self.site, self.clock())[0] > DAYTIME_SUN_ALT_DEG)
 
     def _tolerance_arcmin(self) -> float:
         return TOLERANCE_BARLOW_ARCMIN if self.barlow else TOLERANCE_ARCMIN
