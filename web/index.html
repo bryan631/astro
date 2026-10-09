@@ -61,7 +61,7 @@
   <button id="hands" class="small">Hands-free: off</button>
   <div id="vstate" hidden></div>
   <div id="heard"></div>
-  <form id="typed"><input id="text" placeholder="or type here" autocomplete="off"><button class="small">Send</button></form>
+  <form id="typed"><input id="text" placeholder="or type here" autocomplete="off"><button class="small">Send</button><button class="small" type="button" id="cancel">Stop</button></form>
   <div id="views"><button class="small" data-v="finder">Finder</button> <button class="small" data-v="main">Main camera</button> <button class="small" data-v="debug">Debug</button> <button class="small" id="vid" hidden>Live video</button></div>
   <div id="camview" hidden><div id="camframe"><img id="camimg" alt="camera view"></div><div id="camcap"></div></div>
   <pre id="debugbox" hidden></pre>
@@ -154,6 +154,8 @@ function send(text) { if (text.trim()) wsSend(JSON.stringify({type: "text", text
 document.getElementById("typed").onsubmit = e => {
   e.preventDefault(); const i = document.getElementById("text"); send(i.value); i.value = "";
 };
+// Stop: ends whatever is going on (focus, guidance, a picture, video), same as saying "stop".
+document.getElementById("cancel").onclick = () => { stopAudio(); send("stop"); };
 async function showPictures() {
   const box = document.getElementById("gallery");
   const files = await (await fetch("/gallery")).json();
