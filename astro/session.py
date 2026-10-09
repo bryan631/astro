@@ -149,6 +149,7 @@ class Session:
         self.main_camera, self.main_sensor = main_camera, main_sensor
         self._video: tuple[str, LiveView] | None = None  # live video in progress: (camera, loop)
         self._video_announce = True  # started by voice: its end is spoken too
+        self._video_day = False  # whether the running video started by day
         self._video_settings: dict[tuple[str, bool], tuple[float, int]] = {}  # (camera, day): last
         self.zoom = {"finder": 1, "main": 1}  # the page's digital zoom per camera view
         self.barlow = False
@@ -543,7 +544,8 @@ class Session:
         max_gain = gain
         if name == "main" and self.daytime():
             exposure, gain = MAIN_DAY_VIDEO
-        exposure, gain = self._video_settings.get((name, self.daytime()), (exposure, gain))
+        day = self.daytime()  # the settings are remembered under the day/night they started in
+        exposure, gain = self._video_settings.get((name, day), (exposure, gain))
         roi = None
         if crop:
             w, h = self.main_sensor
@@ -555,6 +557,7 @@ class Session:
         try:
             self._video = (name, LiveView(cam, exposure, gain, roi, lock,
                                                VIDEO_EXPOSURE[name], max_gain).start())
+            self._video_day = day
         finally:
             if self._video is None and pause is not None:  # it didn't start: solve again
                 pause.clear()
@@ -569,17 +572,18 @@ class Session:
         name, loop = self._video
         self._video = None
         loop.stop()
-        self._video_settings[(name, self.daytime())] = (loop.exposure_s, loop.gain)  # next start
+        self._video_settings[(name, self._video_day)] = (loop.exposure_s, loop.gain)  # next start
         if name == "finder" and hasattr(self.finder, "paused"):
             self.finder.paused.clear()
         return name
 
     def adjust_camera(self, name: str, exposure: str | None = None, zoom: int | None = None) -> None:
         """The page's camera controls: exposure 'up'/'down' (live video only) and digital zoom."""
-        if zoom in ZOOMS:
-            self.zoom[name] = zoom
-        if exposure in ("up", "down") and self._video is not None and self._video[0] == name:
-            self._video[1].nudge(2.0 if exposure == "up" else 0.5)
+        with self._lock:  # video start/stop run under it too
+            if zoom in ZOOMS:
+                self.zoom[name] = zoom
+            if exposure in ("up", "down") and self._video is not None and self._video[0] == name:
+                self._video[1].nudge(2.0 if exposure == "up" else 0.5)
 
     def video_active(self, name: str) -> bool:
         return self._video is not None and self._video[0] == name and self._video[1].running

@@ -1,7 +1,7 @@
 """Live video of one camera, for checking that everything is right: cap off, focus close, framing.
 
-Runs until stopped (or the exposure gate says no), uses a short exposure for speed, asks the
-gate before every frame, and puts the camera's settings back.
+Runs until stopped (or the camera stops answering), uses a short exposure for speed, and puts
+the camera's settings back. Cameras are never gated by the safety check.
 """
 import logging
 import threading

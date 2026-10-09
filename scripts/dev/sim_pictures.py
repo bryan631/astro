@@ -34,7 +34,7 @@ def blob(cx, cy, sx, sy, angle=0.0):
 
 def stars(n, bright=1.0, sigma=1.3):
     img = np.zeros((H, W))
-    for x, y, f in zip(rng.uniform(0, W, n), rng.uniform(0, H, n), rng.pareto(1.5, n) * 0.05 * bright):
+    for x, y, f in zip(rng.uniform(0, W, n), rng.uniform(0, H, n), rng.pareto(1.5, n) * 0.05 * bright, strict=True):
         x0, y0 = int(x), int(y)
         sl = np.s_[max(y0 - 8, 0):y0 + 9, max(x0 - 8, 0):x0 + 9]
         img[sl] += min(f, 3) * np.exp(-((xx[sl] - x) ** 2 + (yy[sl] - y) ** 2) / (2 * sigma**2))
