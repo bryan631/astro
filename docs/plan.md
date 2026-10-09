@@ -179,3 +179,4 @@ Phase 1 is done when: in sim mode a full session works end-to-end via the tablet
   (gain 400) and steps down one frame at a time. Start from the last good exposure/gain, or step faster.
 - Later: an exposure control on the page for the camera views (the main camera has no
   auto-exposure; by day it uses a fixed 4 ms, `MAIN_DAY_VIDEO`).
+- Later: a sharpness/focus number overlaid on the live camera views.
