@@ -175,8 +175,3 @@ Phase 1 is done when: in sim mode a full session works end-to-end via the tablet
 - No tracking: DSO imaging limited to short subs on bright targets. Phase 2+ option: EQ platform.
 - Dew: bring the scope out 30–60 min early; don't move from AC directly to humid air.
 - Tablet mic requires HTTPS; verify on the user's actual tablet.
-- Later: live video takes a long time to settle in daylight. Each start begins at night settings
-  (gain 400) and steps down one frame at a time. Start from the last good exposure/gain, or step faster.
-- Later: an exposure control on the page for the camera views (the main camera has no
-  auto-exposure; by day it uses a fixed 4 ms, `MAIN_DAY_VIDEO`).
-- Later: a sharpness/focus number overlaid on the live camera views.

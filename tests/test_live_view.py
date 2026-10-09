@@ -81,3 +81,13 @@ def test_auto_exposure_lowers_the_gain_in_daylight():
     assert wait_for(lambda: 60 <= room.light * room.exposure_s * room.gain / 400 <= 220)
     assert room.exposure_s == 0.01 and room.gain < 400
     view.stop()
+
+
+def test_manual_exposure_turns_auto_off():
+    cam = SceneCam(light=200)
+    view = LiveView(cam, 0.1, 400, exposure_range=(0.01, 0.5)).start()
+    view.nudge(0.5)
+    before = cam.exposure_s
+    time.sleep(0.1)
+    assert view.exposure_range is None and cam.exposure_s == before
+    view.stop()

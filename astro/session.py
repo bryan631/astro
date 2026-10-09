@@ -58,6 +58,7 @@ VIDEO = {"finder": (0.1, 400, False), "main": (0.25, 480, False)}  # full frame 
 VIDEO_EXPOSURE = {"finder": (0.0001, 0.5), "main": None}
 MAIN_DAY_VIDEO = (0.004, 0)  # main camera by day (no auto-exposure), measured on a sunny tree
 VIDEO_CROP = (1280, 720)
+ZOOMS = (1, 2, 4)
 # Commands that leave live video running; anything else needs a camera (or might) and ends it.
 NOT_UNDERSTOOD = "Sorry, I didn't catch that. Say 'what's good tonight' or 'go to Saturn'."
 KEEPS_VIDEO = {"goto", "next", "describe", "barlow_on", "barlow_off", "location", "horizon_start",
@@ -148,6 +149,8 @@ class Session:
         self.main_camera, self.main_sensor = main_camera, main_sensor
         self._video: tuple[str, LiveView] | None = None  # live video in progress: (camera, loop)
         self._video_announce = True  # started by voice: its end is spoken too
+        self._video_settings: dict[tuple[str, bool], tuple[float, int]] = {}  # (camera, day): last
+        self.zoom = {"finder": 1, "main": 1}  # the page's digital zoom per camera view
         self.barlow = False
         self.main_focus_ok = False  # pre-flight gate: reset per session and on Barlow change
         self.record_seconds = RECORD_SECONDS
@@ -537,8 +540,10 @@ class Session:
             return [say("Let me finish what I'm doing first. Say stop, then ask for the video.")]
         self.stop_video()
         exposure, gain, crop = VIDEO[name]
+        max_gain = gain
         if name == "main" and self.daytime():
             exposure, gain = MAIN_DAY_VIDEO
+        exposure, gain = self._video_settings.get((name, self.daytime()), (exposure, gain))
         roi = None
         if crop:
             w, h = self.main_sensor
@@ -549,7 +554,7 @@ class Session:
         lock = getattr(self.finder, "camera_lock", None) if name == "finder" else None
         try:
             self._video = (name, LiveView(cam, exposure, gain, roi, lock,
-                                               VIDEO_EXPOSURE[name]).start())
+                                               VIDEO_EXPOSURE[name], max_gain).start())
         finally:
             if self._video is None and pause is not None:  # it didn't start: solve again
                 pause.clear()
@@ -564,9 +569,17 @@ class Session:
         name, loop = self._video
         self._video = None
         loop.stop()
+        self._video_settings[(name, self.daytime())] = (loop.exposure_s, loop.gain)  # next start
         if name == "finder" and hasattr(self.finder, "paused"):
             self.finder.paused.clear()
         return name
+
+    def adjust_camera(self, name: str, exposure: str | None = None, zoom: int | None = None) -> None:
+        """The page's camera controls: exposure 'up'/'down' (live video only) and digital zoom."""
+        if zoom in ZOOMS:
+            self.zoom[name] = zoom
+        if exposure in ("up", "down") and self._video is not None and self._video[0] == name:
+            self._video[1].nudge(2.0 if exposure == "up" else 0.5)
 
     def video_active(self, name: str) -> bool:
         return self._video is not None and self._video[0] == name and self._video[1].running

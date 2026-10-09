@@ -21,4 +21,11 @@ def test_dark_noise_stays_dark_and_stars_show():
 
 def test_saturated_frame_is_white_not_black():
     img = Image.open(io.BytesIO(jpeg(np.full((64, 64), 255, np.uint8), "GRBG")))
-    assert np.asarray(img).min() > 200
+    assert np.median(np.asarray(img)) > 200  # (the corner has the sharpness text)
+
+
+def test_zoom_crops_the_center():
+    raw = np.zeros((400, 800), np.uint8)
+    raw[150:250, 300:500] = 200  # a bright center fills the 4x view
+    zoomed = Image.open(io.BytesIO(jpeg(raw, "GRBG", zoom=4)))
+    assert zoomed.size == (100, 50) and np.asarray(zoomed)[30:, :].mean() > 150

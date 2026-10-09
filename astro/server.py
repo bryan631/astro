@@ -485,6 +485,10 @@ async def handle_message(hub: Hub, socket: WebSocket, conn: dict, msg: dict) -> 
         (hub.handsfree.add if conn["handsfree"] else hub.handsfree.discard)(socket)
     elif data.get("type") == "checks":  # the daytime "skip checks" toggle
         session.override = bool(data.get("off"))
+    elif data.get("type") == "camera":  # the camera view's exposure and zoom buttons
+        if data.get("camera") in ("finder", "main"):
+            await asyncio.to_thread(session.adjust_camera, data["camera"], data.get("exposure"),
+                                    data.get("zoom"))
     elif data.get("type") == "video":  # the Live video button: answered silently
         for out in await asyncio.to_thread(session.video, data.get("camera"), data.get("then")):
             await hub.broadcast(out)
@@ -600,7 +604,7 @@ def api_camera(name: str) -> Response:
     if frame is None:  # say why, so a blank view isn't a mystery
         raise HTTPException(404, "no frame yet: it hasn't taken a picture since the server started")
     raw, bayer, age = frame
-    return Response(jpeg(raw, bayer), media_type="image/jpeg", headers={"X-Frame-Age": f"{age:.1f}"})
+    return Response(jpeg(raw, bayer, session.zoom[name]), media_type="image/jpeg", headers={"X-Frame-Age": f"{age:.1f}"})
 
 
 @app.get("/api/camera/{name}.mjpg")
@@ -618,7 +622,7 @@ async def api_camera_stream(name: str) -> StreamingResponse:
         while session.video_active(name):  # the stream ends with the video
             if cam.last is not None and cam.last_at != seen:
                 seen = cam.last_at
-                data = await asyncio.to_thread(jpeg, cam.last, cam.bayer)
+                data = await asyncio.to_thread(jpeg, cam.last, cam.bayer, session.zoom[name])
                 yield (b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n" % len(data)
                        + data + b"\r\n")
             await asyncio.sleep(0.03)
