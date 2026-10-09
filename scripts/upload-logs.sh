@@ -20,6 +20,7 @@ if [ "${1:-}" = --setup ]; then
 fi
 [ -f "$KEY" ] || { echo "no deploy key: run scripts/upload-logs.sh --setup" >&2; exit 1; }
 [ -d "$DEST/.git" ] || timeout 120 git clone -q "$REPO" "$DEST"
+git -C "$DEST" remote set-url origin "$REPO"  # the destination is always REPO, even if it changed
 timeout 120 git -C "$DEST" pull -q --rebase
 out="$DEST/$(hostname)"
 mkdir -p "$out"

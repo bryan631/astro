@@ -246,6 +246,7 @@ function setupTalk() {
     recording = true; listen(true);
     try {
       await start();
+      if (!recording) { stop(); return; }  // tapped again while the microphone was opening
       limit = setTimeout(finish, MAX_TALK_MS);
     } catch (err) {  // e.g. microphone permission denied
       recording = false; listen(false);

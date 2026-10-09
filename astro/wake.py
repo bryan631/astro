@@ -1,10 +1,10 @@
 """Wake word for hands-free mode: "Astro, go to Jupiter" or "Astro" then the command."""
 import re
 
-# Whisper often hears "Astro" as "Astra", "Austro", "Astrid", "Ostro" or "Estro", softly spoken
-# even "Astrol" or "Asshro".
-_WAKE = re.compile(r"^\W*(?:hey\W+|ok\W+)?(?:astr(?!onom)[aoiu]\w*|austr[ao]\w*|[oe]stro\w*|asshro)\b[\s,.!?:;-]*",
-                   re.IGNORECASE)
+# Whisper's spellings of "Astro", including softly spoken ones. A list, not a prefix: "astronaut"
+# or "astrology" must not wake it.
+_WAKE = re.compile(r"^\W*(?:hey\W+|ok\W+)?(?:astro|astros|astra|astrid|astrow|astrol|austro|austra|"
+                   r"ostro|estro|asshro)\b[\s,.!?:;-]*", re.IGNORECASE)
 
 
 _SENTENCE = re.compile(r"(?<=[.!?])\s+")

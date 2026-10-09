@@ -534,7 +534,8 @@ class Session:
         cam = self.camera(name)
         if cam is None:
             return [say(f"There's no {name} camera connected.")]
-        if self._camera_busy() or self._focus_coach or self._collimation or self._centering:
+        if (self._camera_busy() or self._focus_coach or self._collimation or self._centering
+                or (name == "finder" and self.guide is not None)):  # guidance needs finder fixes
             return [say("Let me finish what I'm doing first. Say stop, then ask for the video.")]
         if reason := self.exposure_safety():
             return [say(f"I can't run the camera right now: {reason}.")]
@@ -837,7 +838,7 @@ class Session:
             return [say(f"I don't know {spoken}. Say, for example, 'Saturn is centered'.")]
         if self.finder is None:
             return [say("There's no finder camera connected.")]
-        ok, msg = self.finder.sync()
+        ok, msg = self.finder.sync(fresh=True)  # a solve from before the last push would be wrong
         if not ok:
             return [say(msg)]
         alt, az = self.position()  # the finder model, before any offset
