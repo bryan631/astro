@@ -319,8 +319,11 @@ class Session:
             if name is None:
                 stopped = self.stop_video()
                 return [{"type": "view", "what": then or stopped or "none"}]
-            return [notice(m["text"]) if m["type"] == "say" else m
-                    for m in self.start_video(name, announce=False)]
+            out = [notice(m["text"]) if m["type"] == "say" else m
+                   for m in self.start_video(name, announce=False)]
+            if not any(m["type"] == "view" for m in out):  # busy (guiding, focus): its last frames
+                out.append({"type": "view", "what": name})
+            return out
 
     def _stop(self) -> list[dict]:
         """'Stop' (or 'done') ends whatever is going on, most specific first."""

@@ -262,7 +262,8 @@ const video = (camera, then) => wsSend(JSON.stringify({type: "video", camera, th
 document.getElementById("vid").onclick = () => videoOn ? video(null, view) : video(view);
 document.querySelectorAll("#views button[data-v]").forEach(b => b.onclick = () => {
   const next = view === b.dataset.v ? "" : b.dataset.v;
-  if (videoOn) video(null, next || "none"); else setView(next);  // video runs until switched off
+  if (next === "finder" || next === "main") video(next);  // a camera opens as live video
+  else if (videoOn) video(null, next || "none"); else setView(next);  // video runs until switched off
 });
 function formatDebug(info) {
   return Object.entries(info).map(([section, vals]) => section.toUpperCase() + "\n" +
