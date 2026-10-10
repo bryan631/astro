@@ -154,6 +154,7 @@ class Mcu:
 
     def _read_loop(self) -> None:
         while not self._stop.is_set():
+            line = b""
             try:
                 line = self._ser.readline()
                 if line and (msg := proto.parse(line)) is not None:
@@ -163,6 +164,8 @@ class Mcu:
                     return
                 self._reopen()  # unplugged: the old handle is dead, and the device may come
                 continue  # back under another name (ttyACM1)
+            except Exception:  # a bug handling one line must not freeze the counts until restart
+                log.exception("encoder board: failed to handle a line", extra={"data": {"line": repr(line)}})
 
     def _reopen(self) -> None:
         with self._lock:
@@ -185,3 +188,5 @@ class Mcu:
                 self._send(proto.frame("PING"))
             except (serial.SerialException, OSError):
                 pass
+            except Exception:  # keep pinging: without it the firmware cuts the heaters
+                log.exception("encoder board: ping failed")

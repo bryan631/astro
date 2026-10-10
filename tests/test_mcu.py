@@ -217,6 +217,19 @@ def test_write_error_while_handling_env_reopens_instead_of_dying():
     assert len(opened) == 2 and m.counts() == (7, 8)
 
 
+def test_a_bug_handling_one_line_does_not_freeze_the_counts():
+    m, _ = make_mcu([frame("BOOT astro-mcu 0.2"), frame("POS 5 6")])
+
+    def broken():
+        raise ValueError("bug")
+
+    m.on_reboot = broken
+    m.start()
+    time.sleep(0.2)
+    m.close()
+    assert m.boots == 1 and m.counts() == (5, 6)  # the boot still counts, and reading went on
+
+
 @pytest.mark.parametrize("ports,expected", [
     (["/dev/ttyUSB0", "/dev/ttyACM1", "/dev/ttyACM0"], "/dev/ttyACM0"),  # Nano Every first
     (["/dev/ttyUSB1", "/dev/ttyUSB0"], "/dev/ttyUSB0"),  # classic Nano fallback
