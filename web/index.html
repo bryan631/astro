@@ -14,7 +14,7 @@
   [hidden] { display: none !important; }  /* else a hidden sheet's own display covers the buttons */
   html, body { height: 100%; }
   body { margin: 0; background: var(--bg); color: var(--fg); font: 20px/1.3 system-ui, sans-serif;
-         display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; height: 100vh; overflow: hidden; }
+         display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; height: 100vh; height: 100dvh; overflow: hidden; }  /* dvh: what shows, without Android's bars */
   button { font: inherit; color: var(--fg); background: var(--bg); border: 2px solid var(--dim);
            border-radius: 12px; padding: 10px 16px; touch-action: manipulation; }
   button.on { border-color: var(--fg); border-width: 4px; }
