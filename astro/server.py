@@ -588,7 +588,17 @@ def api_status() -> dict:
     hub = running_hub()
     return {**hub.session.connections(), "internet": internet_ok(), "claude": hub.agent.status(),
             "daytime": hub.session.daytime(), "checks_off": hub.session.override,
-            "build": web_build()}  # the page reloads itself when this changes
+            "build": web_build(),  # the page reloads itself when this changes
+            "main_box": main_box()}
+
+
+def main_box() -> list | None:
+    """The main camera's field drawn on the finder view: 4 corners as fractions of the finder
+    picture from its center (scripts/dev/drift_offset.py measures them)."""
+    try:
+        return json.loads((ROOT / "data" / "calibration.json").read_text()).get("main_box")
+    except (OSError, ValueError):
+        return None
 
 
 @app.get("/api/debug")
