@@ -1,6 +1,5 @@
 import json
 import os
-import threading
 import time
 
 os.environ["ASTRO_SIM"] = "1"
@@ -357,27 +356,6 @@ def test_video_runs_through_unrelated_commands_until_stopped():
         session.handle("live video of the finder")
         session.handle("go to Saturn")  # guidance needs the camera back
         assert session.video_now() is None
-
-
-def test_main_video_leaves_the_finder_solving_and_a_failed_start_unpauses():
-    with TestClient(server.app).websocket_connect("/ws"):
-        session = server.get_hub().session
-        session.finder.paused = threading.Event()  # as the plate-solve tracker has
-        session.handle("live video of the main camera")
-        assert session.video_active("main") and not session.finder.paused.is_set()
-        session.handle("stop the video")
-
-        def broken(s):
-            raise RuntimeError("camera unplugged")
-
-        cam = session.finder.camera._camera
-        real, cam.set_exposure = cam.set_exposure, broken
-        try:
-            with pytest.raises(RuntimeError):
-                session.handle("live video of the finder")
-        finally:
-            cam.set_exposure = real
-        assert not session.finder.paused.is_set() and session.video_now() is None
 
 
 def test_video_buttons_are_silent_and_a_reload_shows_the_video():

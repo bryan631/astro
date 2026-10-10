@@ -14,12 +14,12 @@ from pathlib import Path
 
 import numpy as np
 
+from astro.devices.svbony import SvbonyCamera  # the SDK loads on connect, in each child process
+
 CAMERAS = {"finder": ("SV905C", 0.8, 200), "main": ("SV705C", 0.25, 480)}
 
 
 def run(name: str, seconds: float, out: Path, every_s: float) -> None:
-    from astro.devices.svbony import SvbonyCamera  # noqa: PLC0415 - the SDK loads in this process only
-
     model, exposure, gain = CAMERAS[name]
     cam = SvbonyCamera(model)
     cam.connect()
@@ -30,7 +30,7 @@ def run(name: str, seconds: float, out: Path, every_s: float) -> None:
     while time.time() - start < seconds:
         try:
             frame = cam.capture()
-        except Exception as e:  # report and keep going: this is what the test is about
+        except (RuntimeError, OSError) as e:  # report and keep going: this is what the test checks
             errors += 1
             print(f"{name}: error {e}", flush=True)
             continue

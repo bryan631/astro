@@ -14,6 +14,7 @@ import ssl
 import sys
 import time
 import urllib.request
+from pathlib import Path
 
 import astropy.units as u
 import numpy as np
@@ -79,12 +80,14 @@ async def capture():
 
 def fit(samples, planet, loc, ref):
     """Similarity fit p = s R D (q - aim): q the planet's sky offset from `ref` (deg)."""
-    t = np.array([s[0] for s in samples]); p = np.array([s[1:] for s in samples])
+    t = np.array([s[0] for s in samples])
+    p = np.array([s[1:] for s in samples])
     aa = get_body(planet, Time(t, format="unix"), loc).transform_to(AltAz(obstime=Time(t, format="unix"), location=loc))
     q = np.c_[((aa.az.deg - ref[1] + 180) % 360 - 180) * np.cos(np.radians(ref[0])), aa.alt.deg - ref[0]]
     q = q * [1, -1]  # D: alt up is image y down; sky as seen (az to the right), not mirrored
     # p = [[a,-b],[b,a]] q + c  ->  linear in a, b, cx, cy
-    rows = np.zeros((2 * len(q), 4)); rows[0::2] = np.c_[q[:, 0], -q[:, 1], np.ones(len(q)), np.zeros(len(q))]
+    rows = np.zeros((2 * len(q), 4))
+    rows[0::2] = np.c_[q[:, 0], -q[:, 1], np.ones(len(q)), np.zeros(len(q))]
     rows[1::2] = np.c_[q[:, 1], q[:, 0], np.zeros(len(q)), np.ones(len(q))]
     (a, b, cx, cy), *_ = np.linalg.lstsq(rows, p.ravel(), rcond=None)
     m = np.array([[a, -b], [b, a]])
@@ -104,7 +107,8 @@ def main():
     aims = {}
     for camera, samples in got.items():
         if len(samples) < 5:
-            print(f"{camera}: too few frames with the planet ({len(samples)})"); return
+            print(f"{camera}: too few frames with the planet ({len(samples)})")
+            return
         aim, scale, rot, resid, spread = fit(samples, planet, loc, ref)
         aims[camera] = aim
         print(f"{camera}: aim {aim * 60} arcmin, scale {scale:.2f}\"/px (expect {ARCSEC_PX[camera]:.2f}), "
@@ -112,9 +116,12 @@ def main():
     off = aims["main"] - aims["finder"]
     print(f"OFFSET main - finder: d_az_sky {off[0]:+.3f} deg, d_alt {off[1]:+.3f} deg ({np.hypot(*off):.3f} deg)")
     if "--save" in sys.argv:
-        p = "data/calibration.json"; d = json.load(open(p))
-        d["main_offset"] = {"d_az_sky_deg": round(float(off[0]), 4), "d_alt_deg": round(float(off[1]), 4), "observations": 1}
-        json.dump(d, open(p, "w"), indent=1); print("saved to", p, "(restart the server to use it)")
+        path = Path("data/calibration.json")
+        d = json.loads(path.read_text())
+        d["main_offset"] = {"d_az_sky_deg": round(float(off[0]), 4), "d_alt_deg": round(float(off[1]), 4),
+                            "observations": 1}
+        path.write_text(json.dumps(d, indent=1))
+        print("saved to", path, "(restart the server to use it)")
 
 
 if __name__ == "__main__":

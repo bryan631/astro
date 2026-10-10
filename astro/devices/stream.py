@@ -20,14 +20,17 @@ from multiprocessing import shared_memory
 import numpy as np
 
 from astro.devices.base import Roi
+from astro.devices.svbony import SvbonyCamera  # no SDK load until a camera connects
 
 log = logging.getLogger(__name__)
 MAX_PIXELS = 4096 * 2304  # frame buffer: the largest sensor here (SV705C 3856 x 2180) fits
 CAPTURE_WAIT_S = 30.0  # longest exposure plus a camera reopen
 RETRY_S = 0.5  # after a failed capture (unplugged: the driver keeps trying to reconnect)
+IDLE_S = 10.0  # simulators: stop streaming when nobody has read a frame for this long
 # Shared frame header: sequence number, mid-exposure time (Unix), height, width, settings
-# generation, connected flag.
-SEQ, T_MID, HEIGHT, WIDTH, GEN, CONNECTED = range(6)
+# generation of that frame, connected flag, newest settings generation applied.
+SEQ, T_MID, HEIGHT, WIDTH, GEN, CONNECTED, APPLIED = range(7)
+HEADER = 7
 
 
 class _Slot:
@@ -57,8 +60,9 @@ class _Slot:
 
 
 def _capture_loop(camera, slot: _Slot, commands, stop, info) -> None:
-    """Capture until stopped, applying setting changes between frames."""
-    gen = 0
+    """Capture until stopped, applying setting changes between frames. Each frame carries the
+    generation of the newest settings applied before it."""
+    gen = int(slot.header[APPLIED])  # a restarted simulator stream continues the count
     while not stop.is_set():
         try:
             while True:  # settings first: a frame published after this used them
@@ -67,6 +71,7 @@ def _capture_loop(camera, slot: _Slot, commands, stop, info) -> None:
                     camera.set_roi(Roi(*value) if value else None)
                 else:
                     getattr(camera, f"set_{name}")(value)
+                slot.header[APPLIED] = gen
         except queue.Empty:
             pass
         try:
@@ -81,26 +86,26 @@ def _capture_loop(camera, slot: _Slot, commands, stop, info) -> None:
         slot.publish(frame, time.time() - camera.exposure_s / 2, gen)
 
 
-def _process_main(model, exposure_s, gain, shm_name, header, lock, commands, stop, info) -> None:
-    """The child process: open the camera and stream it. The SDK loads only in here."""
-    from astro.devices.svbony import SvbonyCamera  # noqa: PLC0415 - keep the SDK out of the server process
-
-    logging.basicConfig(level=logging.INFO, format=f"%(asctime)s {model} %(message)s")
+def _process_main(factory, args, exposure_s, gain, shm_name, header, lock, commands, stop,
+                  info) -> None:
+    """The child process: make the camera (`factory(*args)`) and stream it. For SVBony cameras
+    the vendor SDK loads only in here."""
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s camera %(message)s")
     shm = shared_memory.SharedMemory(name=shm_name)
+    slot = _Slot(header, np.ndarray((MAX_PIXELS,), np.uint8, shm.buf), lock)
     try:
-        slot = _Slot(header, np.ndarray((MAX_PIXELS,), np.uint8, shm.buf), lock)
-        camera = SvbonyCamera(model)
+        camera = factory(*args)
         try:
             camera.connect()
-        except Exception:  # unplugged at start: the driver retries on every capture
-            log.exception("%s not connected; will keep trying", model)
+        except Exception:  # unplugged at start: the SVBony driver retries on every capture
+            log.exception("camera %s not connected; will keep trying", args)
             camera._lost = True
         camera.set_exposure(exposure_s)
         camera.set_gain(gain)
         _capture_loop(camera, slot, commands, stop, info)
         camera.close()
     finally:
-        del slot  # release the numpy view before closing the shared memory
+        slot.buf = None  # release the view of the shared memory before closing it
         shm.close()
 
 
@@ -112,7 +117,7 @@ class CameraStream:
         self.exposure_s, self.gain, self.roi = exposure_s, gain, None
         self._bayer, self._sensor = bayer, sensor_size
         self._gen = 0  # settings generation: bumped by every set_*
-        self._seen = 0  # frames the readers here have been handed (for capture())
+        self._mono_minus_unix = time.monotonic() - time.time()  # fixed, so last_at is stable
 
     # --- Camera interface -------------------------------------------------------------------
     @property
@@ -149,6 +154,7 @@ class CameraStream:
 
     def capture(self) -> np.ndarray:
         """The next frame taken with the current settings (blocks until it arrives)."""
+        self._touch()
         want_gen, after = self._gen, self._slot.read()[1]
         deadline = time.monotonic() + CAPTURE_WAIT_S + self.exposure_s
         while time.monotonic() < deadline:
@@ -161,16 +167,20 @@ class CameraStream:
     # --- for the views ---------------------------------------------------------------------
     @property
     def last(self) -> np.ndarray | None:
+        self._touch()
         return self._slot.read()[0]
 
     @property
     def last_at(self) -> float:
-        """time.monotonic() of the latest frame's mid-exposure (0 before the first frame)."""
+        """time.monotonic() at the end of the latest frame's exposure (0 before the first), as
+        TappedCamera kept it."""
+        self._touch()
         _, seq, t_mid, _ = self._slot.read()
-        return time.monotonic() - (time.time() - t_mid) if seq else 0.0
+        return t_mid + self.exposure_s / 2 + self._mono_minus_unix if seq else 0.0
 
     def latest(self) -> tuple[np.ndarray | None, int, float]:
         """(frame, sequence number, mid-exposure Unix time) without waiting."""
+        self._touch()
         frame, seq, t_mid, _ = self._slot.read()
         return frame, seq, t_mid
 
@@ -182,22 +192,26 @@ class CameraStream:
     def _info(self) -> dict:
         return {}
 
+    def _touch(self) -> None:
+        """A reader is here (simulators stream only while someone reads)."""
+
     def _wait(self, seconds: float) -> None:
         time.sleep(seconds)
 
 
 class ThreadStream(CameraStream):
-    """Streams an in-process camera (the simulators) from a thread."""
+    """Streams an in-process camera (the simulators) from a thread. Simulators return frames
+    instantly, so the thread paces itself to the exposure, and it sleeps while nobody reads."""
 
     def __init__(self, camera):
         super().__init__(camera.exposure_s, camera.gain, camera.bayer, tuple(camera.sensor_size))
         self.camera = camera
         self._commands = queue.Queue()
-        self._slot = _Slot([0.0] * 6, np.zeros(MAX_PIXELS, np.uint8), threading.Lock())
+        self._slot = _Slot([0.0] * HEADER, np.zeros(MAX_PIXELS, np.uint8), threading.Lock())
         self._stop = threading.Event()
-        self._thread = threading.Thread(target=_capture_loop, daemon=True,
-                                        args=(camera, self._slot, self._commands, self._stop, None))
-        self._thread.start()
+        self._read_at = time.monotonic()
+        self._thread: threading.Thread | None = None
+        self._start_lock = threading.Lock()
 
     @property
     def bayer(self) -> str:
@@ -207,34 +221,76 @@ class ThreadStream(CameraStream):
     def sensor_size(self) -> tuple[int, int]:
         return tuple(self.camera.sensor_size)
 
+    def _touch(self) -> None:
+        self._read_at = time.monotonic()
+        with self._start_lock:
+            if not self._stop.is_set() and (self._thread is None or not self._thread.is_alive()):
+                self._thread = threading.Thread(target=self._run, daemon=True)
+                self._thread.start()
+
+    def _run(self) -> None:
+        _capture_loop(_Paced(self.camera, self._stop), self._slot, self._commands,
+                      _UntilIdle(self), None)
+
     def _wait(self, seconds: float) -> None:
         with self._slot.cond:
             self._slot.cond.wait(seconds)
 
     def close(self) -> None:
         self._stop.set()
-        self._thread.join(timeout=5)
+        if self._thread is not None:
+            self._thread.join(timeout=5)
         self.camera.close()
 
-    def __getattr__(self, name):  # simulator extras (e.g. the sim mount link)
+    def __getattr__(self, name):  # simulator extras
         return getattr(self.__dict__["camera"], name)
 
 
-class ProcessStream(CameraStream):
-    """Streams an SVBony camera from its own process."""
+class _Paced:
+    """A simulator that takes as long as its exposure, like a real camera."""
 
-    def __init__(self, model: str, exposure_s: float, gain: int):
+    def __init__(self, camera, stop: threading.Event):
+        self.camera, self.stop = camera, stop
+
+    def capture(self) -> np.ndarray:
+        start = time.monotonic()
+        frame = self.camera.capture()
+        self.stop.wait(max(0.0, self.camera.exposure_s - (time.monotonic() - start)))
+        return frame
+
+    def __getattr__(self, name):  # exposure_s, set_exposure, set_roi, bayer, ...
+        return getattr(self.camera, name)
+
+
+class _UntilIdle:
+    """The stop signal for a simulator stream: closed, or nobody has read for IDLE_S."""
+
+    def __init__(self, stream: ThreadStream):
+        self.stream = stream
+
+    def is_set(self) -> bool:
+        return self.stream._stop.is_set() or time.monotonic() - self.stream._read_at > IDLE_S
+
+    def wait(self, seconds: float) -> None:
+        self.stream._stop.wait(seconds)
+
+
+class ProcessStream(CameraStream):
+    """Streams a camera from its own process: `factory(*args)` runs in the child (SvbonyCamera
+    and its model name on the Mele; a fake camera in the tests)."""
+
+    def __init__(self, exposure_s: float, gain: int, factory=SvbonyCamera, args: tuple = ()):
         super().__init__(exposure_s, gain)
         ctx = mp.get_context("spawn")  # a fresh interpreter: no SDK or thread state inherited
         self._shm = shared_memory.SharedMemory(create=True, size=MAX_PIXELS)
-        header, lock = ctx.Array("d", 6, lock=False), ctx.Lock()
+        header, lock = ctx.Array("d", HEADER, lock=False), ctx.Lock()
         self._manager_info = ctx.Manager()  # bayer and sensor size, once the camera opens
         self._info_dict = self._manager_info.dict()
         self._slot = _Slot(header, np.ndarray((MAX_PIXELS,), np.uint8, self._shm.buf), lock)
         self._commands, self._stop = ctx.Queue(), ctx.Event()
-        self._proc = ctx.Process(target=_process_main, daemon=True, name=f"camera-{model}",
-                                 args=(model, exposure_s, gain, self._shm.name, header, lock,
-                                       self._commands, self._stop, self._info_dict))
+        self._proc = ctx.Process(target=_process_main, daemon=True, name=f"camera-{args}",
+                                 args=(factory, args, exposure_s, gain, self._shm.name, header,
+                                       lock, self._commands, self._stop, self._info_dict))
         self._proc.start()
         self._cached_info: dict = {}
 
@@ -255,7 +311,7 @@ class ProcessStream(CameraStream):
         self._proc.join(timeout=5)
         if self._proc.is_alive():
             self._proc.kill()
-        del self._slot
+        self._slot.buf = None
         self._shm.close()
         self._shm.unlink()
         self._manager_info.shutdown()

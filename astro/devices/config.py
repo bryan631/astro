@@ -9,7 +9,8 @@ from pathlib import Path
 from astro.devices.base import Camera
 from astro.devices.handset import Handset
 from astro.devices.mcu import Mcu
-from astro.devices.svbony import SvbonyCamera  # the vendor SDK itself loads on connect
+from astro.devices.stream import ProcessStream
+from astro.devices.svbony import SvbonyCamera  # the vendor SDK loads in the camera's process
 from astro.pointing.coords import Site
 from astro.pointing.encoders import COUNTS_PER_REV, EncoderAxis
 from astro.pointing.finder_sync import FinderSync
@@ -28,19 +29,12 @@ def load(path: Path) -> dict:
 
 
 def open_camera(cfg: dict) -> Camera:
+    """The camera streaming from its own process (astro/devices/stream.py). Unplugged is fine:
+    the process keeps trying to reconnect, and the views say it isn't connected."""
     if cfg["driver"] != "svbony":
         raise ValueError(f"unknown camera driver {cfg['driver']!r}")
-    cam = SvbonyCamera(cfg["model"])
-    try:
-        cam.connect()
-    except Exception:  # unplugged: start anyway, and keep trying to reconnect on each capture
-        log.exception("%s not connected; will keep trying", cfg["model"])
-        cam._lost = True
-    if "exposure_s" in cfg:
-        cam.set_exposure(cfg["exposure_s"])
-    if "gain" in cfg:
-        cam.set_gain(cfg["gain"])
-    return cam
+    return ProcessStream(cfg.get("exposure_s", 0.25), cfg.get("gain", 480), SvbonyCamera,
+                         (cfg["model"],))
 
 
 MOUNT_DRIVERS = ("solve", "mcu", "handset")  # handset: IntelliScope RS-232 fallback (P2-3)

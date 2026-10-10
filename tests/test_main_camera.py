@@ -44,17 +44,10 @@ def test_sim_main_camera_sees_saturn_centered():
     assert abs(x - 964) < 3 and abs(y - 545) < 3
 
 
-def test_capture_is_gated_on_focus_then_records(tmp_path):
-    s, cam = make_session(tmp_path, blur_px=5)
-    said = texts(s.handle("take a picture"))
-    assert said[0] == "Let's make sure it's sharp first." and "focus knob" in said[1]
-    cues = []
-    for i, blur in enumerate([5, 3, 1.5, 0.8, 2.0]):
-        cam.blur_px = blur
-        cues += texts(s.tick(float(i * 2)))
-    assert "sharper" in cues and cues[-1].startswith("passed it")
-    assert texts(s.handle("done")) == ["OK, focus is set."]
-    assert texts(s.handle("take a picture"))[0].startswith("Recording for 0.5 seconds")
+def test_capture_records_right_away(tmp_path):
+    """No focus step first: focusing is the user's own step, with the focus number."""
+    s, _ = make_session(tmp_path)
+    assert texts(s.handle("take a picture"))[0].startswith("Recording.")
     s.recorder.current.done.wait(5)
     assert texts(s.tick(100.0))[0].startswith("Done. I saved")
     meta, frames = read_ser(next(tmp_path.glob("captures/*Saturn.ser")))
@@ -65,7 +58,6 @@ def test_barlow_change_requires_refocus(tmp_path):
     s, _ = make_session(tmp_path)
     s.main_focus_ok = True
     assert "refocus" in texts(s.handle("I put in the barlow"))[0]
-    assert texts(s.handle("take a picture"))[0] == "Let's make sure it's sharp first."
     assert s.barlow
 
 
@@ -86,10 +78,16 @@ class DriftingPlanet:
         return 21.0
 
     def __init__(self):
-        self.n, self.roi = 0, None
+        self.n, self.roi, self.exposure_s, self.gain = 0, None, 0.01, 0
 
     def set_roi(self, roi):
         self.roi = roi
+
+    def set_exposure(self, seconds):
+        self.exposure_s = seconds
+
+    def set_gain(self, gain):
+        self.gain = gain
 
     def capture(self):
         self.n += 1
@@ -198,36 +196,12 @@ def test_capture_start_failure_is_spoken(tmp_path):
     assert texts(s.handle("take a picture"))[0].startswith("The main camera isn't responding")
 
 
-def test_focus_camera_failure_stops_focus_without_crashing(tmp_path):
-    s, _ = make_session(tmp_path)
-    s.handle("focus")
-    s.main_camera = DeadCamera()
-    assert "stopped responding" in texts(s.tick(0.0))[0] and s._focus_coach is None
-
-
-def test_barlow_restarts_active_focus_coach(tmp_path):
-    s, _ = make_session(tmp_path)
-    s.handle("focus")
-    old = s._focus_coach
-    s.handle("barlow in")
-    assert s._focus_coach is not old
-
-
 def test_stop_recording_after_it_finished(tmp_path):
     s, _ = make_session(tmp_path)
     s.main_focus_ok, s.record_seconds = True, 0.1
     s.handle("take a picture")
     s.recorder.current.done.wait(5)
     assert texts(s.handle("stop recording")) == ["We're not recording."]
-
-
-def test_refocus_clears_gate_and_blocks_capture_until_done(tmp_path):
-    s, _ = make_session(tmp_path)
-    s.main_focus_ok = True
-    s.handle("focus")
-    assert not s.main_focus_ok
-    assert texts(s.handle("take a picture")) == ["Let's finish focusing first. Say done when it's sharpest."]
-    assert s.recorder.current is None
 
 
 def test_recording_becomes_a_gallery_picture(tmp_path):
@@ -368,12 +342,3 @@ def test_old_recordings_pruned_and_full_disk_refused(tmp_path, monkeypatch):
         Recorder(DriftingPlanet(), (800, 600), caps).start("Mars", 1)
 
 
-def test_done_right_after_focus_is_not_accepted(tmp_path):
-    """Review M12: the focus gate needs real readings."""
-    s, _ = make_session(tmp_path)
-    s.handle("focus")
-    assert texts(s.handle("done"))[0].startswith("Keep turning slowly")
-    assert not s.main_focus_ok
-    for i in range(3):
-        s.tick(float(i * 2))
-    assert texts(s.handle("done")) == ["OK, focus is set."] and s.main_focus_ok

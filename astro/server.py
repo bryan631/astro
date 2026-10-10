@@ -34,6 +34,7 @@ from astro.devices import config as devices
 from astro.devices.sim.finder import SimFinderCamera
 from astro.devices.sim.main_cam import SimMainCamera
 from astro.devices.sim.scope import SimEncoders, SimScope, SimUser
+from astro.devices.stream import ThreadStream
 from astro.guidance.centering import centering_phrases
 from astro.guidance.engine import cue_phrases
 from astro.optics import MAIN_SENSOR_PX
@@ -93,11 +94,13 @@ def build_session() -> tuple[Session, SimScope | None]:
     site, clock = load_site(), utcnow
     scope = SimScope(45, 180)
     camera = SimFinderCamera(lambda: (scope.alt, scope.az), site, clock, solver().star_table)
-    finder = FinderSync(camera, solver(), MountModel(), SimEncoders(scope), site, clock)
-    override = os.environ.get("ASTRO_DEV_OVERRIDE") == "1"
     main = SimMainCamera(lambda: (scope.alt, scope.az), site, clock)
+    # Streamed like the real cameras (a thread instead of a process): always-on views.
+    finder = FinderSync(ThreadStream(camera), solver(), MountModel(), SimEncoders(scope), site, clock)
+    override = os.environ.get("ASTRO_DEV_OVERRIDE") == "1"
     session = Session(site, clock=clock, developer_override=override, finder=finder,
-                      main_camera=main, main_sensor=main.sensor_size, data_dir=ROOT / "data",
+                      main_camera=ThreadStream(main), main_sensor=main.sensor_size,
+                      data_dir=ROOT / "data",
                       on_site_change=lambda s: on_site_change(s, camera, main),
                       horizon=horizon_store.load(ROOT),
                       on_horizon_change=lambda m: horizon_store.save(ROOT, m),

@@ -695,7 +695,19 @@ class Session:
     # --- guidance loop -------------------------------------------------------------------
     def tick(self, t: float) -> list[dict]:
         with self._lock:
-            return self._no_repeats(self._tick(t), t)
+            return self._no_repeats([*self._capture_progress(t), *self._tick(t)], t)
+
+    def _capture_progress(self, t: float) -> list[dict]:
+        """While a capture runs, its frame count and time for the page, every PROGRESS_S."""
+        if t - self._progress_at < PROGRESS_S:
+            return []
+        for job, kind in ((self.recorder and self.recorder.current, "video"),
+                          (self.stacker and self.stacker.current, "stack")):
+            if job is not None and not job.done.is_set():
+                self._progress_at = t
+                return [{"type": "capture", "state": "recording", "kind": kind, "name": job.name,
+                         "frames": job.frames, "seconds": round(time.monotonic() - self._capture_at)}]
+        return []
 
     def _no_repeats(self, out: list[dict], t: float) -> list[dict]:
         """Coaching said the same words every second in the field: say a phrase again only after
@@ -720,16 +732,6 @@ class Session:
             name = self.stop_video()
             return [{"type": "view", "what": name}, tell(f"Stopping the video: {reason}.")]
         rec = self.recorder.current if self.recorder else None
-        live_now = self.stacker.current if self.stacker else None
-        progress = []
-        if t - self._progress_at >= PROGRESS_S:
-            for job, kind in ((rec, "video"), (live_now, "stack")):
-                if job is not None and not job.done.is_set():
-                    self._progress_at = t
-                    progress = [{"type": "capture", "state": "recording", "kind": kind, "name": job.name,
-                                 "frames": job.frames, "seconds": round(time.monotonic() - self._capture_at)}]
-        if progress:
-            return progress
         if rec is not None and rec.done.is_set() and not self._announced_done:
             self._announced_done = True
             if rec.frames < MIN_FRAMES:

@@ -1,6 +1,8 @@
 """Keep each camera's last frame, so the tablet can show what the telescope sees."""
 import time
 
+from astro.devices.stream import CameraStream
+
 
 class TappedCamera:
     """Wraps a camera. Whoever captures (tracker, focus coach, stacker, recorder), the last frame
@@ -19,4 +21,7 @@ class TappedCamera:
 
 
 def tap(camera):
-    return camera if camera is None or isinstance(camera, TappedCamera) else TappedCamera(camera)
+    """Streams keep their own latest frame (astro/devices/stream.py)."""
+    if camera is None or isinstance(camera, (TappedCamera, CameraStream)):
+        return camera
+    return TappedCamera(camera)
