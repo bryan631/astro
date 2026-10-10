@@ -33,6 +33,9 @@ way around. Tap **Save**.
    is how far there is to go. A dot means you're on it.
 3. The **dashed box** on the finder picture is what the telescope sees. Anything inside it is
    in the telescope view.
+4. **Names** (bottom corner of the finder picture) writes star names, planets and Go to targets
+   beside them. They come from the finder working out where it points, which it does by itself
+   every few seconds when it can see stars.
 
 **Focus**
 
@@ -42,8 +45,10 @@ best number so far; the little graph shows it going up and down as you turn.
 
 **Take a picture**
 
-1. With the target in the telescope view, tap **Capture**. Planets and the Moon record a short
-   video; everything else builds up on the telescope picture (the small picture in its corner).
+1. With the target in the telescope view, tap **Capture**. It works out what's there by itself;
+   if it sees more than one thing (a planet in a star cluster), it asks which. Planets and the
+   Moon record a short video, with Jupiter's moons in the picture; everything else builds up in
+   a small picture in the corner of the telescope picture, away from the target.
 2. The telescope picture says how many frames so far and **edge in … s**: how long until the target
    drifts out of view (the telescope doesn't follow the sky).
 3. When the edge time gets short, either tap **Stop capture**, or tap **Recenter**: the capture
