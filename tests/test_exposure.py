@@ -1,11 +1,12 @@
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import numpy as np
 
-from astro.capture.exposure import next_settings
+from astro.capture.exposure import FINDER_DAY_RANGE, next_settings
 from astro.devices.stream import ThreadStream
 from astro.pointing.coords import Site
-from astro.session import MAIN_DAY, Session
+from astro.session import MAIN_DAY, MAIN_TWILIGHT_RANGE, Session
 from tests.fake_camera import FakeCamera
 
 
@@ -51,3 +52,44 @@ def test_session_switches_the_streamed_main_camera_between_day_and_night(tmp_pat
     s.tick(4.0)
     assert (main.exposure_s, main.gain) == (0.01, 0)
     main.close()
+
+
+class GlaringStream:
+    """A streamed camera whose every frame is clipped white (dawn, or a sunny day)."""
+
+    def __init__(self):
+        self.exposure_s, self.gain, self.seq = 0.01, 100, 0
+
+    def latest(self):
+        self.seq += 1
+        return np.full((48, 64), 255, np.uint8), self.seq, 0.0
+
+    def set_exposure(self, s):
+        self.exposure_s = s
+
+    def set_gain(self, g):
+        self.gain = g
+
+
+def test_dawn_auto_exposes_the_main_view_but_never_during_a_capture(tmp_path):
+    """2026-10-10: both views went white at 6:50 AM on their night settings."""
+    main = GlaringStream()
+    s = Session(Site(26.6, -80.1), lambda: (45.0, 180.0), data_dir=tmp_path, main_camera=main,
+                clock=lambda: datetime(2026, 10, 10, 3, 0, tzinfo=UTC))  # night by the Sun
+    s._camera_busy = lambda: True
+    s.tick(0.0)
+    assert (main.exposure_s, main.gain) == (0.01, 100)  # a capture owns the settings
+    s._camera_busy = lambda: False
+    for t in range(1, 6):
+        s.tick(float(t))
+    assert MAIN_TWILIGHT_RANGE[0] <= main.exposure_s < 0.01
+
+
+def test_finder_view_auto_exposes_by_day(tmp_path):
+    cam = GlaringStream()
+    finder = SimpleNamespace(camera=cam, position=lambda: (45.0, 180.0), synced=False)
+    s = Session(Site(26.6, -80.1), finder=finder, data_dir=tmp_path,
+                clock=lambda: datetime(2026, 10, 10, 17, 0, tzinfo=UTC))  # 1 PM
+    for t in range(6):
+        s.tick(float(t))
+    assert FINDER_DAY_RANGE[0] <= cam.exposure_s < 0.01
