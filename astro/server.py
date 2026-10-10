@@ -515,7 +515,8 @@ async def api_camera(name: str, after: int = 0) -> Response:
     key = (_seq(cam), session.zoom[name])
     cached = _rendered.get(name)
     if cached is None or cached[0] != key:
-        data, metrics = await asyncio.to_thread(render, raw, bayer, session.zoom[name], ROTATE[name])
+        data, metrics = await asyncio.to_thread(render, raw, bayer, session.zoom[name], ROTATE[name],
+                                             not session.daytime())
         cached = _rendered[name] = (key, data, metrics)
     _, data, metrics = cached
     headers = {"X-Seq": str(key[0]), "X-Frame-Age": f"{age:.1f}"}

@@ -5,14 +5,14 @@ import numpy as np
 from PIL import Image
 from scipy import ndimage
 
-from astro.capture.focus import measure_focus
+from astro.capture.focus import measure_focus, sky_map
 from astro.process.planet import superpixel_rgb
 
 MAX_WIDTH = 960
 # Display rotation per camera, as mounted. The finder optics flip the view; the main camera was
 # turned 180 degrees in its holder (2026-10-10) to undo the same flip.
 ROTATE = {"finder": 180, "main": 0}
-DAY_MEDIAN = 50  # 8-bit: a typical pixel this bright is no night sky
+DAY_MEDIAN = 50  # 8-bit: without the Sun to go by, a typical pixel this bright is no night sky
 HOT_SIGMA = 4  # this far above all its neighbors (in noise units) is a hot pixel, not a star
 MIN_RANGE = 40  # 8-bit counts: a dark frame stays dark instead of stretching its noise to full scale
 
@@ -27,12 +27,14 @@ def remove_hot_pixels(rgb: np.ndarray) -> np.ndarray:
     return np.where(rgb - neighbors > HOT_SIGMA * noise, neighbors, rgb)
 
 
-def render(raw: np.ndarray, bayer: str, zoom: int = 1, rotate: int = 180) -> tuple[bytes, dict]:
+def render(raw: np.ndarray, bayer: str, zoom: int = 1, rotate: int = 180,
+           night: bool | None = None) -> tuple[bytes, dict]:
     """A raw frame as a JPEG for a camera view, and its numbers: focus (higher is sharper, see
     astro/capture/focus.py measure_focus), stars measured, focus_mode (stars, planet, none).
 
     Turned by `rotate` degrees (ROTATE: each camera as mounted) so the page shows it upright;
-    `zoom` crops the center. The page draws its own labels over the picture. Big frames are
+    `zoom` crops the center. At `night` (None: guess from the brightness) the sky's glow is
+    taken off and the stars stretched; by day the view is as it is. Big frames are
     binned before the display work (the main camera's full frame cost ~0.4 s per frame)."""
     h, w = raw.shape[0] // 2 * 2, raw.shape[1] // 2 * 2
     ch, cw = h // zoom // 2 * 2, w // zoom // 2 * 2
@@ -42,9 +44,14 @@ def render(raw: np.ndarray, bayer: str, zoom: int = 1, rotate: int = 180) -> tup
     lo = float(np.percentile(lum, 50))  # the sky background is the typical pixel
     focus = measure_focus(lum)  # also through bright cloud glow (it measures from the sky level)
     metrics = {"focus": focus.score, "stars": focus.stars, "focus_mode": focus.mode}
+    if night is None:
+        night = lo <= DAY_MEDIAN
+    if night:  # glow and gradients off, each color by its own share of the sky
+        rgb = rgb - sky_map(lum)[..., None] * (np.median(rgb[::4, ::4], axis=(0, 1)) / max(lo, 1e-3))
+        lo = float(np.percentile(rgb[::4, ::4], 50))
     while rgb.shape[1] > 2 * MAX_WIDTH:  # display needs no more than this
         rgb = _bin2(rgb)
-    if lo > DAY_MEDIAN:  # day mode (a room or daylight): show it as it is, no sky stretch
+    if not night:  # a room or daylight: show it as it is
         img = Image.fromarray(rgb.clip(0, 255).astype(np.uint8))
     else:
         hi = max(float(np.percentile(rgb, 99.8)), lo + MIN_RANGE)
@@ -57,9 +64,10 @@ def render(raw: np.ndarray, bayer: str, zoom: int = 1, rotate: int = 180) -> tup
     return out.getvalue(), metrics
 
 
-def jpeg(raw: np.ndarray, bayer: str, zoom: int = 1, rotate: int = 180) -> bytes:
+def jpeg(raw: np.ndarray, bayer: str, zoom: int = 1, rotate: int = 180,
+         night: bool | None = None) -> bytes:
     """The JPEG alone (see render)."""
-    return render(raw, bayer, zoom, rotate)[0]
+    return render(raw, bayer, zoom, rotate, night)[0]
 
 
 def _bin2(rgb: np.ndarray) -> np.ndarray:

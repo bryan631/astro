@@ -39,18 +39,24 @@ def _sky(img: np.ndarray) -> tuple[float, float]:
     return bg, max(noise, 0.5)
 
 
-def flatten_sky(img: np.ndarray) -> np.ndarray:
-    """The frame minus its smooth sky: a median per block, interpolated. Cloud glow brightens
-    one side of the finder ~2.5x; with one sky level for the frame, that hid every star (also
-    used by Align's star pick)."""
+def sky_map(img: np.ndarray) -> np.ndarray:
+    """The frame's smooth sky: a median per block (every other pixel is plenty), interpolated.
+    Cloud glow brightens one side of the finder ~2.5x; one sky level for the frame hid every
+    star (2026-10-10). Used by the focus number, Align's star pick and the night view."""
     b = SKY_BLOCK_PX
     h, w = img.shape[0] // b * b, img.shape[1] // b * b
     if h == 0 or w == 0:
-        return img - np.median(img)
-    blocks = np.median(img[:h, :w].reshape(h // b, b, w // b, b).swapaxes(1, 2).reshape(h // b, w // b, -1), axis=2)
-    sky = ndimage.zoom(blocks, (img.shape[0] / blocks.shape[0], img.shape[1] / blocks.shape[1]),
-                       order=1, mode="nearest", grid_mode=True)
-    return img - sky
+        return np.full(img.shape, np.median(img), np.float32)
+    s = b // 2
+    sample = img[:h:2, :w:2]
+    blocks = np.median(sample.reshape(h // b, s, w // b, s).swapaxes(1, 2).reshape(h // b, w // b, -1), axis=2)
+    return ndimage.zoom(blocks, (img.shape[0] / blocks.shape[0], img.shape[1] / blocks.shape[1]),
+                        order=1, mode="nearest", grid_mode=True)
+
+
+def flatten_sky(img: np.ndarray) -> np.ndarray:
+    """The frame minus its smooth sky (sky_map)."""
+    return img - sky_map(img)
 
 
 def measure_focus(lum: np.ndarray) -> FocusMeasure:
