@@ -506,7 +506,7 @@ async def api_camera(name: str, after: int = 0, labels: bool = False) -> Respons
     deadline = time.monotonic() + FRAME_WAIT_S
     while _seq(cam) <= after and time.monotonic() < deadline:
         await asyncio.sleep(0.05)
-    frame = session.camera_frame(name)
+    frame = session.view_frame(name)
     if frame is None:  # say why, so a blank view isn't a mystery
         why = "not connected" if not getattr(cam, "connected", True) else "no picture yet"
         raise HTTPException(404, why)

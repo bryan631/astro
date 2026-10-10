@@ -75,6 +75,8 @@ ENCODER_STALE_S = 1.0  # encoder positions older than this mean the board or cab
 ALIGN_S = 10.0  # Align watches the bright star drift this long in both cameras
 SATURATED_RAW = 250  # 8-bit raw: clipped
 PLANET_DISK_PX = 2000  # one clipped blob this big (raw px) is a disk: Jupiter ~30000, Sirius ~700
+UNNAMED_PLANET = "the planet"  # a disk in the picture when the pointing can't name it
+FIELD_RADIUS_DEG = 0.3  # the telescope's 32' x 18' view, center to corner
 PLANET_NEAR_DEG = 3.0  # ... and it's the planet within this of where the scope points
 ALIGN_SCALE = (25.0, 130.0)  # main pixels per finder pixel: ~58 for this pair (14.6" vs 0.25")
 AUTO_SOLVE_EVERY_S = 5.0  # background plate solves at night (back to back while not synced)
@@ -306,6 +308,8 @@ class Session:
             if do == "goto":
                 name = match_name(target or "", self.names())
                 return self.goto(name) if name else [say(f"I don't know {target}.")]
+            if do == "capture" and target and not self._camera_busy():  # picked from "which one?"
+                return self.capture(target)
             handler = {"capture": self._toggle_capture, "stop": self._stop, "sync": self.sync,
                        "focus": self.focus_hint, "recenter": self._recenter,
                        "align": self.align}.get(do)
@@ -442,20 +446,26 @@ class Session:
         return [say("Turn the focus knob to make the focus number on the camera view as high "
                     "as you can.")]
 
-    def capture(self) -> list[dict]:
+    def capture(self, choice: str | None = None) -> list[dict]:
+        """Record or stack what's in the telescope view (_what_to_capture), or `choice` when
+        the page asked which one. Planets and the Moon record a video; anything else stacks."""
         if self.recorder is None:
             return [say("There's no telescope camera connected.")]
         if self._collimation is not None:
             return [say(COLLIMATING)]
         if self._camera_busy():
             return [say("I'm already recording." if self.recorder.busy else "I'm already stacking.")]
-        disk = self.target not in EXTENDED_TARGETS and self._planet_in_view()
-        # a disk in view wins over an older Go to target (a deep-sky stack would blow it out);
-        # the session's target changes only once the capture has started
-        target = (None if disk == "planet" else disk) if disk else self.target
-        name = target or ("the planet" if disk else "the field")  # unnamed: as seen
+        if choice is None:
+            found = self._what_to_capture()
+            if len(found) > 1:
+                return [say("I see more than one thing in the telescope. Which one?"),
+                        {"type": "choose", "options": found}]
+            # nothing recognized: the Go to target (pointing unknown) or the field
+            choice = found[0] if found else (self.target or "the field")
+        target = choice if choice in self.names() else None  # the session's, once it starts
+        name = choice
         try:
-            if target in EXTENDED_TARGETS or disk:  # planets, Moon: video; anything else stacks
+            if target in EXTENDED_TARGETS or name == UNNAMED_PLANET:  # planets, Moon: video
                 self.recorder.start(name, self.record_seconds)
                 self.target = target
                 self._picture_started()
@@ -469,6 +479,27 @@ class Session:
         self._stack_done_announced, self._preview_seen = False, 0
         return [say(f"Stacking short pictures of {name}. Watch it build up on the screen. "
                     "Try not to touch the telescope.")]
+
+    def _what_to_capture(self) -> list[str]:
+        """What's in the telescope view, by name: a planet's disk seen in the picture, then the
+        planets, Moon and Go to targets inside its field when the pointing is known."""
+        found = []
+        disk = self._planet_in_view()
+        if disk:
+            found.append(UNNAMED_PLANET if disk == "planet" else disk)
+        if getattr(self.finder, "synced", False):
+            alt, az = self.centerer.offset.main_center(*self.position())
+            when = self.clock()
+            for body in (*PLANETS, "moon"):
+                if separation_deg(alt, az, *body_altaz(body, self.site, when)) < FIELD_RADIUS_DEG:
+                    found.append(body.capitalize())
+            targets = list({t.id: t for t in self.catalog.values()}.values())
+            t_alt, t_az = altaz_now([t.ra for t in targets], [t.dec for t in targets], self.site, when)
+            found += [t.name for t, a, z in zip(targets, t_alt, t_az, strict=True)
+                      if separation_deg(alt, az, a, z) < FIELD_RADIUS_DEG]
+        if UNNAMED_PLANET in found and len(found) > 1 and any(f in EXTENDED_TARGETS for f in found):
+            found.remove(UNNAMED_PLANET)  # the disk is the planet named by the pointing
+        return list(dict.fromkeys(found))
 
     def _planet_in_view(self) -> str | None:
         """If the main view shows a disk (one clipped blob far bigger than any star's): the
@@ -579,6 +610,23 @@ class Session:
         if cam is None or getattr(cam, "last", None) is None:
             return None
         return cam.last, cam.bayer, time.monotonic() - cam.last_at
+
+    def view_frame(self, name: str):
+        """camera_frame for the page's view: while a planet records only its ROI, that ROI is
+        pasted into the full live view from just before, so the whole field stays on screen."""
+        frame = self.camera_frame(name)
+        rec = self.recorder if name == "main" else None
+        if frame is None or rec is None or rec.background is None or rec.roi is None:
+            return frame
+        raw, bayer, age = frame
+        roi = rec.roi
+        bh, bw = rec.background.shape
+        if raw.shape != (roi.height, roi.width) or raw.shape == (bh, bw) or roi.x + roi.width > bw \
+                or roi.y + roi.height > bh:
+            return frame  # paused (whole field), a frame from before the ROI changed, or no fit
+        full = rec.background.copy()
+        full[roi.y:roi.y + roi.height, roi.x:roi.x + roi.width] = raw
+        return full, bayer, age
 
     def finder_labels(self) -> list[list]:
         """Names on the finder view, [[name, kind, x, y], ...] with x, y as fractions from the

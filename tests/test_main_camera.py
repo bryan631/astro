@@ -51,7 +51,7 @@ def test_capture_records_right_away(tmp_path):
     s.recorder.current.done.wait(5)
     assert texts(s.tick(100.0))[0].startswith("Done. I saved")
     meta, frames = read_ser(next(tmp_path.glob("captures/*Saturn.ser")))
-    assert meta["frames"] > 3 and frames.shape[1:] == (512, 512) and frames.max() > 100
+    assert meta["frames"] > 3 and min(frames.shape[1:]) >= 512 and frames.max() > 100  # moons may widen it
 
 
 def test_capture_on_an_unpicked_planet_records_it(tmp_path):
@@ -64,6 +64,24 @@ def test_capture_on_an_unpicked_planet_records_it(tmp_path):
     s.camera_frame = lambda name: (disk, "GRBG", 0.1)
     assert texts(s.capture())[0].startswith("Recording.") and s.target == "Saturn"
     s.recorder.current.done.wait(5)
+
+
+def test_capture_asks_which_one_when_it_sees_more_than_one(tmp_path):
+    s, _ = make_session(tmp_path)
+    s._what_to_capture = lambda: ["Saturn", "Beehive Cluster"]
+    msgs = s.capture()
+    assert {"type": "choose", "options": ["Saturn", "Beehive Cluster"]} in msgs and not s._camera_busy()
+    assert texts(s.action("capture", "Saturn"))[0].startswith("Recording.") and s.target == "Saturn"
+    s.recorder.current.done.wait(5)
+
+
+def test_view_shows_the_whole_field_while_a_planet_records_its_roi(tmp_path):
+    s, _ = make_session(tmp_path)
+    s.recorder.background = np.zeros((1080, 1920), np.uint8)
+    s.recorder.roi = Roi(100, 50, 512, 512)
+    s.camera_frame = lambda name: (np.full((512, 512), 200, np.uint8), "GRBG", 0.1)
+    full, _, _ = s.view_frame("main")
+    assert full.shape == (1080, 1920) and full[50:562, 100:612].min() == 200 and full[0, 0] == 0
 
 
 def test_barlow_change_requires_refocus(tmp_path):
