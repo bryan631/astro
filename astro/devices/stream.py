@@ -321,5 +321,8 @@ class ProcessStream(CameraStream):
             self._proc.kill()
         self._slot.buf = None
         self._shm.close()
-        self._shm.unlink()
+        try:
+            self._shm.unlink()
+        except FileNotFoundError:  # the resource tracker removed it when the child exited
+            pass
         self._manager_info.shutdown()
