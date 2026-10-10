@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Astro</title>
 <link rel="manifest" href="manifest.json">
 <style>
@@ -88,6 +88,7 @@
 </style>
 </head>
 <body>
+  <div id="safe" hidden style="padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)"></div>
   <div id="views">
     <div class="view" id="v-finder">
       <img class="cam" alt="finder camera">
@@ -139,7 +140,9 @@ function connect() {
       const rows = [...document.body.children].filter(e => e.offsetHeight).map(e => `${e.id} ${e.offsetHeight}`);
       wsSend(JSON.stringify({type: "client_log", text: `screen ${innerWidth}x${innerHeight} css px, dpr ` +
         `${devicePixelRatio}, page ${document.documentElement.scrollWidth}x${document.documentElement.scrollHeight}, ` +
-        `rows ${rows.join(", ")}, font ${getComputedStyle(document.body).fontSize}`}));
+        `rows ${rows.join(", ")}, font ${getComputedStyle(document.body).fontSize}, visual ` +
+        `${Math.round(visualViewport.width)}x${Math.round(visualViewport.height)}, avail ${screen.availWidth}x${screen.availHeight}, ` +
+        `safe ${getComputedStyle($("safe")).padding}, ${matchMedia("(display-mode: fullscreen)").matches ? "fullscreen" : "not fullscreen"}`}));
     }, 3000);
   };
   ws.onmessage = e => { if (typeof e.data === "string") handle(JSON.parse(e.data)); };
