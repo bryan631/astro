@@ -3,7 +3,7 @@
 Keeps a few full finder frames (they must plate-solve) and, for every main frame, a crop around
 the brightest object with its offset, all with mid-exposure times:
     .venv/bin/python scripts/dev/pack_align_fixture.py data/fixtures/align-2026-10-10 \
-        tests/data/align/saturn-2026-10-10.npz
+        tests/data/align/bright-star-2026-10-10.npz
 """
 
 import json

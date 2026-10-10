@@ -239,7 +239,7 @@ def test_buttons_are_actions():
         assert "I don't know pizza." in receive_until(ws, "say")
         ws.send_json({"type": "action", "do": "focus"})
         assert "focus number" in receive_until(ws, "say")
-        ws.send_json({"type": "action", "do": "align"})
+        ws.send_json({"type": "action", "do": "frobnicate"})
         assert "isn't ready yet" in receive_until(ws, "notice")
 
 

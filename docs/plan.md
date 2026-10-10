@@ -188,10 +188,12 @@ a few buttons do the few jobs well, and both cameras are live at all times.
    routing are removed; astro/voice, wake.py and intents.py stay for later.
 4. **Pointing is visual only:** target marker and the main camera's box on the finder view, an
    edge arrow when the target is off screen, distance. No spoken cues.
-5. **Align: assume nearly aligned, adjust in one step.** With a bright object in the main view and
-   a finder fix, both cameras' frames at the same moments give the offset; a few seconds of drift
-   give the rotation (as `scripts/dev/drift_offset.py` did by hand). Align = put a bright star in
-   the main view, tap Align, wait ~10 s; the box on the finder view updates.
+5. **Align: assume nearly aligned, adjust in one step.** Put a bright (naked-eye) star in the
+   main view and tap Align: for 10 s both cameras follow it as it drifts (in the finder, the
+   brightest star near where the main camera pointed last, by 3x or it asks for a brighter one).
+   main px = A (finder px - c), A a scale-and-rotation, by least squares; the box on the finder
+   view comes from inverting it, and one finder plate solve turns c into the alt-az offset
+   "go to" aims with (`astro/pointing/align.py`, tested on the 2026-10-10 recording).
 6. **Focus number: median half-flux radius** over detected stars, saturated stars skipped, so the
    many faint stars outweigh a few bright ones; shown as a number to maximize (100/HFR) with the
    star count and a short trend. Planets: edge sharpness on the disk. No coach, no voice.

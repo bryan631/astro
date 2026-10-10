@@ -62,9 +62,10 @@ def test_planet_mode_rises_as_the_disk_sharpens():
     assert scores[0].score < scores[1].score < scores[2].score
 
 
-def test_real_saturn_gets_an_edge_number():
-    """Saturn in the main camera, 2026-10-10 (tests/data/align): planet mode, not 'nothing'."""
-    d = np.load("tests/data/align/saturn-2026-10-10.npz")
+def test_real_saturated_star_alone_gets_an_edge_number():
+    """A bright star saturated in the main camera with few others around (2026-10-10,
+    tests/data/align): judged by its edges, not 'nothing to judge'."""
+    d = np.load("tests/data/align/bright-star-2026-10-10.npz")
     lum = superpixel_rgb(d["main"][10], str(d["main_bayer"])).astype(np.float32).mean(axis=2)
     m = measure_focus(lum)
     assert m.mode == "planet" and m.score > 0
