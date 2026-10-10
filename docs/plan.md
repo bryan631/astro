@@ -181,9 +181,10 @@ a few buttons do the few jobs well, and both cameras are live at all times.
    finder stays at its solve settings; the main camera has a view mode and a planet mode (20 ms),
    and while a planet records the main view shows those frames, stretched for display. Sim mode
    uses the same interface with a thread instead of a process.
-2. **Screen: landscape, locked** (manifest). Finder and main views side by side on top, always
-   live; one row of big buttons below: Go to (target list), Align, Focus, Capture (start/stop),
-   Recenter, STOP. A status line and short message log replace speech: every message is text.
+2. **Screen follows the tablet's rotation.** Portrait: finder above main; landscape: one camera
+   full screen, swipe or tap its name for the other. Both always live; one row of buttons below:
+   Go to (target list), Align, Focus, Capture (start/stop), Recenter, Pictures, More, STOP. A
+   message line (with only what's wrong beside it) and a log replace speech: every message is text.
 3. **Voice off.** The page's talk button, hands-free and speech playback, and the session's voice
    routing are removed; astro/voice, wake.py and intents.py stay for later.
 4. **Pointing is visual only:** target marker and the main camera's box on the finder view, an
@@ -205,6 +206,12 @@ a few buttons do the few jobs well, and both cameras are live at all times.
 
 Order: cameras (daytime test on the Mele) → screen and buttons → focus number → capture with
 recenter → Align. Each step tested indoors with the simulators before the next night.
+
+**To do**
+- Star names on the finder view: small labels beside the brighter stars, from the last plate
+  solve, with an on/off button.
+- Buttons for the setup wizard, horizon walk and collimation (still worded for voice).
+- Clear night: a bright-star Align, and focus sweep and wiggle recordings for test data.
 
 ## Known risks / open questions
 - SV705C Linux SDK stability (fallback: ZWO ASI585MC).
