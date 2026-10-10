@@ -1,4 +1,5 @@
-"""Host driver for the Nano Every: encoder counts, environment, dew heaters, heartbeat.
+"""Host driver for the encoder board (classic Nano or Nano Every): encoder counts, environment,
+dew heaters, heartbeat.
 
 Implements `MountEncoders`. A reader thread parses lines; every ENV reading drives the dew
 heaters; a PING every couple of seconds keeps the firmware's failsafe from cutting them.

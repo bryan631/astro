@@ -1,6 +1,5 @@
 """Build the real devices named in config/devices.toml."""
 
-import logging
 import tomllib
 from collections.abc import Callable
 from datetime import datetime
@@ -17,8 +16,6 @@ from astro.pointing.finder_sync import FinderSync
 from astro.pointing.mount_model import MountModel
 from astro.pointing.platesolve import FinderSolver
 from astro.pointing.solve_tracker import SolveTracker
-
-log = logging.getLogger(__name__)
 
 
 def load(path: Path) -> dict:
@@ -72,12 +69,9 @@ def build_pointing(cfg: dict, solver: FinderSolver, site: Site, clock: Callable[
             finder_cam.close()
 
         return tracker, close_tracker
-    source = None  # encoder counts: the Nano Every (mcu) or the IntelliScope handset
-    try:
-        source = _open_encoders(mount)
-    except Exception:  # close whatever opened: the serial port and its workers, the camera
-        if source is not None:
-            source.close()
+    try:  # encoder counts: the Nano (mcu) or the IntelliScope handset
+        source = _open_encoders(mount)  # closes its own port if it fails part-way
+    except Exception:
         finder_cam.close()
         raise
     counts = mount.get("counts_per_rev", COUNTS_PER_REV)

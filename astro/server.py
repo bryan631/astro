@@ -91,20 +91,21 @@ def build_session() -> tuple[Session, SimScope | None]:
     override = os.environ.get("ASTRO_DEV_OVERRIDE") == "1"
     session = Session(site, clock=clock, developer_override=override, finder=finder,
                       main_camera=ThreadStream(main), main_sensor=main.sensor_size,
-                      data_dir=ROOT / "data",
-                      on_site_change=lambda s: on_site_change(s, camera, main),
-                      horizon=horizon_store.load(ROOT),
-                      on_horizon_change=lambda m: horizon_store.save(ROOT, m),
-                      weather=None if OFFLINE else cloud_cover_pct,
-                      calibration=calibration_store.load(ROOT),
-                      on_calibration_change=lambda d: calibration_store.save(ROOT, d),
-                      **_spot_args())
+                      on_site_change=lambda s: on_site_change(s, camera, main), **_stored_args())
     return session, scope
 
 
-def _spot_args() -> dict:
+def _stored_args() -> dict:
+    """What a session keeps on disk (data/, config/): treeline, calibration, spots, and where
+    it saves them, plus the forecast unless offline."""
     spots, current = spot_store.load(ROOT)
-    return {"spots": spots, "spot": current,
+    return {"data_dir": ROOT / "data",
+            "horizon": horizon_store.load(ROOT),
+            "on_horizon_change": lambda m: horizon_store.save(ROOT, m),
+            "weather": None if OFFLINE else cloud_cover_pct,
+            "calibration": calibration_store.load(ROOT),
+            "on_calibration_change": lambda d: calibration_store.save(ROOT, d),
+            "spots": spots, "spot": current,
             "on_spots_change": lambda sp, cur: spot_store.save(ROOT, sp, cur)}
 
 
@@ -130,13 +131,7 @@ def build_real_session() -> Session:
         override = os.environ.get("ASTRO_DEV_OVERRIDE") == "1"
         return Session(site, clock=clock, developer_override=override, finder=finder,
                        main_camera=main, main_sensor=main.sensor_size if main and main.connected else MAIN_SENSOR_PX,
-                       data_dir=ROOT / "data", on_site_change=lambda s: site_store.save(ROOT, s),
-                       horizon=horizon_store.load(ROOT),
-                       on_horizon_change=lambda m: horizon_store.save(ROOT, m),
-                       weather=None if OFFLINE else cloud_cover_pct,
-                       calibration=calibration_store.load(ROOT),
-                       on_calibration_change=lambda d: calibration_store.save(ROOT, d),
-                       **_spot_args())
+                       on_site_change=lambda s: site_store.save(ROOT, s), **_stored_args())
     except Exception:
         close_hardware()  # roll back, so the next attempt doesn't find devices still owned
         raise
