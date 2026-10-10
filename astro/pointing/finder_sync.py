@@ -13,7 +13,7 @@ import numpy as np
 from scipy import ndimage
 from scipy.stats import norm
 
-from astro.capture.focus import half_flux_radius
+from astro.capture.focus import flatten_sky, half_flux_radius
 from astro.devices.base import Camera
 from astro.pointing.coords import Site, radec_to_altaz
 from astro.pointing.mount_model import MountModel, Sync
@@ -77,6 +77,7 @@ def _clipped_std(gray: np.ndarray) -> float:
 
 def check_focus(gray: np.ndarray) -> FocusReport:
     """Count stars and measure their sharpness on a (binned) gray finder frame."""
+    raw, gray = gray, flatten_sky(gray.astype(np.float32))  # cloud glow's gradient would hide the stars
     bg = np.median(gray)
     noise = MAD_TO_SIGMA * np.median(np.abs(gray - bg))
     if noise == 0:  # over half the pixels equal the median (dark, quantized): MAD says nothing
@@ -95,7 +96,7 @@ def check_focus(gray: np.ndarray) -> FocusReport:
                            "That doesn't look like a starry sky. It may still be too bright out, "
                            "or the finder is seeing something nearby.", "not_sky")
     peaks = ndimage.maximum_position(gray, labels, keep)
-    unsaturated = [p for p in peaks if gray[p] < SATURATED_BINNED]
+    unsaturated = [p for p in peaks if raw[p] < SATURATED_BINNED]
     brightest = sorted(unsaturated or peaks, key=lambda p: -gray[p])[:MAX_STARS_MEASURED]
     hfrs = []
     r = CUTOUT_RADIUS_PX
