@@ -80,8 +80,11 @@ TOLERANCE_ARCMIN = 8.0
 TOLERANCE_BARLOW_ARCMIN = 4.0  # half that with the 2x Barlow (half the field)
 MOON_FEATURES = {f.name: f for f in FEATURES}  # pointing at one means pointing at the Moon
 EXTENDED_TARGETS = {p.capitalize() for p in PLANETS} | {"Moon", *MOON_FEATURES}  # SER video
-RECORD_SECONDS = 60  # planetary video length
-STACK_SECONDS = 90  # deep-sky live stack; the target drifts out of the field in ~2 min
+# Captures run until the page's Stop capture (the user sees the target near the frame edge);
+# these are only safety limits.
+RECORD_SECONDS = 300  # planetary video
+STACK_SECONDS = 300  # deep-sky live stack
+PROGRESS_S = 1.0  # capture progress to the page this often
 FOCUS_CROP_PX = 256  # sharpness measured on a crop around the planet
 COLLIMATION_STEP_S = 2.0  # time to turn a screw and let the image settle between checks
 COLLIMATING = "We're checking collimation. Say stop to finish that first."
@@ -177,6 +180,7 @@ class Session:
         self._positions: deque = deque(maxlen=60)  # (monotonic time, alt, az): ~6 s of pointing
         self.main_box: list | None = None  # main field on the finder view (drift_offset.py)
         self._offset_cal: dict | None = None
+        self._progress_at, self._capture_at = -1e9, 0.0  # capture progress messages
         self._side: LiveView | None = None  # side_finder: finder frames alongside main video  # "Saturn is centered": samples being collected
         # G3: which way "right" turns the scope, learned from the first left/right push.
         self.right_is_plus_az = True
@@ -383,7 +387,7 @@ class Session:
             self.stacker.stop()
             return [say("Stopping. I'll keep what's stacked so far.")]
         if self.recorder is None or not self.recorder.busy:
-            return [say("We're not recording.")]
+            return [say("We're not recording."), {"type": "capture", "state": "idle"}]
         self.recorder.stop()
         return [say("Stopping the recording.")]
 
@@ -436,8 +440,7 @@ class Session:
                 self.recorder.start(name, self.record_seconds)
                 self._picture_started()
                 self._announced_done = False
-                return [say(f"Recording for {self.record_seconds:g} seconds. "
-                            "Try not to touch the telescope.")]
+                return [say("Recording. Tap Stop capture when it nears the edge of the picture.")]
             self.stacker.start(name, self.stack_seconds)  # deep-sky: live stack short subs
         except CaptureRefused as e:
             return [say(str(e))]  # nothing started: guidance carries on as before
@@ -449,6 +452,7 @@ class Session:
     def _picture_started(self) -> None:
         """The picture has the camera: guidance goes quiet (no "right a little" while the user
         was asked not to touch the telescope). The target is kept."""
+        self._capture_at = time.monotonic()
         self._centering, self.guide = False, None
 
     def _camera_busy(self) -> bool:
@@ -716,15 +720,26 @@ class Session:
             name = self.stop_video()
             return [{"type": "view", "what": name}, tell(f"Stopping the video: {reason}.")]
         rec = self.recorder.current if self.recorder else None
+        live_now = self.stacker.current if self.stacker else None
+        progress = []
+        if t - self._progress_at >= PROGRESS_S:
+            for job, kind in ((rec, "video"), (live_now, "stack")):
+                if job is not None and not job.done.is_set():
+                    self._progress_at = t
+                    progress = [{"type": "capture", "state": "recording", "kind": kind, "name": job.name,
+                                 "frames": job.frames, "seconds": round(time.monotonic() - self._capture_at)}]
+        if progress:
+            return progress
         if rec is not None and rec.done.is_set() and not self._announced_done:
             self._announced_done = True
             if rec.frames < MIN_FRAMES:
                 return [say(f"{rec.error or 'Done.'} I only got {rec.frames} frames, "
-                            "not enough for a picture.")]
+                            "not enough for a picture."), {"type": "capture", "state": "idle"}]
             job = self._processor.submit(process_ser, rec.path, self.gallery_dir)
             self._jobs.append((rec.name, job))
             done = rec.error or "Done."  # e.g. drifted out of view: still make the picture
-            return [say(f"{done} I saved {rec.frames} frames. I'm making your picture now.")]
+            return [say(f"{done} I saved {rec.frames} frames. I'm making your picture now."),
+                    {"type": "capture", "state": "processing", "frames": rec.frames}]
         if self._jobs and self._jobs[0][1].done():
             return self._announce_picture()
         if (live := self.stacker.current if self.stacker else None) is not None:
@@ -1037,7 +1052,7 @@ class Session:
         try:
             result = job.result()
         except (ValueError, OSError) as e:
-            return [say(f"I couldn't make the picture of {name}: {e}")]
+            return [say(f"I couldn't make the picture of {name}: {e}"), {"type": "capture", "state": "idle"}]
         if not self._jobs:  # nothing queued still needs its raw video
             prune(self.recorder.out_dir)  # keep only the newest raw videos
         return [say(f"Your picture of {name} is ready. Tap Pictures to see it."),
@@ -1045,7 +1060,7 @@ class Session:
 
     def _announce_stack(self, live) -> list[dict]:
         if not live.frames:
-            return [say(live.error or f"I couldn't stack any pictures of {live.name}.")]
+            return [say(live.error or f"I couldn't stack any pictures of {live.name}."), {"type": "capture", "state": "idle"}]
         why = f"{live.error} " if live.error else ""
         return [say(f"{why}Your picture of {live.name} is ready, from {live.frames} short "
                     "pictures. Tap Pictures to see it."),

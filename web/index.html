@@ -40,6 +40,7 @@
   #mainbox { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
   #mainbox polygon { fill: none; stroke: #0f0; stroke-width: 2px; vector-effect: non-scaling-stroke; }
   #camctl { text-align: center; margin-top: 6px; }
+  #capstat { font-size: 22px; text-align: center; min-height: 1em; }
   #camframe::before, #camframe::after { content: ""; position: absolute; background: #f00; opacity: .7; pointer-events: none; }
   #camframe::before { left: 0; right: 0; top: 50%; height: 1px; }
   #camframe::after { top: 0; bottom: 0; left: 50%; width: 1px; }
@@ -76,7 +77,8 @@
       <button class="small" data-zoom="1">1x</button> <button class="small" data-zoom="2">2x</button> <button class="small" data-zoom="4">4x</button></div></div>
   <button id="talk">Tap to talk</button>
   <button id="bigstop">STOP</button>
-  <div><button class="small" id="shoot">Take picture</button> <button class="small" id="focusdone">Focus done</button></div>
+  <div><button class="small" id="shoot">Start capture</button> <button class="small" id="focus">Focus</button></div>
+  <div id="capstat"></div>
   <button id="hands" class="small">Hands-free: off</button>
   <div id="vstate" hidden></div>
   <div id="heard"></div>
@@ -136,7 +138,8 @@ function handle(m) {
     const img = document.getElementById("live");
     img.src = `${m.url}?n=${m.frames}`; document.getElementById("livebox").hidden = false;
   }
-  if (m.type === "picture") document.getElementById("livebox").hidden = true;
+  if (m.type === "picture") { document.getElementById("livebox").hidden = true; showCapture({state: "done"}); }
+  if (m.type === "capture") showCapture(m);
   if (m.type === "hold") { arrow.hidden = true; dist.textContent = "Hold still"; holding = true; }
   if (m.type === "say" && holding && !m.text.startsWith("Hold still")) {  // e.g. "stop"
     holding = false; dist.textContent = "";
@@ -177,8 +180,19 @@ document.getElementById("typed").onsubmit = e => {
 };
 // Stop: ends whatever is going on (focus, guidance, a picture, video), same as saying "stop".
 document.getElementById("bigstop").onclick = () => { stopAudio(); send("stop"); };
-document.getElementById("shoot").onclick = () => send("take a picture");
-document.getElementById("focusdone").onclick = () => send("done");
+// Capture: start, then stop when the target nears the edge (the scope doesn't track).
+let capturing = false;
+document.getElementById("shoot").onclick = () => send(capturing ? "stop recording" : "take a picture");
+document.getElementById("focus").onclick = () => send("focus");  // main video with the focus number
+function showCapture(m) {
+  const stat = document.getElementById("capstat"), btn = document.getElementById("shoot");
+  capturing = m.state === "recording";
+  btn.textContent = capturing ? "Stop capture" : "Start capture";
+  btn.classList.toggle("on", capturing);
+  stat.textContent = m.state === "recording" ? `Capturing ${m.name}: ${m.frames} frames, ${m.seconds} s`
+    : m.state === "processing" ? `Saved ${m.frames} frames. Making the picture...`
+    : m.state === "done" ? "Picture ready: tap Pictures." : "";
+}
 // Tapping a picture shows it big in the live-stack viewer, with its buttons. (Opening it in a
 // new window crashed the installed app.)
 document.getElementById("gallery").onclick = e => {
