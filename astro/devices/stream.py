@@ -313,6 +313,8 @@ class ProcessStream(CameraStream):
         return self._proc.is_alive()
 
     def close(self) -> None:
+        if self._slot.buf is None:  # closed already (two owners may both close it)
+            return
         self._stop.set()
         self._proc.join(timeout=5)
         if self._proc.is_alive():

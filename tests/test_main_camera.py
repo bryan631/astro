@@ -54,6 +54,18 @@ def test_capture_records_right_away(tmp_path):
     assert meta["frames"] > 3 and frames.shape[1:] == (512, 512) and frames.max() > 100
 
 
+def test_capture_on_an_unpicked_planet_records_it(tmp_path):
+    """2026-10-10: Jupiter captured without Go to was stacked as a star field and blown out.
+    A clipped disk in the main view, with a planet where the scope points, means planet mode."""
+    s, cam = make_session(tmp_path)
+    s.target = None
+    disk = np.zeros((1080, 1920), np.uint8)
+    disk[400:600, 800:1000] = 255  # 40000 clipped pixels
+    s.camera_frame = lambda name: (disk, "GRBG", 0.1)
+    assert texts(s.capture())[0].startswith("Recording.") and s.target == "Saturn"
+    s.recorder.current.done.wait(5)
+
+
 def test_barlow_change_requires_refocus(tmp_path):
     s, _ = make_session(tmp_path)
     s.main_focus_ok = True

@@ -17,6 +17,7 @@ from pathlib import Path
 import astropy.units as u
 import numpy as np
 from astropy.coordinates import SkyCoord, get_body
+from scipy import ndimage
 
 from astro import calibration_store
 from astro.capture.collimation import CENTERED as COLLIMATED
@@ -72,7 +73,11 @@ ENCODER_STALE_S = 1.0  # encoder positions older than this mean the board or cab
 # Guidance "on target" tolerance. 4' kept the user nudging in the field (encoder steps are 2.3');
 # 8' still lands the target well inside the main camera's 32' x 18' view.
 ALIGN_S = 10.0  # Align watches the bright star drift this long in both cameras
+SATURATED_RAW = 250  # 8-bit raw: clipped
+PLANET_DISK_PX = 2000  # one clipped blob this big (raw px) is a disk: Jupiter ~30000, Sirius ~700
+PLANET_NEAR_DEG = 3.0  # ... and it's the planet within this of where the scope points
 ALIGN_SCALE = (25.0, 130.0)  # main pixels per finder pixel: ~58 for this pair (14.6" vs 0.25")
+LABEL_SOLVE_EVERY_S = 30.0  # names on but never solved: try a plate solve this often
 LABELS_REFRESH_S = 5.0  # the sky turns ~0.02 degrees in 5 s: under 2 finder pixels
 # By day the finder's view auto-exposes; the main camera gets fixed daylight settings (every
 # exposure change reopens it in the SDK, which froze its view in the field). At night both go
@@ -153,6 +158,7 @@ class Session:
         self._labels: dict | None = None  # finder_labels' cache: the solve's map, objects' alt-az
         self._label_catalog: tuple | None = None
         self.finder_map: np.ndarray | None = None  # alt-az -> finder pixels, from a solve (labels)
+        self._label_solve_at = -1e9
         self._collimation_at = -1e9
         self.main_camera, self.main_sensor = main_camera, main_sensor
         self.zoom = {"finder": 1, "main": 1}  # the page's digital zoom per camera view
@@ -438,6 +444,8 @@ class Session:
             return [say(COLLIMATING)]
         if self._camera_busy():
             return [say("I'm already recording." if self.recorder.busy else "I'm already stacking.")]
+        if self.target not in EXTENDED_TARGETS and (planet := self._planet_in_view()):
+            self.target = planet  # not picked in Go to: a deep-sky stack would blow out its disk
         name = self.target or "the field"  # an unnamed patch of sky
         try:
             if self.target in EXTENDED_TARGETS:  # planets, Moon: video; anything else stacks
@@ -452,6 +460,20 @@ class Session:
         self._stack_done_announced, self._preview_seen = False, 0
         return [say(f"Stacking short pictures of {name}. Watch it build up on the screen. "
                     "Try not to touch the telescope.")]
+
+    def _planet_in_view(self) -> str | None:
+        """The planet (or Moon) nearest where the scope points, if the main view shows a disk:
+        one overexposed blob far bigger than any star's."""
+        frame = self.camera_frame("main")
+        if frame is None:
+            return None
+        labels, n = ndimage.label(frame[0][::2, ::2] >= SATURATED_RAW)
+        if n == 0 or np.bincount(labels.ravel())[1:].max() * 4 < PLANET_DISK_PX:
+            return None
+        alt, az = self.position()
+        near = [(separation_deg(alt, az, *body_altaz(b, self.site, self.clock())), b) for b in (*PLANETS, "moon")]
+        sep, body = min(near)
+        return body.capitalize() if sep < PLANET_NEAR_DEG else None
 
     def _picture_started(self) -> None:
         """The picture has the camera: guidance goes quiet (no "right a little" while the user
@@ -554,7 +576,12 @@ class Session:
         after a restart without a new solve; empty until the first solve ever."""
         sol = getattr(self.finder, "last_solution", None)
         frame = self.camera_frame("finder")
-        if frame is None or (sol is None and self.finder_map is None):
+        if sol is None and self.finder_map is None:  # never solved: solve now, in the background
+            if self.finder is not None and time.monotonic() - self._label_solve_at > LABEL_SOLVE_EVERY_S:
+                self._label_solve_at = time.monotonic()
+                threading.Thread(target=self.finder.sync, kwargs={"fresh": True}, daemon=True).start()
+            return []
+        if frame is None:
             return []
         h, w = frame[0].shape
         c, now = self._labels, time.monotonic()

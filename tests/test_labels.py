@@ -20,7 +20,7 @@ def solved():
 def test_star_list_is_bright_first_with_names_and_designations():
     names, ra, dec = load_stars()
     assert names[:2] == ["Sirius", "Canopus"] and len(names) > 3000
-    assert {"Vega", "β Cyg", "61 Cyg"} <= set(names)
+    assert {"Vega", "Albireo", "ζ Cyg", "72 Psc"} <= set(names)
     assert ((ra >= 0) & (ra < 360)).all() and (abs(dec) <= 90).all()
 
 
