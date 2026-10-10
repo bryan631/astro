@@ -123,8 +123,12 @@ function connect() {
   ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
   ws.onopen = () => {
     while (pending.length) ws.send(pending.shift());
-    ws.send(JSON.stringify({type: "client_log", text: `screen ${innerWidth}x${innerHeight} css px, ` +
-      `${screen.width}x${screen.height} screen, dpr ${devicePixelRatio}, page ${document.documentElement.scrollWidth}x${document.documentElement.scrollHeight}`}));
+    setTimeout(() => {  // for fitting the layout to the tablet (remote support reads the log)
+      const rows = [...document.body.children].filter(e => e.offsetHeight).map(e => `${e.id} ${e.offsetHeight}`);
+      wsSend(JSON.stringify({type: "client_log", text: `screen ${innerWidth}x${innerHeight} css px, dpr ` +
+        `${devicePixelRatio}, page ${document.documentElement.scrollWidth}x${document.documentElement.scrollHeight}, ` +
+        `rows ${rows.join(", ")}, font ${getComputedStyle(document.body).fontSize}`}));
+    }, 3000);
   };
   ws.onmessage = e => { if (typeof e.data === "string") handle(JSON.parse(e.data)); };
   ws.onclose = () => setTimeout(connect, unavailable ? 10000 : 1000);  // slow retries while the hardware is down
