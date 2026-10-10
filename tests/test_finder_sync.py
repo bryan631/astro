@@ -71,8 +71,8 @@ def test_bright_scene_is_not_called_out_of_focus():
 
 
 def test_sharp_vs_soft_hfr(solver):
-    sharp = make(solver)[1].focus_report()
-    soft = make(solver, blur_px=5)[1].focus_report()
+    sharp = check_focus(finder_gray(make(solver)[1].camera.capture()))
+    soft = check_focus(finder_gray(make(solver, blur_px=5)[1].camera.capture()))
     assert sharp.ok and sharp.hfr_px < soft.hfr_px
 
 

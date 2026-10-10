@@ -5,6 +5,7 @@ frame is registered to the reference by matching star triangles (astroalign), th
 to a running mean. Frames that can't be matched (clouds, bumps, trails) are skipped.
 """
 
+import logging
 from dataclasses import dataclass
 
 import astroalign
@@ -17,13 +18,13 @@ from astro.process.planet import superpixel_rgb
 # stars (PL2), whose short frames show the pair plus only a few field stars.
 MIN_STARS = 4
 MAX_CONTROL_POINTS = 40  # brightest stars used for matching
+log = logging.getLogger(__name__)
 
 
 @dataclass
 class StackStatus:
     frames_added: int
     frames_skipped: int
-    last_error: str = ""
 
 
 class LiveStack:
@@ -43,7 +44,7 @@ class LiveStack:
             stars = check_focus(lum).stars  # only its star count: the focus limits are the finder's
             if stars < MIN_STARS:  # clouds or a capped lens: don't anchor the stack to it
                 self.status.frames_skipped += 1
-                self.status.last_error = f"only {stars} stars in the first frame"
+                log.info("stack: first frame skipped", extra={"data": {"stars": stars}})
                 return False
             self._ref_lum, self._sum = lum, rgb.copy()
             self._weight = np.ones(lum.shape, np.float32)
@@ -55,7 +56,7 @@ class LiveStack:
                                               max_control_points=MAX_CONTROL_POINTS)
         except (astroalign.MaxIterError, ValueError) as e:  # too few / unmatched stars
             self.status.frames_skipped += 1
-            self.status.last_error = str(e)
+            log.info("stack: frame skipped", extra={"data": {"why": str(e)}})
             return False
         self._last_tf = tf
         warped = [astroalign.apply_transform(tf, rgb[..., c], self._ref_lum) for c in range(3)]
