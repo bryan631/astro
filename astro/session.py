@@ -22,7 +22,7 @@ from scipy import ndimage
 from astro import calibration_store
 from astro.capture.collimation import CENTERED as COLLIMATED
 from astro.capture.collimation import CollimationCoach, Donut, analyze
-from astro.capture.exposure import FINDER_DAY_RANGE, next_settings
+from astro.capture.exposure import SATURATED_RAW, ViewSettings
 from astro.capture.live_stacker import LiveStacker
 from astro.capture.recorder import CaptureRefused, Recorder, prune
 from astro.capture.roi import brightest_blob, roi_around
@@ -50,7 +50,7 @@ from astro.pointing.align import (
 from astro.pointing.coords import Site, altaz_to_radec, body_altaz, radec_to_altaz
 from astro.pointing.finder_sync import FinderSync
 from astro.pointing.geometry import separation_deg
-from astro.pointing.labels import altaz_now, load_stars, place, tube_map
+from astro.pointing.labels import FinderLabels, altaz_now
 from astro.pointing.main_offset import MainOffset
 from astro.pointing.platesolve import finder_gray
 from astro.process.planet import MIN_FRAMES, StackResult, process_ser
@@ -73,7 +73,6 @@ ENCODER_STALE_S = 1.0  # encoder positions older than this mean the board or cab
 # Guidance "on target" tolerance. 4' kept the user nudging in the field (encoder steps are 2.3');
 # 8' still lands the target well inside the main camera's 32' x 18' view.
 ALIGN_S = 10.0  # Align watches the bright star drift this long in both cameras
-SATURATED_RAW = 250  # 8-bit raw: clipped
 PLANET_DISK_PX = 2000  # one clipped blob this big (raw px) is a disk: Jupiter ~30000, Sirius ~700
 UNNAMED_PLANET = "the planet"  # a disk in the picture when the pointing can't name it
 FIELD_RADIUS_DEG = 0.3  # the telescope's 32' x 18' view, center to corner
@@ -81,14 +80,7 @@ PLANET_NEAR_DEG = 3.0  # ... and it's the planet within this of where the scope 
 ALIGN_SCALE = (25.0, 130.0)  # main pixels per finder pixel: ~58 for this pair (14.6" vs 0.25")
 AUTO_SOLVE_EVERY_S = 5.0  # background plate solves at night (back to back while not synced)
 AUTO_SOLVE_NEAR_DEG = 5.0  # a background solve replaces model syncs this close (keeps the spread)
-LABELS_REFRESH_S = 5.0  # the sky turns ~0.02 degrees in 5 s: under 2 finder pixels
-# By day the finder's view auto-exposes; the main camera gets fixed daylight settings (every
-# exposure change reopens it in the SDK, which froze its view in the field). At night both go
-# back to the settings their streams started with (the finder's are the plate solver's).
 DARK_SUN_ALT_DEG = -10.0  # Sun lower than this: the views get the night stretch (twilight: as is)
-MAIN_TWILIGHT_RANGE = (0.0005, 0.25)  # seconds: the main view auto-exposes once dawn clips it
-MAIN_DAY = (0.004, 0)  # measured on a sunny tree
-DAY_EXPOSURE_EVERY_S = 1.0
 TOLERANCE_ARCMIN = 8.0
 TOLERANCE_BARLOW_ARCMIN = 4.0  # half that with the 2x Barlow (half the field)
 MOON_FEATURES = {f.name: f for f in FEATURES}  # pointing at one means pointing at the Moon
@@ -160,9 +152,7 @@ class Session:
         self._resolved_at = -1e9
         self._last_said, self._last_said_at = "", -1e9  # tick speech, for _no_repeats
         self._collimation: CollimationCoach | None = None
-        self._labels: dict | None = None  # finder_labels' cache: the solve's map, objects' alt-az
-        self._label_catalog: tuple | None = None
-        self.finder_map: np.ndarray | None = None  # alt-az -> finder pixels, from a solve (labels)
+        self.labels = FinderLabels(self._targets())  # names on the finder view
         self._solved_try_at, self._solving = -1e9, False
         self._dark = (True, -1e9)  # dark(): (answer, when)
         self._said_later: list[dict] = []  # from background work, said on the next tick
@@ -193,11 +183,7 @@ class Session:
         self._progress_at, self._capture_at = -1e9, 0.0  # capture progress messages
         self._capture_radec = (0.0, 0.0)  # where a capture began (Recenter's target if unnamed)
         self._recentering = False  # a paused capture: guidance leads back to its target
-        self._light: dict[str, bool] = {}  # per camera: daytime when its settings were last switched
-        self._night = {name: (cam.exposure_s, cam.gain) for name, cam in
-                       (("finder", getattr(finder, "camera", None)), ("main", main_camera))
-                       if hasattr(cam, "latest")}  # streamed cameras: the page's views
-        self._day_exposure_at, self._seen_for_exposure = -1e9, {}
+        self.views = ViewSettings({"finder": getattr(finder, "camera", None), "main": main_camera})
         # G3: which way "right" turns the scope, learned from the first left/right push.
         self.right_is_plus_az = True
         self._direction_learner = DirectionLearner()
@@ -280,6 +266,10 @@ class Session:
             def coord_at(t, loc):
                 return SkyCoord(ra=target.ra * u.deg, dec=target.dec * u.deg)
         return [say(target_text(self.site, self.clock(), name, coord_at, self.horizon))]
+
+    def _targets(self) -> list:
+        """Each Go to target once (the catalog has it by name and by id)."""
+        return list({t.id: t for t in self.catalog.values()}.values())
 
     def names(self) -> list[str]:
         return [p.capitalize() for p in PLANETS] + ["Moon", *MOON_FEATURES, *self.catalog]
@@ -493,7 +483,7 @@ class Session:
             for body in (*PLANETS, "moon"):
                 if separation_deg(alt, az, *body_altaz(body, self.site, when)) < FIELD_RADIUS_DEG:
                     found.append(body.capitalize())
-            targets = list({t.id: t for t in self.catalog.values()}.values())
+            targets = self._targets()
             t_alt, t_az = altaz_now([t.ra for t in targets], [t.dec for t in targets], self.site, when)
             found += [t.name for t, a, z in zip(targets, t_alt, t_az, strict=True)
                       if separation_deg(alt, az, a, z) < FIELD_RADIUS_DEG]
@@ -637,41 +627,17 @@ class Session:
         after a restart without a new solve; empty until the first solve ever."""
         sol = getattr(self.finder, "last_solution", None)
         frame = self.camera_frame("finder")
-        if sol is None and self.finder_map is None:  # never solved: solve now, in the background
+        if sol is None and self.labels.map is None:  # never solved: solve now, in the background
             self._solve_soon()
             return []
         if frame is None:
             return []
         h, w = frame[0].shape
-        c, now = self._labels, time.monotonic()
-        if c is None or c["sol"] is not sol or now - c["at"] > LABELS_REFRESH_S:
-            when = self.clock()
-            if sol is not None and (c is None or c["sol"] is not sol):  # a new solve: its map, now
-                self.finder_map = tube_map(sol, w, self.site, when)
-                self._save_calibration()  # fixed to the tube: it holds after a restart
-            m = self.finder_map
-            names, kinds, ra, dec = self._label_objects()
-            alt, az = altaz_now(ra, dec, self.site, when)
-            bodies = [*PLANETS, "moon"]
-            body = np.array([body_altaz(b, self.site, when) for b in bodies])
-            c = self._labels = {"sol": sol, "m": m, "at": now,
-                                "names": names + [b.capitalize() for b in bodies],
-                                "kinds": kinds + ["planet"] * len(bodies),
-                                "alt": np.r_[alt, body[:, 0]], "az": np.r_[az, body[:, 1]]}
-        x, y, on = place(c["alt"], c["az"], self.finder.position(), c["m"], (w, h))
-        sign = -1 if ROTATE["finder"] == 180 else 1  # the view is turned like the picture
-        return [[c["names"][i], c["kinds"][i], round(sign * (x[i] / w - 0.5), 4),
-                 round(sign * (y[i] / h - 0.5), 4)] for i in np.flatnonzero(on & (c["alt"] > 0))]
-
-    def _label_objects(self) -> tuple[list[str], list[str], np.ndarray, np.ndarray]:
-        """The fixed objects to name: stars, then Go to targets (by catalog id)."""
-        if self._label_catalog is None:
-            stars, ra, dec = load_stars()
-            targets = list({t.id: t for t in self.catalog.values()}.values())
-            self._label_catalog = (stars + [t.id for t in targets],
-                                   ["star"] * len(stars) + ["target"] * len(targets),
-                                   np.r_[ra, [t.ra for t in targets]], np.r_[dec, [t.dec for t in targets]])
-        return self._label_catalog
+        found, new_map = self.labels.labels(sol, (w, h), self.finder.position(), self.site,
+                                            self.clock(), time.monotonic(), ROTATE["finder"])
+        if new_map:
+            self._save_calibration()
+        return found
 
     def adjust_camera(self, name: str, zoom: int | None = None) -> None:
         """The page's digital zoom for a camera view (brightness is the page's own)."""
@@ -805,7 +771,7 @@ class Session:
                 self._said_later.append(say("Found where the scope points (plate solve)."))
 
     def _tick(self, t: float) -> list[dict]:
-        self._daylight_settings(t)
+        self.views.update(t, self.daytime(), self._camera_busy(), hold=self._align is not None)
         if self.finder is not None and not self.daytime() and not self._camera_busy():
             self._solve_soon()  # every 5 s; back to back while the encoders mean nothing
         if self._align is not None:
@@ -871,42 +837,6 @@ class Session:
                 self._center_limiter = CueLimiter()
         return out
 
-    def _daylight_settings(self, t: float) -> None:
-        """Day or night camera settings, and the finder's daylight auto-exposure (streamed
-        cameras only: those are the views the page shows)."""
-        if t - self._day_exposure_at < DAY_EXPOSURE_EVERY_S:
-            return
-        self._day_exposure_at = t
-        cams = {n: c for n in ("finder", "main") if hasattr(c := self.camera(n), "latest")}
-        if not cams:
-            return
-        day = self.daytime()
-        for name, cam in cams.items():  # each camera on its day or night settings, once per switch
-            if self._light.get(name) == day or (name == "main" and self._camera_busy()):
-                continue  # a capture set its own: caught up once it ends
-            self._light[name] = day
-            exposure, gain = MAIN_DAY if day and name == "main" else self._night[name]
-            log.info("camera settings", extra={"data": {"camera": name, "day": day,
-                                                        "exposure_s": exposure, "gain": gain}})
-            cam.set_exposure(exposure)
-            cam.set_gain(gain)
-        if self._align is not None:
-            return
-        for name, cam in cams.items():  # by day (finder), or once dawn clips the night settings
-            if name == "main" and (day or self._camera_busy()):  # (2026-10-10: all white at 6:50)
-                continue  # main by day: MAIN_DAY; a capture sets its own
-            frame, seq, _ = cam.latest()
-            if frame is None or seq == self._seen_for_exposure.get(name):
-                continue
-            self._seen_for_exposure[name] = seq
-            adjusting = (cam.exposure_s, cam.gain) != tuple(self._night[name])
-            if not ((day and name == "finder") or adjusting or np.median(frame[::8, ::8]) >= SATURATED_RAW):
-                continue
-            limits = FINDER_DAY_RANGE if name == "finder" else MAIN_TWILIGHT_RANGE
-            if (new := next_settings(frame, cam.exposure_s, cam.gain, limits, self._night[name][1])) is not None:
-                cam.set_exposure(new[0])
-                cam.set_gain(new[1])
-
     def _hold_for_fix(self) -> list[dict] | None:
         """Plate solving only: while the fix is stale (the scope is moving), don't steer by it.
         Returns the messages for this tick, or None when the fix is fresh."""
@@ -944,7 +874,7 @@ class Session:
                             if offset.observations else None),
             "mount": None,
             "main_box": self.main_box,
-            "finder_map": self.finder_map.tolist() if self.finder_map is not None else None,
+            "finder_map": self.labels.map.tolist() if self.labels.map is not None else None,
             "main_in_finder": ({"a": self.main_in_finder.a.tolist(),
                                 "center": self.main_in_finder.center.tolist(),
                                 "residual_px": self.main_in_finder.residual_px}
@@ -965,7 +895,7 @@ class Session:
             self.centerer.axes.matrix = np.array(data["camera_axes"])
         self.main_box = data.get("main_box")  # main field corners on the finder view
         if data.get("finder_map") is not None:
-            self.finder_map = np.array(data["finder_map"])
+            self.labels.map = np.array(data["finder_map"])
         if (mif := data.get("main_in_finder")) is not None:
             self.main_in_finder = MainInFinder(np.array(mif["a"]), np.array(mif["center"]),
                                                mif["residual_px"])

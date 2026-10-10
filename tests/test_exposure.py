@@ -3,10 +3,10 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from astro.capture.exposure import FINDER_DAY_RANGE, next_settings
+from astro.capture.exposure import FINDER_DAY_RANGE, MAIN_DAY, MAIN_TWILIGHT_RANGE, next_settings
 from astro.devices.stream import ThreadStream
 from astro.pointing.coords import Site
-from astro.session import MAIN_DAY, MAIN_TWILIGHT_RANGE, Session
+from astro.session import Session
 from tests.fake_camera import FakeCamera
 
 

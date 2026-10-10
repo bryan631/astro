@@ -13,11 +13,15 @@ import astropy.units as u
 import numpy as np
 from astropy.coordinates import SkyCoord
 
-from astro.pointing.coords import Site, altaz_to_radec, radec_to_altaz
+from astro.planner.catalog import Target
+from astro.planner.tonight import PLANETS
+from astro.pointing.coords import Site, altaz_to_radec, body_altaz, radec_to_altaz
 from astro.pointing.platesolve import Solution
 
 STAR_NAMES = Path(__file__).with_name("star_names.csv")
 STEP_DEG = 0.5  # the probe offsets that measure the map: small, but far above the solve's error
+REFRESH_S = 5.0  # the sky turns ~0.02 degrees in 5 s: under 2 finder pixels
+BODIES = (*PLANETS, "moon")
 
 
 def load_stars(path: Path = STAR_NAMES) -> tuple[list[str], np.ndarray, np.ndarray]:
@@ -80,3 +84,47 @@ def place(alt, az, center: tuple[float, float], m: np.ndarray, size: tuple[int, 
     pad = margin * w
     on = (x > -pad) & (x < w + pad) & (y > -pad) & (y < h + pad)  # NaN (behind) compares False
     return x, y, on
+
+
+class FinderLabels:
+    """The finder view's names: stars, Go to targets (by catalog id), the planets and Moon.
+
+    `map` comes from the latest solve and is fixed to the tube, so the owner saves it and a
+    restart names stars before any new solve. The objects' alt-az is cached for REFRESH_S."""
+
+    def __init__(self, targets: list[Target]):
+        self.map: np.ndarray | None = None
+        self._targets = targets
+        self._fixed: tuple | None = None  # (names, kinds, ra, dec), loaded on first use
+        self._cache: dict | None = None
+
+    def labels(self, sol: Solution | None, size: tuple[int, int], pointing: tuple[float, float],
+               site: Site, when: datetime, now: float, rotate: int) -> tuple[list[list], bool]:
+        """([[name, kind, x, y], ...] with x, y as fractions from the view's center, for a
+        view turned by `rotate`; True if `sol` gave a new map to save). Call only once a map
+        exists or `sol` is set; `now` is a monotonic clock."""
+        w, h = size
+        c, new_map = self._cache, False
+        if c is None or c["sol"] is not sol or now - c["at"] > REFRESH_S:
+            if sol is not None and (c is None or c["sol"] is not sol):
+                self.map, new_map = tube_map(sol, w, site, when), True
+            names, kinds, ra, dec = self._fixed_objects()
+            alt, az = altaz_now(ra, dec, site, when)
+            body = np.array([body_altaz(b, site, when) for b in BODIES])
+            c = self._cache = {"sol": sol, "m": self.map, "at": now,
+                               "names": names + [b.capitalize() for b in BODIES],
+                               "kinds": kinds + ["planet"] * len(BODIES),
+                               "alt": np.r_[alt, body[:, 0]], "az": np.r_[az, body[:, 1]]}
+        x, y, on = place(c["alt"], c["az"], pointing, c["m"], size)
+        sign = -1 if rotate == 180 else 1  # the view is turned like the picture
+        return [[c["names"][i], c["kinds"][i], round(sign * (x[i] / w - 0.5), 4),
+                 round(sign * (y[i] / h - 0.5), 4)]
+                for i in np.flatnonzero(on & (c["alt"] > 0))], new_map
+
+    def _fixed_objects(self) -> tuple:
+        if self._fixed is None:
+            stars, ra, dec = load_stars()
+            t = self._targets
+            self._fixed = (stars + [x.id for x in t], ["star"] * len(stars) + ["target"] * len(t),
+                           np.r_[ra, [x.ra for x in t]], np.r_[dec, [x.dec for x in t]])
+        return self._fixed
