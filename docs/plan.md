@@ -211,6 +211,7 @@ recenter → Align. Each step tested indoors with the simulators before the next
 - Star names on the finder view: small labels beside the brighter stars, from the last plate
   solve, with an on/off button.
 - The main camera's box on the finder view: red or orange in night mode.
+- Call the main camera "Telescope" everywhere the user sees it (view label, messages, guide).
 - Buttons for the setup wizard, horizon walk and collimation (still worded for voice).
 - Clear night: a bright-star Align, and focus sweep and wiggle recordings for test data.
 
