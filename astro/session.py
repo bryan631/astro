@@ -69,8 +69,6 @@ CENTER_STEP_S = 0.5  # main-camera centering cue rate
 DIRECTION_PROBE_S = 1.5  # after a left/right cue, look this long for the azimuth to move
 FIX_STALE_S = 2.0  # a plate-solve fix older than this is too old to steer by
 ENCODER_STALE_S = 1.0  # encoder positions older than this mean the board or cable is gone
-# Guidance "on target" tolerance. 4' kept the user nudging in the field (encoder steps are 2.3');
-# 8' still lands the target well inside the main camera's 32' x 18' view.
 PLANET_DISK_PX = 2000  # one clipped blob this big (raw px) is a disk: Jupiter ~30000, Sirius ~700
 UNNAMED_PLANET = "the planet"  # a disk in the picture when the pointing can't name it
 FIELD_RADIUS_DEG = 0.3  # the telescope's 32' x 18' view, center to corner
@@ -78,6 +76,8 @@ PLANET_NEAR_DEG = 3.0  # ... and it's the planet within this of where the scope 
 AUTO_SOLVE_EVERY_S = 5.0  # background plate solves at night (back to back while not synced)
 AUTO_SOLVE_NEAR_DEG = 5.0  # a background solve replaces model syncs this close (keeps the spread)
 DARK_SUN_ALT_DEG = -10.0  # Sun lower than this: the views get the night stretch (twilight: as is)
+# Guidance "on target" tolerance. 4' kept the user nudging in the field (encoder steps are 2.3');
+# 8' still lands the target well inside the main camera's 32' x 18' view.
 TOLERANCE_ARCMIN = 8.0
 TOLERANCE_BARLOW_ARCMIN = 4.0  # half that with the 2x Barlow (half the field)
 MOON_FEATURES = {f.name: f for f in FEATURES}  # pointing at one means pointing at the Moon
@@ -293,8 +293,7 @@ class Session:
             return self.tonight()  # planning is slow and read-only: keep it off the lock
         with self._lock:
             if do == "goto":
-                name = match_name(target or "", self.names())
-                return self.goto(name) if name else [say(f"I don't know {target}.")]
+                return self._goto_named(target or "")
             if do == "capture" and target:  # picked from "which one?": never a stop
                 return self.capture(target) if not self._camera_busy() else [notice("Already capturing.")]
             handler = {"capture": self._toggle_capture, "stop": self._stop, "sync": self.sync,
@@ -320,8 +319,7 @@ class Session:
             job.pause()
             self._recentering = True
             alt, az = self._capture_altaz()
-            self.guide = Guide(*self._aim(alt, az), tolerance_arcmin=self._tolerance_arcmin(),
-                               right_is_plus_az=self.right_is_plus_az)
+            self.guide = self._guide_to(alt, az)
             return [say("Paused. Follow the arrow on the finder view, then tap Resume."),
                     self._capture_state(job.current, "paused")]
         job.resume()
@@ -353,8 +351,7 @@ class Session:
     def goto_spoken(self, target: str) -> list[dict]:
         """Go to a target named in free text (agent tool): matched by name, never re-parsed."""
         with self._lock:
-            name = match_name(target, self.names())
-            return self.goto(name) if name else [say(f"I don't know {target}.")]
+            return self._goto_named(target)
 
     def _handle(self, text: str) -> list[dict]:
         intent = parse(text)
@@ -366,8 +363,7 @@ class Session:
         if intent is None:
             return [say(NOT_UNDERSTOOD)]
         if intent.name == "goto":
-            name = match_name(intent.target or "", self.names())
-            return self.goto(name) if name else [say(f"I don't know {intent.target}.")]
+            return self._goto_named(intent.target or "")
         if intent.name == "describe":
             return self.describe(intent.target or "")
         if intent.name in ("barlow_on", "barlow_off"):
@@ -396,9 +392,12 @@ class Session:
             return [say("OK, collimation check stopped. Remember to refocus.")]
         if self._camera_busy():  # "stop" while taking a picture ends the picture
             return self._stop_capture()
-        self.target, self.guide, self._centering = None, None, False
-        self._align = None
+        self._clear_guidance()
         return [say("Stopped.")]
+
+    def _clear_guidance(self) -> None:
+        """Forget the target and stop guiding, centering and any Align."""
+        self.target, self.guide, self._centering, self._align = None, None, False, None
 
     def _set_barlow(self, inserted: bool) -> list[dict]:
         self.barlow = inserted
@@ -450,21 +449,21 @@ class Session:
             # nothing recognized: the Go to target (pointing unknown) or the field
             choice = found[0] if found else (self.target or "the field")
         target = choice if choice in self.names() else None  # the session's, once it starts
-        name = choice
+        video = target in EXTENDED_TARGETS or choice == UNNAMED_PLANET  # planets, Moon
         try:
-            if target in EXTENDED_TARGETS or name == UNNAMED_PLANET:  # planets, Moon: video
-                self.recorder.start(name, self.record_seconds)
-                self.target = target
-                self._picture_started()
-                self._announced_done = False
-                return [say("Recording. Tap Stop capture when it nears the edge of the picture.")]
-            self.stacker.start(name, self.stack_seconds)  # deep-sky: live stack short subs
+            if video:
+                self.recorder.start(choice, self.record_seconds)
+            else:
+                self.stacker.start(choice, self.stack_seconds)  # deep-sky: live stack short subs
         except CaptureRefused as e:
             return [say(str(e))]  # nothing started: guidance carries on as before
         self.target = target
         self._picture_started()
+        if video:
+            self._announced_done = False
+            return [say("Recording. Tap Stop capture when it nears the edge of the picture.")]
         self._stack_done_announced, self._preview_seen = False, 0
-        return [say(f"Stacking short pictures of {name}. Watch it build up on the screen. "
+        return [say(f"Stacking short pictures of {choice}. Watch it build up on the screen. "
                     "Try not to touch the telescope.")]
 
     def _what_to_capture(self) -> list[str]:
@@ -517,6 +516,10 @@ class Session:
     def _camera_busy(self) -> bool:
         return any(job is not None and job.busy for job in (self.recorder, self.stacker))
 
+    def _goto_named(self, spoken: str) -> list[dict]:
+        name = match_name(spoken, self.names())
+        return self.goto(name) if name else [say(f"I don't know {spoken}.")]
+
     def goto(self, name: str) -> list[dict]:
         if self._camera_busy():
             return [say("I'm taking a picture. Stop it first (Capture or STOP), then we can move.")]
@@ -530,10 +533,8 @@ class Session:
         safe = self.target_safety(alt, az)
         if not safe.ok:
             return [say(f"I can't go to {name}: it's {safe.reason}.")]
-        guide = Guide(*self._aim(alt, az), tolerance_arcmin=self._tolerance_arcmin(),
-                          right_is_plus_az=self.right_is_plus_az)
         self._centering = False
-        self.target, self.guide = name, guide
+        self.target, self.guide = name, self._guide_to(alt, az)
         self._center_gave_up = None  # a new "go to" tries the main camera again
         return [*pre, say(f"Let's find {name}.")]
 
@@ -905,9 +906,7 @@ class Session:
             if boots is not None and boots() > 0:
                 return  # the encoder board booted: its counts are 0, the saved model is stale
             lat, lon = mount["site"]
-            km = np.radians(separation_deg(lat, lon, self.site.lat_deg, self.site.lon_deg)) \
-                * EARTH_RADIUS_KM
-            if km <= SITE_MOVE_KM:  # same place, same encoder counts: no re-sync needed
+            if _km_between(lat, lon, self.site) <= SITE_MOVE_KM:  # same place, same encoder counts: no re-sync needed
                 self.finder.model = calibration_store.model_from_dict(mount)
                 self.finder.synced = True
                 self._model_site = replace(self.site, lat_deg=lat, lon_deg=lon)  # its origin
@@ -983,6 +982,10 @@ class Session:
                     f"from the finder's center, turned {fit.rotation_deg:.0f} degrees. Its box is "
                     "on the finder view.")]
 
+    def _guide_to(self, alt: float, az: float) -> Guide:
+        return Guide(*self._aim(alt, az), tolerance_arcmin=self._tolerance_arcmin(),
+                     right_is_plus_az=self.right_is_plus_az)
+
     def _aim(self, alt: float, az: float) -> tuple[float, float]:
         """Where the finder model should point so the target lands in the main camera."""
         if self.centerer.offset.observations:
@@ -1010,8 +1013,7 @@ class Session:
             self._centering = False
             self._center_gave_up = self.target  # don't bounce straight back (looped 2x/s outside)
             alt, az = self.altaz_of(self.target)
-            self.guide = Guide(*self._aim(alt, az), tolerance_arcmin=self._tolerance_arcmin(),
-                          right_is_plus_az=self.right_is_plus_az)
+            self.guide = self._guide_to(alt, az)
         elif step.done:
             self._centering = False
             self._save_calibration()  # camera axes and finder-to-main offset are learned now
@@ -1082,8 +1084,7 @@ class Session:
             if not ok:
                 return [say(f"Before the horizon walk, I need to see the stars. {msg}")]
         self._horizon = []
-        self.target, self.guide, self._centering = None, None, False
-        self._align = None
+        self._clear_guidance()
         return [say("Let's record the treeline. Point the telescope just above the trees and "
                     "say 'mark'. Then move along the treeline and mark again. "
                     "Eight to fifteen marks all the way around is ideal. Say 'done' to finish.")]
@@ -1125,8 +1126,7 @@ class Session:
             self.wizard = SetupWizard(self.request_location, self.finder.sync,
                                       self.finder.alignment, self.start_horizon,
                                       self.cancel_location)
-            self.target, self.guide, self._centering = None, None, False
-            self._align = None
+            self._clear_guidance()
             return self.wizard.start()
         return self.wizard.ready() if name == "ready" else self.wizard.skip()
 
@@ -1190,15 +1190,12 @@ class Session:
         """Move to `new`. Far from where the mount model was built (great-circle distance, so a
         chain of small updates can't drift away), pointing, treeline and plans start over."""
         ref = self._model_site
-        moved_km = (np.radians(separation_deg(ref.lat_deg, ref.lon_deg, new.lat_deg, new.lon_deg))
-                    * EARTH_RADIUS_KM)
         self.site = new
-        if moved_km > SITE_MOVE_KM:
+        if _km_between(ref.lat_deg, ref.lon_deg, new) > SITE_MOVE_KM:
             self._model_site = new
             if self.finder is not None:
                 self.finder.reset(new)
-            self.target, self.guide, self._centering = None, None, False
-            self._align = None
+            self._clear_guidance()
             self._horizon, self._suggestions = None, []
             self.horizon = HorizonMask()
             if self.spot:
@@ -1246,6 +1243,11 @@ def _azimuth_coverage(azs: list[float]) -> float:
     a = sorted(az % 360 for az in azs)
     gaps = np.diff([*a, a[0] + 360])
     return 360 - float(gaps.max())
+
+
+def _km_between(lat: float, lon: float, site: Site) -> float:
+    """Great-circle distance from (lat, lon) to `site`."""
+    return float(np.radians(separation_deg(lat, lon, site.lat_deg, site.lon_deg)) * EARTH_RADIUS_KM)
 
 
 def _clock(t: datetime) -> str:
