@@ -175,7 +175,8 @@ class Session:
         self._center_at = -1e9
         self._center_gave_up: str | None = None  # main camera lost this target: finder only
         self._positions: deque = deque(maxlen=60)  # (monotonic time, alt, az): ~6 s of pointing
-        self._offset_cal: dict | None = None  # "Saturn is centered": samples being collected
+        self._offset_cal: dict | None = None
+        self._side: LiveView | None = None  # side_finder: finder frames alongside main video  # "Saturn is centered": samples being collected
         # G3: which way "right" turns the scope, learned from the first left/right push.
         self.right_is_plus_az = True
         self._direction_learner = DirectionLearner()
@@ -571,6 +572,22 @@ class Session:
         self._video_announce = announce
         return [{"type": "view", "what": name, "video": True},
                 *([say(f"Showing live video of the {name} camera.")] if announce else [])]
+
+    def side_finder(self, on: bool) -> None:
+        """Finder frames in the background while the main camera's video runs (calibration
+        scripts need both cameras at the same moments). Fixed solve settings, no auto-exposure."""
+        with self._lock:
+            if self._side is not None:
+                self._side.stop()
+                self._side = None
+                if hasattr(self.finder, "paused"):
+                    self.finder.paused.clear()
+            cam = self.camera("finder")
+            if on and cam is not None and not (self._video and self._video[0] == "finder"):
+                if hasattr(self.finder, "paused"):
+                    self.finder.paused.set()
+                self._side = LiveView(cam, cam.exposure_s, cam.gain, None,
+                                      getattr(self.finder, "camera_lock", None), None, cam.gain).start()
 
     def stop_video(self) -> str | None:
         """End live video and give the camera back. Returns which camera it was, or None."""

@@ -485,6 +485,8 @@ async def handle_message(hub: Hub, socket: WebSocket, conn: dict, msg: dict) -> 
         (hub.handsfree.add if conn["handsfree"] else hub.handsfree.discard)(socket)
     elif data.get("type") == "checks":  # the daytime "skip checks" toggle
         session.override = bool(data.get("off"))
+    elif data.get("type") == "side_finder":  # scripts/dev/drift_offset.py: both cameras at once
+        await asyncio.to_thread(session.side_finder, bool(data.get("on")))
     elif data.get("type") == "camera":  # the camera view's exposure and zoom buttons
         if data.get("camera") in ("finder", "main"):
             await asyncio.to_thread(session.adjust_camera, data["camera"], data.get("exposure"),
