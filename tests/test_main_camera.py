@@ -253,7 +253,8 @@ def test_deep_sky_capture_live_stacks_drifting_stars(tmp_path):
     assert live and ready and ready[0].startswith("Your picture of Dumbbell Nebula is ready, from")
     frames = s.stacker.current.frames
     assert frames >= 5 and s.stacker.current.skipped <= 1
-    assert (tmp_path / "gallery" / s.stacker.current.preview.name).exists()
+    assert s.stacker.current.picture.exists() and s.stacker.current.picture.parent.name == "gallery"
+    assert s.stacker.current.edge.seconds_left() is not None  # the sky drifted: it knows when it leaves
 
 
 def test_plain_stop_ends_a_picture(tmp_path):
@@ -333,3 +334,46 @@ def test_old_recordings_pruned_and_full_disk_refused(tmp_path, monkeypatch):
         Recorder(DriftingPlanet(), (800, 600), caps).start("Mars", 1)
 
 
+
+
+def test_recenter_pauses_a_planet_video_guides_back_and_resumes(tmp_path):
+    s, _ = make_session(tmp_path)
+    s.record_seconds = 30
+    s.action("capture")
+    rec = s.recorder.current
+    out = s.action("recenter")
+    assert out[1]["state"] == "paused" and rec.paused.is_set() and s.guide is not None
+    time.sleep(0.3)
+    frames = rec.frames
+    time.sleep(0.3)
+    assert rec.frames == frames  # nothing written while paused
+    states = [m for m in s.tick(0.0) if m["type"] == "state"]
+    assert states and states[0]["target"] == "Saturn"  # the arrow leads back to the target
+    assert s.action("recenter")[1]["state"] == "recording" and s.guide is None
+    end = time.monotonic() + 5
+    while rec.frames == frames and time.monotonic() < end:
+        time.sleep(0.05)
+    assert rec.frames > frames  # found the planet again and kept writing the same file
+    s.action("capture")  # the same button stops it
+    rec.done.wait(5)
+
+
+def test_recenter_leads_back_to_an_unnamed_field(tmp_path):
+    alt, az = radec_to_altaz(299.90, 22.72, WPB, EVENING)  # M27, but not chosen by name
+    cam = SimMainCamera(lambda: (alt, az), WPB, lambda: EVENING)
+    s = Session(WPB, lambda: (alt, az), clock=lambda: EVENING, main_camera=cam,
+                main_sensor=cam.sensor_size, data_dir=tmp_path)
+    s.stack_seconds = 30
+    s.action("capture")
+    s.action("recenter")
+    states = [m for m in s.tick(0.0) if m["type"] == "state"]
+    assert states[0]["target"] == "the capture" and states[0]["on_target"]  # it hasn't moved
+    s.action("stop")  # stops the paused capture; guidance ends with it
+    s.stacker.current.done.wait(10)
+    s.tick(1.0)
+    assert s.guide is None and not s._recentering
+
+
+def test_recenter_needs_a_capture(tmp_path):
+    s, _ = make_session(tmp_path)
+    assert "Start one first" in texts(s.action("recenter"))[0]

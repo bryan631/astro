@@ -46,8 +46,11 @@
   #arrow { position: absolute; font-size: 140px; line-height: 1; opacity: .85; pointer-events: none;
            transition: transform .2s; text-shadow: 0 0 8px #000; }
   #dist { position: absolute; bottom: 40px; font-size: 32px; text-shadow: 0 0 6px #000; }
-  #capinfo { position: absolute; left: 8px; top: 30px; font-size: 22px; text-shadow: 0 0 4px #000; }
-  #inset { position: absolute; right: 8px; top: 60px; width: 34%; border: 2px solid var(--fg);
+  #capinfo { position: absolute; left: 8px; bottom: 30px; font-size: 22px; text-shadow: 0 0 4px #000; }
+  #capinfo.warn { font-weight: bold; font-size: 28px; }
+  #field { position: absolute; width: 40px; height: 40px; margin: -20px 0 0 -20px; border: 2px solid var(--hi);
+           border-radius: 50%; }  /* where the stacked field is now (it drifts toward an edge) */
+  #inset { position: absolute; right: 8px; top: 120px; width: 34%; border: 2px solid var(--fg);
            border-radius: 8px; background: #000; }
   #msg { padding: 6px 12px; font-size: 22px; min-height: 1.6em; white-space: nowrap; overflow: hidden;
          text-overflow: ellipsis; }
@@ -84,7 +87,7 @@
     </div>
     <div class="view" id="v-main">
       <img class="cam" alt="main camera">
-      <div class="frame"></div>
+      <div class="frame"><div id="field" hidden></div></div>
       <div class="label">Main camera</div><div class="focus"><b></b><small></small><canvas width="160" height="40"></canvas></div>
       <div id="capinfo"></div><img id="inset" hidden alt="live stack">
       <div class="cap"></div>
@@ -232,12 +235,21 @@ setInterval(() => {  // guidance stopped (stop, unsafe, disconnect): no stale ar
 let capturing = false;
 const inset = $("inset");
 function showCapture(m) {
-  capturing = m.state === "recording";
+  capturing = m.state === "recording" || m.state === "paused";
   $("capture").textContent = capturing ? "Stop capture" : "Capture";
   $("capture").classList.toggle("on", capturing);
-  $("capinfo").textContent = m.state === "recording" ? `● ${m.name}: ${m.frames} frames, ${m.seconds} s`
+  $("recenter").textContent = m.state === "paused" ? "Resume" : "Recenter";
+  $("recenter").classList.toggle("on", m.state === "paused");
+  const edge = m.edge_s === null || m.edge_s === undefined ? "" : ` · edge in ${m.edge_s} s`;
+  $("capinfo").textContent = m.state === "recording" ? `● ${m.name}: ${m.frames} frames, ${m.seconds} s${edge}`
+    : m.state === "paused" ? `Paused (${m.frames} frames): follow the arrow, then Resume`
     : m.state === "processing" ? `Saved ${m.frames} frames: making the picture…`
     : m.state === "done" ? "Picture ready (Pictures)" : "";
+  $("capinfo").classList.toggle("warn", m.state === "recording" && m.edge_s !== null && m.edge_s <= 15);
+  const f = $("field"), xy = m.kind === "stack" && m.state === "recording" ? m.target_xy : null;
+  f.hidden = !xy;
+  const z = views.main.zoom;  // the view's zoom crops the center
+  if (xy) { f.style.left = `${(0.5 + (xy[0] - 0.5) * z) * 100}%`; f.style.top = `${(0.5 + (xy[1] - 0.5) * z) * 100}%`; }
 }
 
 // --- buttons

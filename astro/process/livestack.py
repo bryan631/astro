@@ -33,6 +33,7 @@ class LiveStack:
         self._sum: np.ndarray | None = None
         self._weight: np.ndarray | None = None  # pixels covered (edges shrink as frames rotate)
         self.status = StackStatus(0, 0)
+        self._last_tf = None  # newest frame -> reference transform (None: the reference itself)
 
     def add(self, raw: np.ndarray) -> bool:
         """Register one raw Bayer frame to the reference and add it. False if it was skipped."""
@@ -47,6 +48,7 @@ class LiveStack:
             self._ref_lum, self._sum = lum, rgb.copy()
             self._weight = np.ones(lum.shape, np.float32)
             self.status.frames_added = 1
+            self._last_tf = None
             return True
         try:
             tf, _ = astroalign.find_transform(lum, self._ref_lum,
@@ -55,6 +57,7 @@ class LiveStack:
             self.status.frames_skipped += 1
             self.status.last_error = str(e)
             return False
+        self._last_tf = tf
         warped = [astroalign.apply_transform(tf, rgb[..., c], self._ref_lum) for c in range(3)]
         channels = [image for image, _ in warped]
         covered = ~warped[0][1]  # footprint (same for every channel): True where no data landed
@@ -62,6 +65,21 @@ class LiveStack:
         self._weight += covered
         self.status.frames_added += 1
         return True
+
+    @property
+    def frame_size(self) -> tuple[int, int]:
+        """(width, height) of the stacked frames (debayered: half the sensor)."""
+        return self._ref_lum.shape[1], self._ref_lum.shape[0]
+
+    def reference_center(self) -> tuple[float, float] | None:
+        """Where the first frame's center (the field being stacked) is in the newest frame."""
+        if self._ref_lum is None:
+            return None
+        h, w = self._ref_lum.shape
+        if self._last_tf is None:
+            return w / 2, h / 2
+        x, y = self._last_tf.inverse(np.array([[w / 2, h / 2]]))[0]
+        return float(x), float(y)
 
     @property
     def has_frames(self) -> bool:

@@ -37,7 +37,7 @@ from astro.planner.catalog import load_targets
 from astro.planner.horizon import HorizonMask
 from astro.planner.moon_features import FEATURES
 from astro.planner.tonight import PLANET_NOTES, PLANETS, next_dark, plan
-from astro.pointing.coords import Site, body_altaz, radec_to_altaz
+from astro.pointing.coords import Site, altaz_to_radec, body_altaz, radec_to_altaz
 from astro.pointing.finder_sync import FinderSync
 from astro.pointing.geometry import separation_deg
 from astro.pointing.main_offset import MainOffset, fit_axes_and_offset, local_delta
@@ -68,7 +68,7 @@ RECORD_SECONDS = 300  # planetary video
 STACK_SECONDS = 300  # deep-sky live stack
 PROGRESS_S = 1.0  # capture progress to the page this often
 COLLIMATION_STEP_S = 2.0  # time to turn a screw and let the image settle between checks
-COLLIMATING = "We're checking collimation. Say stop to finish that first."
+COLLIMATING = "We're checking collimation. Tap STOP to finish that first."
 COLLIMATION_CROP_PX = 512  # around the defocused star (the donut is ~100-300 px across)
 MIN_HORIZON_MARKS = 3
 MIN_HORIZON_COVERAGE_DEG = 270  # less: a big unmarked gap gets a straight-line guess
@@ -154,6 +154,8 @@ class Session:
         self.main_box: list | None = None  # main field on the finder view (drift_offset.py)
         self._offset_cal: dict | None = None
         self._progress_at, self._capture_at = -1e9, 0.0  # capture progress messages
+        self._capture_radec = (0.0, 0.0)  # where a capture began (Recenter's target if unnamed)
+        self._recentering = False  # a paused capture: guidance leads back to its target
         # G3: which way "right" turns the scope, learned from the first left/right push.
         self.right_is_plus_az = True
         self._direction_learner = DirectionLearner()
@@ -265,12 +267,40 @@ class Session:
                 name = match_name(target or "", self.names())
                 return self.goto(name) if name else [say(f"I don't know {target}.")]
             handler = {"capture": self._toggle_capture, "stop": self._stop, "sync": self.sync,
-                       "focus": self.focus_hint}.get(do)
+                       "focus": self.focus_hint, "recenter": self._recenter}.get(do)
             return handler() if handler else [notice(f"{do.capitalize()} isn't ready yet.")]
 
     def _toggle_capture(self) -> list[dict]:
         """One button: start a capture, or stop the one running."""
         return self._stop_capture() if self._camera_busy() else self.capture()
+
+    def _recenter(self) -> list[dict]:
+        """Pause the capture and guide back to its target with the finder view's arrows; the
+        same button resumes. Video and stack both continue where they left off."""
+        job = next((j for j in (self.recorder, self.stacker) if j is not None and j.busy), None)
+        if job is None:
+            return [say("Recenter works during a capture. Start one first.")]
+        if not job.current.paused.is_set():
+            if self.finder is not None and not self.finder.synced:
+                ok, msg = self.finder.sync()  # the arrows need to know where we point
+                if not ok:
+                    return [say(f"I can't guide back yet: {msg}")]
+            job.pause()
+            self._recentering = True
+            alt, az = self._capture_altaz()
+            self.guide = Guide(*self._aim(alt, az), tolerance_arcmin=self._tolerance_arcmin(),
+                               right_is_plus_az=self.right_is_plus_az)
+            return [say("Paused. Follow the arrow on the finder view, then tap Resume."),
+                    self._capture_state(job.current, "paused")]
+        job.resume()
+        self.guide, self._recentering = None, False
+        return [say("Resumed."), self._capture_state(job.current, "recording")]
+
+    def _capture_altaz(self) -> tuple[float, float]:
+        """Where the capture's target is now: the named target, or the sky where it began."""
+        if self.target in self.names():
+            return self.altaz_of(self.target)
+        return radec_to_altaz(*self._capture_radec, self.site, self.clock())
 
     def target_list(self, limit: int = 20) -> list[dict]:
         """The Go to list: tonight's best first, each with where it is now and whether it's up
@@ -348,6 +378,8 @@ class Session:
                     "capturing.")]
 
     def _stop_capture(self) -> list[dict]:
+        if self._recentering:  # stopping a paused capture ends its guidance too
+            self.guide, self._recentering = None, False
         if self.stacker is not None and self.stacker.busy:
             self.stacker.stop()
             return [say("Stopping. I'll keep what's stacked so far.")]
@@ -378,7 +410,7 @@ class Session:
             return [say(COLLIMATING)]
         if self._camera_busy():
             return [say("I'm already recording." if self.recorder.busy else "I'm already stacking.")]
-        name = self.target or "capture"
+        name = self.target or "the field"  # an unnamed patch of sky
         try:
             if self.target in EXTENDED_TARGETS:  # planets, Moon: video; anything else stacks
                 self.recorder.start(name, self.record_seconds)
@@ -395,16 +427,18 @@ class Session:
 
     def _picture_started(self) -> None:
         """The picture has the camera: guidance goes quiet (no "right a little" while the user
-        was asked not to touch the telescope). The target is kept."""
+        was asked not to touch the telescope). The target is kept, and the sky position too,
+        so Recenter can lead back to an unnamed field."""
         self._capture_at = time.monotonic()
         self._centering, self.guide = False, None
+        self._capture_radec = altaz_to_radec(*self.position(), self.site, self.clock())
 
     def _camera_busy(self) -> bool:
         return any(job is not None and job.busy for job in (self.recorder, self.stacker))
 
     def goto(self, name: str) -> list[dict]:
         if self._camera_busy():
-            return [say("I'm taking a picture. Say stop first, then we can move.")]
+            return [say("I'm taking a picture. Stop it first (Capture or STOP), then we can move.")]
         pre: list[dict] = []
         if self.finder is not None and not self.finder.synced:
             ok, msg = self.finder.sync()  # need to know where we point before guiding
@@ -561,13 +595,22 @@ class Session:
         """While a capture runs, its frame count and time for the page, every PROGRESS_S."""
         if t - self._progress_at < PROGRESS_S:
             return []
-        for job, kind in ((self.recorder and self.recorder.current, "video"),
-                          (self.stacker and self.stacker.current, "stack")):
+        for job in (self.recorder and self.recorder.current, self.stacker and self.stacker.current):
             if job is not None and not job.done.is_set():
                 self._progress_at = t
-                return [{"type": "capture", "state": "recording", "kind": kind, "name": job.name,
-                         "frames": job.frames, "seconds": round(time.monotonic() - self._capture_at)}]
+                return [self._capture_state(job, "paused" if job.paused.is_set() else "recording")]
         return []
+
+    def _capture_state(self, job, state: str) -> dict:
+        """A capture's progress for the page: frames, time, and when the target reaches the
+        edge of the main camera (seconds, or None until the drift is measured)."""
+        left = job.edge.seconds_left() if job.edge else None
+        where = job.edge.position() if job.edge else None
+        return {"type": "capture", "state": state, "kind": "video" if hasattr(job, "lost") else "stack",
+                "name": job.name, "frames": job.frames,
+                "seconds": round(time.monotonic() - self._capture_at),
+                "edge_s": None if left is None else round(left),
+                "target_xy": None if where is None else [round(where[0], 3), round(where[1], 3)]}
 
     def _no_repeats(self, out: list[dict], t: float) -> list[dict]:
         """Coaching said the same words every second in the field: say a phrase again only after
@@ -619,12 +662,14 @@ class Session:
                 return hold
         if self._centering:
             return self._center_step(t)
-        if self.guide is None or self.target is None:
+        if self._recentering and not self._camera_busy():  # the capture ended while paused
+            self.guide, self._recentering = None, False
+        if self.guide is None or (self.target is None and not self._recentering):
             self._direction_probe, self._holding = None, False  # forget unrelated motion
             return []
         if t - self._resolved_at >= TARGET_REFRESH_S:
             self._resolved_at = t
-            alt, az = self.altaz_of(self.target)
+            alt, az = self._capture_altaz() if self._recentering else self.altaz_of(self.target)
             if not self.target_safety(alt, az).ok:
                 self.target, self.guide = None, None
                 return [say("Stopping: the target is no longer safe to point at.")]
@@ -632,7 +677,7 @@ class Session:
         alt_now, az_now = self.position()
         learned = self._learn_direction(az_now, t)  # before the cue: a flip must apply to it
         state, cue = self.guide.update(alt_now, az_now, t)
-        out = [{"type": "state", "target": self.target, "right_is_plus_az": self.right_is_plus_az,
+        out = [{"type": "state", "target": self.target or "the capture", "right_is_plus_az": self.right_is_plus_az,
                 **asdict(state)}, *learned]
         if cue and learned:
             cue = None  # let "Got it…" be heard; the next tick brings the (corrected) cue
@@ -666,7 +711,8 @@ class Session:
         if age is not None and age() > ENCODER_STALE_S:
             return "I lost the telescope's position sensors, so I stopped guiding. Check the cable."
         if not self.finder.synced:  # e.g. the encoder board restarted and was reset
-            return "I lost track of where the telescope points. Say 'sync' and let me look again."
+            return ("I lost track of where the telescope points. Point the finder at clear sky and "
+                    "tap More, then Sync now.")
         return None
 
     # --- calibration that survives a restart (CV7) ----------------------------------------

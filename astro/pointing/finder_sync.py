@@ -110,7 +110,8 @@ def check_focus(gray: np.ndarray) -> FocusReport:
                            "few_stars")
     if hfr > HFR_MAX_PX or (n < MIN_STARS and hfr > HFR_SOFT_PX):
         return FocusReport(n, hfr, False,
-                           "The finder looks out of focus. Say 'focus the finder' and I'll help.",
+                           "The finder looks out of focus. Turn its focus ring to make the finder's "
+                           "focus number as high as you can.",
                            "out_of_focus")
     if n < MIN_STARS:
         return FocusReport(n, hfr, False,

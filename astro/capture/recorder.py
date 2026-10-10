@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from astro.capture.edge import EdgeClock
 from astro.capture.roi import brightest_blob, roi_around
 from astro.capture.ser import SerWriter
 from astro.devices.base import Camera, Roi
@@ -24,6 +25,8 @@ def safe_name(name: str) -> str:
 ROI_PX = 512  # square planet ROI, sensor pixels
 RECENTER_EVERY = 50  # frames between drift checks
 RECENTER_FRACTION = 0.25  # re-center when the planet drifts this far from the ROI center
+EDGE_EVERY = 10  # frames between planet positions for the edge clock (a blob search is cheap)
+PAUSED_WAIT_S = 0.1
 KEEP_RECORDINGS = 3  # raw SER videos kept after processing (names sort by time)
 MIN_FREE_BYTES = 2 * 1024**3  # a 60 s recording is ~1.5 GB
 
@@ -48,6 +51,8 @@ class Recording:
     lost: bool = False  # planet left the frame
     error: str = ""  # why recording failed or stopped early (empty on success)
     done: threading.Event = field(default_factory=threading.Event)
+    paused: threading.Event = field(default_factory=threading.Event)  # Recenter: nothing written
+    edge: EdgeClock | None = None  # where the planet is on the sensor, and when it reaches the edge
 
 
 class Recorder:
@@ -71,6 +76,25 @@ class Recorder:
         if shutil.disk_usage(self.out_dir).free < MIN_FREE_BYTES:
             raise CaptureRefused("The disk is nearly full, so I can't record. "
                                  "Old recordings need to be cleared.")
+        self._restore = (self.camera.exposure_s, self.camera.gain)  # the live view's, for after
+        try:
+            roi = self._find_planet()
+        except CaptureRefused:
+            self._restore_view()
+            raise
+        stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")  # microseconds: never reuse a name
+        self.out_dir.mkdir(parents=True, exist_ok=True)
+        rec = Recording(self.out_dir / f"{stamp}_{safe_name(name)}.ser", name,
+                        edge=EdgeClock(*self.sensor))
+        self._stop.clear()
+        self.current = rec
+        log.info("recording", extra={"data": {"name": name, "seconds": seconds,
+                                              "sensor_temp_c": self.camera.temperature_c()}})
+        threading.Thread(target=self._run, args=(rec, roi, seconds), daemon=True).start()
+        return rec
+
+    def _find_planet(self) -> Roi:
+        """Planet settings, then an ROI around the brightest thing in the full frame."""
         try:
             self.camera.set_roi(None)
             # Short exposures freeze the seeing and keep the planet from burning out; the video's
@@ -88,27 +112,53 @@ class Recorder:
             self.camera.set_roi(roi)
         except (RuntimeError, OSError) as e:
             raise CaptureRefused(f"The main camera isn't responding: {e}") from e
-        stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")  # microseconds: never reuse a name
-        self.out_dir.mkdir(parents=True, exist_ok=True)
-        rec = Recording(self.out_dir / f"{stamp}_{safe_name(name)}.ser", name)
-        self._stop.clear()
-        self.current = rec
-        log.info("recording", extra={"data": {"name": name, "seconds": seconds,
-                                              "sensor_temp_c": self.camera.temperature_c()}})
-        threading.Thread(target=self._run, args=(rec, roi, seconds), daemon=True).start()
-        return rec
+        return roi
+
+    def _restore_view(self) -> None:
+        """Back to the live view's full frame and settings (the main view stays useful)."""
+        self.camera.set_roi(None)
+        self.camera.set_exposure(self._restore[0])
+        self.camera.set_gain(self._restore[1])
 
     def stop(self) -> None:
         self._stop.set()
 
-    def _run(self, rec: Recording, roi: Roi, seconds: float) -> None:
+    def pause(self) -> None:
+        """Recenter: stop writing, show the whole field until resume()."""
+        if self.current is not None:
+            self.current.paused.set()
+
+    def resume(self) -> None:
+        if self.current is not None:
+            self.current.paused.clear()
+
+    def _run(self, rec: Recording, roi: Roi | None, seconds: float) -> None:
         end = time.monotonic() + seconds
+        size = (roi.height, roi.width)  # every frame in the file has the ROI's size
         try:
             with SerWriter(rec.path, roi.width, roi.height, bayer=self.camera.bayer) as ser:
                 while time.monotonic() < end and not self._stop.is_set():
+                    if rec.paused.is_set():  # recentering: the whole field on the main view
+                        if roi is not None:
+                            self.camera.set_roi(None)
+                            roi = None
+                            rec.edge.reset()
+                        self._stop.wait(PAUSED_WAIT_S)
+                        continue
+                    if roi is None:  # resumed: find the planet again and follow it
+                        blob = brightest_blob(self.camera.capture())
+                        if blob is None:
+                            self._stop.wait(PAUSED_WAIT_S)
+                            continue
+                        roi = roi_around(blob, size[1], self.sensor)
+                        self.camera.set_roi(roi)
                     frame = self.camera.capture()
+                    if frame.shape != size:  # taken before the ROI changed
+                        continue
                     ser.write(frame)
                     rec.frames += 1
+                    if rec.frames % EDGE_EVERY == 0 and (blob := brightest_blob(frame)) is not None:
+                        rec.edge.add(time.monotonic(), roi.x + blob[0], roi.y + blob[1])
                     if rec.frames % RECENTER_EVERY == 0:
                         roi = self._recenter(frame, roi, rec)
                         if rec.lost:
@@ -118,7 +168,7 @@ class Recorder:
             rec.error = f"Recording failed: {e}"
         finally:
             try:
-                self.camera.set_roi(None)
+                self._restore_view()
             except (RuntimeError, OSError) as e:  # e.g. camera unplugged: still report and finish
                 rec.error = rec.error or f"Recording stopped, and the camera did not reset: {e}"
             finally:
