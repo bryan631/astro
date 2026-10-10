@@ -5,7 +5,9 @@ heaters; a PING every couple of seconds keeps the firmware's failsafe from cutti
 """
 
 import glob
+import logging
 import os
+import termios
 import threading
 import time
 from collections.abc import Callable
@@ -18,8 +20,22 @@ from astro.devices.dew import heater_percent
 BAUD = 115200
 PING_EVERY_S = 2.0  # firmware turns heaters off after 10 s without a PING (or HEAT)
 ENV_STALE_S = 5.0  # no valid environment reading this long: heaters off
+log = logging.getLogger(__name__)
 REOPEN_EVERY_S = 1.0  # retry opening the serial port this often after an unplug
 HEATER_CHANNELS = (0, 1)  # secondary holder, finder lens
+
+
+def _keep_dtr_on_close(ser) -> None:
+    """Leave DTR up when the port closes. Linux drops it on close (HUPCL) and raises it on the
+    next open, and that edge resets a classic Nano: its counts restart at 0 and the mount
+    model is lost with every app restart (2026-10-10). Without HUPCL only the first open
+    after the port appears resets the board."""
+    try:
+        attrs = termios.tcgetattr(ser.fileno())
+        attrs[2] &= ~termios.HUPCL
+        termios.tcsetattr(ser.fileno(), termios.TCSANOW, attrs)
+    except (AttributeError, OSError, ValueError, termios.error):  # test fakes have no tty
+        pass
 
 
 def default_port() -> str:
@@ -108,6 +124,7 @@ class Mcu:
             self.version = msg
         elif isinstance(msg, proto.Boot):
             self.boots += 1
+            log.warning("encoder board booted: its counts restart at 0", extra={"data": {"boots": self.boots}})
             # The board (re)started, so its counts are 0: any mount model built on earlier
             # counts is wrong, including one restored from disk at start-up (CV7).
             if self.on_reboot:
@@ -127,7 +144,9 @@ class Mcu:
             self._send(proto.heat(ch, percent))
 
     def _open(self):
-        return self._factory(self._port or default_port(), BAUD, timeout=0.5)
+        ser = self._factory(self._port or default_port(), BAUD, timeout=0.5)
+        _keep_dtr_on_close(ser)
+        return ser
 
     def _send(self, data: bytes) -> None:
         with self._lock:
