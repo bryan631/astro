@@ -1,5 +1,6 @@
 import time
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -51,7 +52,7 @@ def test_capture_records_right_away(tmp_path):
     s.recorder.current.done.wait(5)
     assert texts(s.tick(100.0))[0].startswith("Done. I saved")
     meta, frames = read_ser(next(tmp_path.glob("captures/*Saturn.ser")))
-    assert meta["frames"] > 3 and frames.shape[1:] == (512, 512) and frames.max() > 100
+    assert meta["frames"] > 3 and min(frames.shape[1:]) >= 512 and frames.max() > 100  # moons may widen it
 
 
 def test_capture_on_an_unpicked_planet_records_it(tmp_path):
@@ -64,6 +65,48 @@ def test_capture_on_an_unpicked_planet_records_it(tmp_path):
     s.camera_frame = lambda name: (disk, "GRBG", 0.1)
     assert texts(s.capture())[0].startswith("Recording.") and s.target == "Saturn"
     s.recorder.current.done.wait(5)
+
+
+def test_capture_asks_which_one_when_it_sees_more_than_one(tmp_path):
+    s, _ = make_session(tmp_path)
+    s._what_to_capture = lambda: ["Saturn", "Beehive Cluster"]
+    msgs = s.capture()
+    assert {"type": "choose", "options": ["Saturn", "Beehive Cluster"]} in msgs and not s._camera_busy()
+    assert texts(s.action("capture", "Saturn"))[0].startswith("Recording.") and s.target == "Saturn"
+    s.recorder.current.done.wait(5)
+
+
+def test_what_to_capture_names_the_disk_and_keeps_a_moon_feature(tmp_path):
+    s, _ = make_session(tmp_path)
+    disk = np.zeros((1080, 1920), np.uint8)
+    disk[400:600, 800:1000] = 255
+    s.camera_frame = lambda name: (disk, "GRBG", 0.1)
+    assert s._what_to_capture() == ["Saturn"]  # the pointing names the disk
+    s._planet_in_view = lambda: "Moon"
+    s.target = "Tycho"
+    assert s._what_to_capture() == ["Tycho"]  # Go to Tycho, then Capture: still Tycho
+
+
+def test_what_to_capture_uses_the_pointing_when_synced(tmp_path):
+    """Planets and Go to targets inside the telescope's field, once each; nothing just outside."""
+    s, _ = make_session(tmp_path)
+    s.finder, s._planet_in_view = SimpleNamespace(synced=True), lambda: "Saturn"
+    assert s._what_to_capture() == ["Saturn"]  # the disk and the pointing agree: listed once
+    s._planet_in_view = lambda: None
+    m13 = s.catalog["M13"]
+    s.position = lambda: radec_to_altaz(m13.ra, m13.dec, WPB, EVENING)
+    assert s._what_to_capture() == ["Hercules Cluster"]
+    s.position = lambda: radec_to_altaz(m13.ra + 1.0, m13.dec, WPB, EVENING)  # ~0.8 deg away
+    assert s._what_to_capture() == []
+
+
+def test_view_shows_the_whole_field_while_a_planet_records_its_roi(tmp_path):
+    s, _ = make_session(tmp_path)
+    s.recorder.background = np.zeros((1080, 1920), np.uint8)
+    s.recorder.roi = Roi(100, 50, 512, 512)
+    s.camera_frame = lambda name: (np.full((512, 512), 200, np.uint8), "GRBG", 0.1)
+    full, _, _ = s.view_frame("main")
+    assert full.shape == (1080, 1920) and full[50:562, 100:612].min() == 200 and full[0, 0] == 0
 
 
 def test_barlow_change_requires_refocus(tmp_path):

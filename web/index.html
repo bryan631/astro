@@ -72,7 +72,7 @@
   #capture.on { background: var(--dim); }
   .sheet { position: fixed; inset: 0; background: var(--bg); padding: 12px; overflow: auto; z-index: 5; }
   .sheet .top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-  #targets button { display: block; width: 100%; text-align: left; margin-bottom: 8px; }
+  #targets button, #choices button { display: block; width: 100%; text-align: left; margin-bottom: 8px; }
   #targets button.down { opacity: .5; }
   #targets small { display: block; font-size: 15px; opacity: .8; }
   #pictures { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
@@ -126,6 +126,7 @@
   <div class="sheet" id="viewer" hidden><div class="top"><span>
       <button data-vb="-">−</button> <button data-vb="+">+</button> <button data-vz="1">1x</button> <button data-vz="2">2x</button> <button data-vz="4">4x</button></span>
       <button data-close>Close</button></div><div class="pic"><img alt="picture"></div></div>
+  <div class="sheet" id="s-choose" hidden><div class="top"><b>Capture which one?</b><button data-close>Close</button></div><div id="choices"></div></div>
   <div class="sheet" id="s-log" hidden><div class="top"><b>Messages</b><button data-close>Close</button></div><div id="log"></div></div>
   <div class="sheet" id="s-more" hidden><div class="top"><b>More</b><button data-close>Close</button></div>
     <p><button id="mode">Day mode</button> <button id="sync">Sync now</button>
@@ -175,6 +176,7 @@ function handle(m) {
   if (m.type === "state") guide(m);
   if (m.type === "hold") { arrow.hidden = true; dist.textContent = "Hold still"; holding = true; }
   if (m.type === "capture") showCapture(m);
+  if (m.type === "choose") choose(m.options);
   if (m.type === "live") { inset.src = `${m.url}?n=${m.frames}`; inset.hidden = false; }
   if (m.type === "picture") { inset.hidden = true; showCapture({state: "done"}); if (!$("s-pics").hidden) showPictures(); }
 }
@@ -304,6 +306,19 @@ function showCapture(m) {
   f.hidden = !xy;
   const z = views.main.zoom;  // the view's zoom crops the center
   if (xy) { f.style.left = `${(0.5 + (xy[0] - 0.5) * z) * 100}%`; f.style.top = `${(0.5 + (xy[1] - 0.5) * z) * 100}%`; }
+  if (xy) {  // the live stack sits in the corner away from the target, and jumps as it drifts
+    const left = xy[0] > .5, top = xy[1] > .5;
+    Object.assign($("inset").style, {left: left ? "8px" : "auto", right: left ? "auto" : "8px",
+                                     top: top ? "50px" : "auto", bottom: top ? "auto" : "90px"});  // clear of the capture line
+  }
+}
+
+// More than one thing in the telescope view: the user picks what Capture records.
+function choose(options) {
+  $("choices").innerHTML = options.map(o => `<button>${esc(o)}</button>`).join("");
+  $("choices").querySelectorAll("button").forEach((b, i) => b.onclick = () => {
+    $("s-choose").hidden = true; action("capture", options[i]); showView("main"); });
+  open("s-choose");
 }
 
 // --- buttons

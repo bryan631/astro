@@ -14,6 +14,7 @@ import numpy as np
 from scipy import ndimage
 from scipy.stats import norm
 
+from astro.calibration_store import model_to_dict
 from astro.capture.focus import flatten_sky, half_flux_radius
 from astro.devices.base import Camera
 from astro.pointing.coords import Site, radec_to_altaz
@@ -158,6 +159,11 @@ class FinderSync:
         with self._model_lock:
             return self.model.to_sky(*enc)
 
+    def model_dict(self) -> dict:
+        """The mount model for the calibration file, never half refitted."""
+        with self._model_lock:
+            return model_to_dict(self.model)
+
     def focus_report(self) -> FocusReport:
         return check_focus(finder_gray(self.camera.capture()))  # callers handle a dead camera
 
@@ -166,6 +172,7 @@ class FinderSync:
         Always a new solve (`fresh` is for the same interface as SolveTracker). With
         `replace_near_deg` (background solves) it replaces older syncs that close, so a scope
         parked on one target keeps the model's spread over the sky."""
+        model = self.model  # a site change (reset) mid-solve makes this solve moot
         enc = self.encoders()  # read encoders and clock at exposure time, not after the solve
         try:
             gray, when = finder_gray(self.camera.capture()), self.clock()
@@ -177,16 +184,18 @@ class FinderSync:
             return False, focus.reason if not focus.ok else (
                 "I can see stars but couldn't recognize the pattern. "
                 "Something may be blocking part of the view.")
-        self.last_solution = sol
-        log_solution(sol)
         alt, az = radec_to_altaz(sol.ra_deg, sol.dec_deg, self.site, when)
         with self._model_lock:  # the solve ran unlocked; only the refit is serialized
+            if self.model is not model:
+                return False, "The place changed while I solved; sync again."
+            self.last_solution = sol  # published only for the current model (labels use it)
             if replace_near_deg is not None:
                 self.model.syncs = [s for s in self.model.syncs if separation_deg(
                     s.true_alt_deg, s.true_az_deg, alt, az) > replace_near_deg]
             rms = self.model.add_sync(Sync(enc[0], enc[1], alt, az))
             self.last_rms, self.synced = rms, True
             syncs = len(self.model.syncs)
+        log_solution(sol)
         if self.on_change:
             self.on_change()
         msg = "Got it, I know where we're pointing."

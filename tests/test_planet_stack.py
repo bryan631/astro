@@ -6,6 +6,7 @@ from astro.capture.ser import SerWriter
 from astro.process.planet import (
     _LAYOUT,
     align_channels,
+    finish,
     planet_center,
     process_ser,
     sharpness,
@@ -88,3 +89,14 @@ def test_process_ser_writes_png(tmp_path):
     img = np.asarray(Image.open(result.path))
     assert result.frames_total == 12 and result.frames_used == 3
     assert img.ndim == 3 and img.max() == 255 and img.shape[0] >= 32
+
+
+def test_finished_picture_keeps_the_moons():
+    """2026-10-10: the crop kept only the disk; Jupiter's moons belong in the picture."""
+    img = np.zeros((200, 400, 3))
+    y, x = np.mgrid[0:200, 0:400]
+    img[(x - 200) ** 2 + (y - 100) ** 2 <= 20**2] = 180  # the disk
+    for mx in (60, 340):  # two moons far outside 1.6 radii
+        img[99:102, mx - 1:mx + 2] = 120
+    out = finish(img + np.random.default_rng(0).normal(0, 1, img.shape))
+    assert out.shape[1] > 280  # both moons kept: wider than the disk's 64 px crop

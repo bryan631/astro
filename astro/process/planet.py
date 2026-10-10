@@ -13,6 +13,7 @@ import numpy as np
 from PIL import Image
 from scipy import fft, ndimage
 
+from astro.capture.roi import companions
 from astro.capture.ser import read_ser
 
 KEEP_FRACTION = 0.25  # stack the sharpest quarter of the frames
@@ -21,6 +22,7 @@ BATCH = 16  # frames per vectorized batch: bounds memory (~0.3 GB peak at 512 px
 SHARPEN_SIGMA_PX = 1.5  # unsharp mask radius on the half-resolution color image
 SHARPEN_AMOUNT = 1.0
 CROP_MARGIN = 1.6  # crop to this many planet radii around the center
+MOON_PAD = 0.8  # ... grown to keep each moon, with this many planet radii around it
 DISK_THRESHOLD = 0.3  # fraction of the brightest level that counts as "planet" for centering
 
 # Position of R, G1, G2, B within each 2x2 Bayer cell, as (row, col).
@@ -119,9 +121,14 @@ def finish(img: np.ndarray) -> np.ndarray:
     lum = img.mean(axis=2)
     cy, cx = planet_center(lum)
     radius = np.sqrt((lum > lum.min() + DISK_THRESHOLD * np.ptp(lum)).sum() / np.pi)
-    half = int(max(radius * CROP_MARGIN, 16))
-    y0, x0 = max(int(cy) - half, 0), max(int(cx) - half, 0)
-    img = img[y0:y0 + 2 * half, x0:x0 + 2 * half]
+    half = max(radius * CROP_MARGIN, 16)
+    xs, ys = [cx - half, cx + half], [cy - half, cy + half]
+    for mx, my in companions(lum, (cx, cy), max(lum.shape)):  # moons stay in the picture
+        pad = max(radius * MOON_PAD, 8)
+        xs += [mx - pad, mx + pad]
+        ys += [my - pad, my + pad]
+    x0, y0 = max(int(min(xs)), 0), max(int(min(ys)), 0)
+    img = img[y0:int(max(ys)) + 1, x0:int(max(xs)) + 1]
     lo, hi = np.percentile(img, 0.5), np.percentile(img, 99.9)
     return ((img - lo) / max(hi - lo, 1e-6) * 255).clip(0, 255).astype(np.uint8)
 
