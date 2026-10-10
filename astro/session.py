@@ -22,7 +22,7 @@ from scipy import ndimage
 from astro import calibration_store
 from astro.capture.collimation import CENTERED as COLLIMATED
 from astro.capture.collimation import CollimationCoach, Donut, analyze
-from astro.capture.exposure import next_settings
+from astro.capture.exposure import FINDER_DAY_RANGE, next_settings
 from astro.capture.live_stacker import LiveStacker
 from astro.capture.recorder import CaptureRefused, Recorder, prune
 from astro.capture.roi import brightest_blob, roi_around
@@ -83,6 +83,8 @@ LABELS_REFRESH_S = 5.0  # the sky turns ~0.02 degrees in 5 s: under 2 finder pix
 # By day the finder's view auto-exposes; the main camera gets fixed daylight settings (every
 # exposure change reopens it in the SDK, which froze its view in the field). At night both go
 # back to the settings their streams started with (the finder's are the plate solver's).
+DARK_SUN_ALT_DEG = -10.0  # Sun lower than this: the views get the night stretch (twilight: as is)
+MAIN_TWILIGHT_RANGE = (0.0005, 0.25)  # seconds: the main view auto-exposes once dawn clips it
 MAIN_DAY = (0.004, 0)  # measured on a sunny tree
 DAY_EXPOSURE_EVERY_S = 1.0
 TOLERANCE_ARCMIN = 8.0
@@ -160,6 +162,7 @@ class Session:
         self._label_catalog: tuple | None = None
         self.finder_map: np.ndarray | None = None  # alt-az -> finder pixels, from a solve (labels)
         self._solved_try_at, self._solving = -1e9, False
+        self._dark = (True, -1e9)  # dark(): (answer, when)
         self._said_later: list[dict] = []  # from background work, said on the next tick
         self._collimation_at = -1e9
         self.main_camera, self.main_sensor = main_camera, main_sensor
@@ -192,7 +195,7 @@ class Session:
         self._night = {name: (cam.exposure_s, cam.gain) for name, cam in
                        (("finder", getattr(finder, "camera", None)), ("main", main_camera))
                        if hasattr(cam, "latest")}  # streamed cameras: the page's views
-        self._day_exposure_at, self._finder_seen = -1e9, None
+        self._day_exposure_at, self._seen_for_exposure = -1e9, {}
         # G3: which way "right" turns the scope, learned from the first left/right push.
         self.right_is_plus_az = True
         self._direction_learner = DirectionLearner()
@@ -828,18 +831,22 @@ class Session:
                 exposure, gain = MAIN_DAY if day and name == "main" else self._night[name]
                 cam.set_exposure(exposure)
                 cam.set_gain(gain)
-        finder = cams.get("finder")
-        if finder is not None and self._align is None:
-            frame, seq, _ = finder.latest()
-            if frame is not None and seq != self._finder_seen:
-                self._finder_seen = seq
-                # by day, or once dawn clips the night settings (2026-10-10: all white at 6:50)
-                adjusting = (finder.exposure_s, finder.gain) != tuple(self._night["finder"])
-                if not (day or adjusting or np.median(frame[::8, ::8]) >= SATURATED_RAW):
-                    return
-                if (new := next_settings(frame, finder.exposure_s, finder.gain)) is not None:
-                    finder.set_exposure(new[0])
-                    finder.set_gain(new[1])
+        if self._align is not None:
+            return
+        for name, cam in cams.items():  # by day (finder), or once dawn clips the night settings
+            if name == "main" and (day or self._camera_busy()):  # (2026-10-10: all white at 6:50)
+                continue  # main by day: MAIN_DAY; a capture sets its own
+            frame, seq, _ = cam.latest()
+            if frame is None or seq == self._seen_for_exposure.get(name):
+                continue
+            self._seen_for_exposure[name] = seq
+            adjusting = (cam.exposure_s, cam.gain) != tuple(self._night[name])
+            if not ((day and name == "finder") or adjusting or np.median(frame[::8, ::8]) >= SATURATED_RAW):
+                continue
+            limits = FINDER_DAY_RANGE if name == "finder" else MAIN_TWILIGHT_RANGE
+            if (new := next_settings(frame, cam.exposure_s, cam.gain, limits, self._night[name][1])) is not None:
+                cam.set_exposure(new[0])
+                cam.set_gain(new[1])
 
     def _hold_for_fix(self) -> list[dict] | None:
         """Plate solving only: while the fix is stale (the scope is moving), don't steer by it.
@@ -1268,6 +1275,13 @@ class Session:
 
     def daytime(self) -> bool:
         return bool(body_altaz("sun", self.site, self.clock())[0] > DAYTIME_SUN_ALT_DEG)
+
+    def dark(self) -> bool:
+        """Dark enough for the night view's glow removal and stretch (checked every minute)."""
+        t = time.monotonic()
+        if t - self._dark[1] > 60:
+            self._dark = (bool(body_altaz("sun", self.site, self.clock())[0] < DARK_SUN_ALT_DEG), t)
+        return self._dark[0]
 
     def _tolerance_arcmin(self) -> float:
         return TOLERANCE_BARLOW_ARCMIN if self.barlow else TOLERANCE_ARCMIN
