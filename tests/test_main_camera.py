@@ -1,5 +1,6 @@
 import time
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -84,6 +85,19 @@ def test_what_to_capture_names_the_disk_and_keeps_a_moon_feature(tmp_path):
     s._planet_in_view = lambda: "Moon"
     s.target = "Tycho"
     assert s._what_to_capture() == ["Tycho"]  # Go to Tycho, then Capture: still Tycho
+
+
+def test_what_to_capture_uses_the_pointing_when_synced(tmp_path):
+    """Planets and Go to targets inside the telescope's field, once each; nothing just outside."""
+    s, _ = make_session(tmp_path)
+    s.finder, s._planet_in_view = SimpleNamespace(synced=True), lambda: "Saturn"
+    assert s._what_to_capture() == ["Saturn"]  # the disk and the pointing agree: listed once
+    s._planet_in_view = lambda: None
+    m13 = s.catalog["M13"]
+    s.position = lambda: radec_to_altaz(m13.ra, m13.dec, WPB, EVENING)
+    assert s._what_to_capture() == ["Hercules Cluster"]
+    s.position = lambda: radec_to_altaz(m13.ra + 1.0, m13.dec, WPB, EVENING)  # ~0.8 deg away
+    assert s._what_to_capture() == []
 
 
 def test_view_shows_the_whole_field_while_a_planet_records_its_roi(tmp_path):

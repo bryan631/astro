@@ -140,9 +140,8 @@ class Recorder:
         pts = [planet]
         for moon in moons:
             w, h, _, _ = box([*pts, moon])
-            if w * h > MAX_ROI_PIXELS:
-                break
-            pts.append(moon)
+            if w * h <= MAX_ROI_PIXELS:  # else skip it: a dimmer, nearer moon may still fit
+                pts.append(moon)
         w, h, cx, cy = box(pts)
         roi = roi_around((cx, cy), int(w), self.sensor, int(h))
         self._planet_in_roi = (planet[0] - roi.x, planet[1] - roi.y)

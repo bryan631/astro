@@ -184,18 +184,18 @@ class FinderSync:
             return False, focus.reason if not focus.ok else (
                 "I can see stars but couldn't recognize the pattern. "
                 "Something may be blocking part of the view.")
-        self.last_solution = sol
-        log_solution(sol)
         alt, az = radec_to_altaz(sol.ra_deg, sol.dec_deg, self.site, when)
         with self._model_lock:  # the solve ran unlocked; only the refit is serialized
             if self.model is not model:
                 return False, "The place changed while I solved; sync again."
+            self.last_solution = sol  # published only for the current model (labels use it)
             if replace_near_deg is not None:
                 self.model.syncs = [s for s in self.model.syncs if separation_deg(
                     s.true_alt_deg, s.true_az_deg, alt, az) > replace_near_deg]
             rms = self.model.add_sync(Sync(enc[0], enc[1], alt, az))
             self.last_rms, self.synced = rms, True
             syncs = len(self.model.syncs)
+        log_solution(sol)
         if self.on_change:
             self.on_change()
         msg = "Got it, I know where we're pointing."
