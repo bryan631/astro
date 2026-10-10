@@ -222,13 +222,17 @@ class Recorder:
                             rec.error = "The planet drifted out of view, so I stopped early."
                             break
         except (RuntimeError, OSError, ValueError) as e:  # SDK error, disk full, bad frame
+            log.exception("recording failed")
             rec.error = f"Recording failed: {e}"
         finally:
             try:
                 self._restore_view()
             except (RuntimeError, OSError) as e:  # e.g. camera unplugged: still report and finish
+                log.exception("recording: camera did not reset")
                 rec.error = rec.error or f"Recording stopped, and the camera did not reset: {e}"
             finally:
+                log.info("recording done", extra={"data": {"name": rec.name, "frames": rec.frames,
+                                                           "error": rec.error, "lost": rec.lost}})
                 rec.done.set()
 
     def _recenter(self, frame, roi: Roi, rec: Recording) -> Roi:

@@ -794,6 +794,9 @@ class Session:
         try:
             extra = {"replace_near_deg": AUTO_SOLVE_NEAR_DEG} if isinstance(self.finder, FinderSync) else {}
             ok, why = self.finder.sync(fresh=True, **extra)
+        except Exception:  # a bug in one solve must not stop the next ones
+            log.exception("auto solve failed")
+            return
         finally:
             self._solving = False
         log.info("auto solve", extra={"data": {"ok": ok, "why": why}})
@@ -883,6 +886,8 @@ class Session:
                 continue  # a capture set its own: caught up once it ends
             self._light[name] = day
             exposure, gain = MAIN_DAY if day and name == "main" else self._night[name]
+            log.info("camera settings", extra={"data": {"camera": name, "day": day,
+                                                        "exposure_s": exposure, "gain": gain}})
             cam.set_exposure(exposure)
             cam.set_gain(gain)
         if self._align is not None:
@@ -1157,6 +1162,7 @@ class Session:
         try:
             result = job.result()
         except (ValueError, OSError) as e:
+            log.exception("picture failed", extra={"data": {"name": name}})
             return [say(f"I couldn't make the picture of {name}: {e}"), {"type": "capture", "state": "idle"}]
         if not self._jobs:  # nothing queued still needs its raw video
             prune(self.recorder.out_dir)  # keep only the newest raw videos

@@ -238,3 +238,13 @@ def test_debug_info_survives_a_dead_serial_port():
     info = Session(WPB, finder=BlindFinder(), clock=lambda: EVENING).debug_info()
     assert info["encoders"] == {"error": "port gone"} and info["pointing"]["synced"] is False
     assert info["main_camera"] == {"connected": False}
+
+
+def test_a_crashing_background_solve_is_logged_and_the_next_one_runs(caplog):
+    class Broken(BlindFinder):
+        def sync(self, fresh=False):
+            raise ZeroDivisionError
+
+    s = Session(WPB, finder=Broken(), clock=lambda: EVENING)
+    s._auto_solve(was_synced=False)
+    assert not s._solving and "auto solve failed" in caplog.text

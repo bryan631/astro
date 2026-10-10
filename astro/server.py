@@ -64,7 +64,7 @@ def load_env(path: Path = ROOT / ".env") -> None:
 
 
 log = logging.getLogger("astro.server")
-LOGGED = {"say", "picture", "get_location"}  # not the 10 Hz "state" or "live" updates
+LOGGED = {"say", "notice", "choose", "picture", "get_location"}  # not the 10 Hz "state" or "live" updates
 GALLERY = ROOT / "data" / "gallery"
 LIVE = ROOT / "data" / "live"  # live-stack previews while they build (not gallery pictures)
 

@@ -8,6 +8,7 @@ Files live in data/logs/ (git-ignored); only the newest KEEP runs are kept.
 import json
 import logging
 import sys
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -40,4 +41,15 @@ def setup(root: Path, keep: int = KEEP) -> Path:
     root_logger = logging.getLogger("astro")
     root_logger.handlers[:] = [file_handler, console]
     root_logger.setLevel(logging.INFO)
+    threading.excepthook = log_thread_crash
     return path
+
+
+def log_thread_crash(args: threading.ExceptHookArgs) -> None:
+    """A background thread died (a solve, a capture, the encoder reader): into this run's log
+    with its traceback, not only stderr."""
+    if args.exc_type is SystemExit:
+        return
+    name = args.thread.name if args.thread else "?"
+    logging.getLogger("astro").error("thread crashed", extra={"data": {"thread": name}},
+                                     exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
