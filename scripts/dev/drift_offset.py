@@ -58,19 +58,24 @@ def frames(camera, seconds):
     return out
 
 
+async def send(*messages):
+    async with websockets.connect(URL.replace("https", "wss") + "/ws", ssl=CTX) as ws:
+        for m in messages:
+            await ws.send(json.dumps(m))
+        await asyncio.sleep(0.5)
+
+
 async def capture():
     """Main video plus background finder frames, both polled at the same time."""
-    async with websockets.connect(URL.replace("https", "wss") + "/ws", ssl=CTX) as ws:
-        await ws.send(json.dumps({"type": "video", "camera": "main"}))
-        await ws.send(json.dumps({"type": "side_finder", "on": True}))
-        await asyncio.sleep(3)  # settle
-        try:
-            main_f, finder_f = await asyncio.gather(asyncio.to_thread(frames, "main", SECONDS),
-                                                    asyncio.to_thread(frames, "finder", SECONDS))
-        finally:
-            await ws.send(json.dumps({"type": "side_finder", "on": False}))
-        print("frames with the planet: main", len(main_f), "finder", len(finder_f), flush=True)
-        return {"main": main_f, "finder": finder_f}
+    await send({"type": "video", "camera": "main"}, {"type": "side_finder", "on": True})
+    await asyncio.sleep(3)  # settle
+    try:
+        main_f, finder_f = await asyncio.gather(asyncio.to_thread(frames, "main", SECONDS),
+                                                asyncio.to_thread(frames, "finder", SECONDS))
+    finally:
+        await send({"type": "side_finder", "on": False})
+    print("frames with the planet: main", len(main_f), "finder", len(finder_f), flush=True)
+    return {"main": main_f, "finder": finder_f}
 
 
 def fit(samples, planet, loc, ref):
