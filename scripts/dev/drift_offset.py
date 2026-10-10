@@ -26,7 +26,7 @@ from scipy import ndimage
 URL = "https://localhost:8443"
 CTX = ssl.create_default_context()
 CTX.check_hostname, CTX.verify_mode = False, ssl.CERT_NONE
-SECONDS = 40  # both cameras at once; the planet crosses the main camera in about 2 minutes
+ROUNDS, SLICE_S = 4, 6.0  # main/finder turns; the planet crosses the main camera in ~2 min
 ARCSEC_PX = {"main": 1928 * 0.5 / 960, "finder": 10.38 * 3600 / 640}  # page JPEG pixels
 TEXT_BOX = (slice(0, 50), slice(0, 300))  # the sharpness label
 
@@ -66,16 +66,15 @@ async def send(*messages):
 
 
 async def capture():
-    """Main video plus background finder frames, both polled at the same time."""
-    await send({"type": "video", "camera": "main"}, {"type": "side_finder", "on": True})
-    await asyncio.sleep(3)  # settle
-    try:
-        main_f, finder_f = await asyncio.gather(asyncio.to_thread(frames, "main", SECONDS),
-                                                asyncio.to_thread(frames, "finder", SECONDS))
-    finally:
-        await send({"type": "side_finder", "on": False})
-    print("frames with the planet: main", len(main_f), "finder", len(finder_f), flush=True)
-    return {"main": main_f, "finder": finder_f}
+    """Main and finder interleaved (the SVBony SDK crashes capturing both at once)."""
+    got = {"main": [], "finder": []}
+    for _ in range(ROUNDS):
+        for camera in ("main", "finder"):
+            await send({"type": "video", "camera": camera})
+            await asyncio.sleep(2)  # the camera reopens with its video settings
+            got[camera] += await asyncio.to_thread(frames, camera, SLICE_S)
+    print("frames with the planet: main", len(got["main"]), "finder", len(got["finder"]), flush=True)
+    return got
 
 
 def fit(samples, planet, loc, ref):
