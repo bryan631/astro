@@ -829,10 +829,14 @@ class Session:
                 cam.set_exposure(exposure)
                 cam.set_gain(gain)
         finder = cams.get("finder")
-        if day and finder is not None and self._align is None:
+        if finder is not None and self._align is None:
             frame, seq, _ = finder.latest()
             if frame is not None and seq != self._finder_seen:
                 self._finder_seen = seq
+                # by day, or once dawn clips the night settings (2026-10-10: all white at 6:50)
+                adjusting = (finder.exposure_s, finder.gain) != tuple(self._night["finder"])
+                if not (day or adjusting or np.median(frame[::8, ::8]) >= SATURATED_RAW):
+                    return
                 if (new := next_settings(frame, finder.exposure_s, finder.gain)) is not None:
                     finder.set_exposure(new[0])
                     finder.set_gain(new[1])

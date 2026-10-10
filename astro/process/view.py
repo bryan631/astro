@@ -46,10 +46,10 @@ def render(raw: np.ndarray, bayer: str, zoom: int = 1, rotate: int = 180,
     metrics = {"focus": focus.score, "stars": focus.stars, "focus_mode": focus.mode}
     if night is None:
         night = lo <= DAY_MEDIAN
-    if night:  # glow and gradients off; brightness only (color leftovers of clouds turned
-        # them green and the sky purple), shown in gray
+    if night:  # glow and gradients off the brightness; each pixel keeps its own color (taking
+        # the sky off each color separately turned clouds green and the sky purple)
         flat = lum - sky_map(lum)
-        rgb = np.repeat(flat[..., None], 3, axis=2)
+        rgb = flat[..., None] * (rgb / np.maximum(lum, 1.0)[..., None]).clip(0, 3)
         lo = float(np.percentile(flat[::4, ::4], 50))
     while rgb.shape[1] > 2 * MAX_WIDTH:  # display needs no more than this
         rgb = _bin2(rgb)
