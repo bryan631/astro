@@ -2,11 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=1280">  <!-- laid out for 1280x800; the tablet (961x601) scales it to fit -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Astro</title>
 <link rel="manifest" href="manifest.json">
 <style>
-  /* Landscape, one screen, no scrolling: both cameras live on top, buttons along the bottom.
+  /* One screen, both cameras always live, buttons along the bottom. Portrait: finder above main.
+     Landscape: one camera fills the screen; swipe (or tap its name) for the other.
      Everything works with the volume off (Phase 3b): every message is text on the screen. */
   :root { --bg: #000; --fg: #ff3b30; --dim: #7a1c17; --hi: #ff6a5f; }
   body.day { --bg: #111; --fg: #f2f2f2; --dim: #555; --hi: #7cff7c; }
@@ -14,13 +15,17 @@
   [hidden] { display: none !important; }  /* else a hidden sheet's own display covers the buttons */
   html, body { height: 100%; }
   body { margin: 0; background: var(--bg); color: var(--fg); font: 20px/1.3 system-ui, sans-serif;
-         display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; height: 100vh; overflow: hidden; }
+         display: grid; grid-template-rows: minmax(0, 1fr) auto auto; height: 100vh; overflow: hidden; }
   button { font: inherit; color: var(--fg); background: var(--bg); border: 2px solid var(--dim);
            border-radius: 12px; padding: 10px 16px; touch-action: manipulation; }
   button.on { border-color: var(--fg); border-width: 4px; }
-  #status { font-size: 16px; padding: 4px 12px; display: flex; gap: 14px; flex-wrap: wrap; }
+  #bar { display: flex; align-items: center; gap: 14px; min-width: 0; }
+  #status { font-size: 16px; padding-right: 12px; display: flex; gap: 14px; white-space: nowrap; }
   #status .bad { text-decoration: underline; font-weight: bold; }
-  #views { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: minmax(0, 1fr); gap: 8px; padding: 0 8px; min-height: 0; }
+  #views { display: grid; grid-auto-flow: column; grid-auto-columns: 100%; grid-template-rows: minmax(0, 1fr);
+           gap: 8px; padding: 0 8px; min-height: 0; overflow-x: auto; scroll-snap-type: x mandatory;
+           scrollbar-width: none; }
+  #views > .view { scroll-snap-align: center; }
   .view { position: relative; border: 2px solid var(--dim); border-radius: 12px; overflow: hidden;
           display: flex; align-items: center; justify-content: center; min-height: 0; }
   .view > img.cam { max-width: 100%; max-height: 100%; display: block; }
@@ -34,7 +39,7 @@
   .frame svg { position: absolute; inset: 0; width: 100%; height: 100%; }
   .frame polygon { fill: none; stroke: var(--hi); stroke-width: 2px; stroke-dasharray: 6 4;
                    vector-effect: non-scaling-stroke; }
-  .label { position: absolute; left: 8px; top: 6px; font-size: 16px; text-shadow: 0 0 4px #000; }
+  .label { position: absolute; left: 0; top: 0; padding: 6px 14px 10px 8px; font-size: 16px; text-shadow: 0 0 4px #000; }
   .cap { position: absolute; left: 8px; bottom: 6px; font-size: 15px; opacity: .85; text-shadow: 0 0 4px #000; }
   .focus { position: absolute; right: 10px; top: 6px; text-align: right; text-shadow: 0 0 4px #000; }
   .focus b { font-size: 34px; } .focus canvas { display: block; margin-left: auto; }
@@ -52,7 +57,7 @@
            border-radius: 50%; }  /* where the stacked field is now (it drifts toward an edge) */
   #inset { position: absolute; right: 8px; top: 120px; width: 34%; border: 2px solid var(--fg);
            border-radius: 8px; background: #000; }
-  #msg { padding: 6px 12px; font-size: 22px; min-height: 1.6em; white-space: nowrap; overflow: hidden;
+  #msg { flex: 1; min-width: 0; padding: 6px 12px; font-size: 22px; min-height: 1.6em; white-space: nowrap; overflow: hidden;
          text-overflow: ellipsis; }
   #buttons { display: flex; gap: 8px; padding: 6px 8px 10px; align-items: stretch; }
   #buttons button { font-size: 22px; padding: 12px 14px; }
@@ -72,15 +77,22 @@
   #log { font-size: 18px; white-space: pre-wrap; }
   #debugbox { font: 16px/1.35 ui-monospace, monospace; white-space: pre-wrap; }
   .sheet a { color: var(--fg); }
+  @media (orientation: portrait) {
+    #views { grid-auto-flow: row; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); overflow: hidden; }
+    .view .label .swap { display: none; }
+    #buttons { gap: 4px; padding: 4px 4px 8px; }
+    #buttons button, #stop { flex: 1 1 auto; font-size: 16px; padding: 12px 2px; }
+    #stop { flex-grow: 1.5; border-width: 3px; }
+    #buttons .grow { display: none; }
+  }
 </style>
 </head>
 <body>
-  <div id="status"></div>
   <div id="views">
     <div class="view" id="v-finder">
       <img class="cam" alt="finder camera">
       <div class="frame"><svg viewBox="-0.5 -0.5 1 1" preserveAspectRatio="none"><polygon id="mainbox"/></svg></div>
-      <div class="label">Finder</div><div class="focus"><b></b><small></small><canvas width="160" height="40"></canvas></div>
+      <div class="label">Finder<span class="swap"> ⇄</span></div><div class="focus"><b></b><small></small><canvas width="160" height="40"></canvas></div>
       <div id="arrow" hidden></div><div id="dist"></div>
       <div class="cap"></div>
       <div class="ctl"><button data-b="-">−</button><button data-b="+">+</button><button data-z>1x</button></div>
@@ -88,13 +100,13 @@
     <div class="view" id="v-main">
       <img class="cam" alt="main camera">
       <div class="frame"><div id="field" hidden></div></div>
-      <div class="label">Main camera</div><div class="focus"><b></b><small></small><canvas width="160" height="40"></canvas></div>
+      <div class="label">Main camera<span class="swap"> ⇄</span></div><div class="focus"><b></b><small></small><canvas width="160" height="40"></canvas></div>
       <div id="capinfo"></div><img id="inset" hidden alt="live stack">
       <div class="cap"></div>
       <div class="ctl"><button data-b="-">−</button><button data-b="+">+</button><button data-z>1x</button></div>
     </div>
   </div>
-  <div id="msg"></div>
+  <div id="bar"><div id="msg"></div><div id="status"></div></div>
   <div id="buttons">
     <button id="goto">Go to</button><button id="align">Align</button><button id="focus">Focus</button>
     <button id="capture">Capture</button><button id="recenter">Recenter</button>
@@ -192,6 +204,9 @@ function fit(name) {  // the overlay frame covers the picture exactly, wherever 
 }
 // The tablet's CSS viewport (vh, dvh) runs under Android's bars; innerHeight is what shows.
 const fitPage = () => { document.body.style.height = `${innerHeight}px`; fit("finder"); fit("main"); };
+const showView = name => views[name].el.scrollIntoView({behavior: "smooth", inline: "center", block: "nearest"});
+$("v-finder").querySelector(".label").onclick = () => showView("main");  // landscape: swap cameras
+$("v-main").querySelector(".label").onclick = () => showView("finder");
 addEventListener("resize", fitPage); fitPage();
 function showFocus(name, value, stars, mode) {  // higher is sharper: turn the focuser to maximize it
   const v = views[name], box = v.el.querySelector(".focus");
@@ -263,10 +278,10 @@ function showCapture(m) {
 }
 
 // --- buttons
-$("capture").onclick = () => action("capture");
+$("capture").onclick = () => { action("capture"); if (!capturing) showView("main"); };
 $("stop").onclick = () => action("stop");
 $("align").onclick = () => action("align");
-$("recenter").onclick = () => action("recenter");
+$("recenter").onclick = () => { action("recenter"); showView("finder"); };
 $("focus").onclick = () => { const on = document.body.classList.toggle("focusing");
   $("focus").classList.toggle("on", on); if (on) action("focus"); };
 $("sync").onclick = () => action("sync");
@@ -281,7 +296,7 @@ $("goto").onclick = async () => {
     $("targets").innerHTML = list.map(t => `<button data-name="${t.name}" class="${t.up ? "" : "down"}">${t.name}
       <small>${t.category} · ${t.up ? `${t.alt.toFixed(0)}° up` : "below the trees or horizon now"} · ${t.note}</small></button>`).join("")
       || "Nothing good is up.";
-    $("targets").querySelectorAll("button").forEach(b => b.onclick = () => { action("goto", b.dataset.name); $("s-goto").hidden = true; });
+    $("targets").querySelectorAll("button").forEach(b => b.onclick = () => { action("goto", b.dataset.name); $("s-goto").hidden = true; showView("finder"); });
   } catch (e) { $("targets").textContent = `Couldn't load the list: ${e.message}`; }
 };
 $("more").onclick = async () => {
@@ -324,13 +339,13 @@ function sendLocation(id) {  // echo the request id so stale answers can be igno
     {enableHighAccuracy: true, timeout: 20000, maximumAge: 0});  // always a fresh fix
 }
 
-// --- status line: what's connected (problems underlined and bold: it's all red at night), and
+// --- status: only what's wrong (next to the message line; bold and underlined: it's all red at night), and
 // a reload by itself when a new version is deployed.
 let build = null;
 async function pollStatus() {
   const link = ws && ws.readyState === WebSocket.OPEN;
-  const item = (name, ok, why) => ok === null || ok === undefined ? "" :
-    `<span class="${ok ? "" : "bad"}">${name} ${ok ? "✓" : "✗" + (why ? " " + why : "")}</span>`;
+  const item = (name, ok, why) => ok === null || ok === undefined || ok ? "" :
+    `<span class="bad">${name} ✗${why ? " " + why : ""}</span>`;
   let s = {};
   if (link) { try { const r = await fetch("/api/status"); if (r.ok) s = await r.json(); } catch {} }
   if (s.build) { if (build && s.build !== build) { location.reload(); return; } build = s.build; }
