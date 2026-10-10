@@ -30,7 +30,9 @@ def label(row: dict) -> str | None:
 
 def main(src: str, dest: str) -> None:
     out = []
-    for row in csv.DictReader(open(src, encoding="utf-8")):
+    with open(src, encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    for row in rows:
         if row["id"] == "0" or not row["mag"] or float(row["mag"]) > MAX_MAG:
             continue  # the Sun; too faint
         if name := label(row):

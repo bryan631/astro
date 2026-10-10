@@ -36,7 +36,7 @@ def test_names_land_on_the_stars_in_a_real_finder_frame(solved, altitude):
     while abs(alt - altitude) > 4:  # wait for the field to reach that altitude
         t += timedelta(minutes=10)
         alt, az = radec_to_altaz(sol.ra_deg, sol.dec_deg, site, t)
-    names, ra, dec = load_stars()
+    _, ra, dec = load_stars()
     x, y, on = place(*altaz_now(ra, dec, site, t), (alt, az), tube_map(sol, w, site, t), (w, h))
     gray = finder_gray(frame).astype(float)
     bg = np.median(gray)

@@ -4,6 +4,7 @@
 messages for the tablet: {"type": "say", "text": ...} and {"type": "state", ...}.
 """
 
+import logging
 import os
 import threading
 import time
@@ -58,6 +59,8 @@ from astro.spots import Spot, upsert, with_mask
 from astro.wizard import SetupWizard
 
 Clock = Callable[[], datetime]
+log = logging.getLogger(__name__)
+
 TARGET_REFRESH_S = 1.0  # targets drift ~15"/s, so re-resolve their alt/az once a second
 ZOOMS = (1, 2, 4)  # the page's digital zoom per camera view
 NOT_UNDERSTOOD = "Sorry, I didn't catch that. Say 'what's good tonight' or 'go to Saturn'."
@@ -149,6 +152,7 @@ class Session:
         self._collimation: CollimationCoach | None = None
         self._labels: dict | None = None  # finder_labels' cache: the solve's map, objects' alt-az
         self._label_catalog: tuple | None = None
+        self.finder_map: np.ndarray | None = None  # alt-az -> finder pixels, from a solve (labels)
         self._collimation_at = -1e9
         self.main_camera, self.main_sensor = main_camera, main_sensor
         self.zoom = {"finder": 1, "main": 1}  # the page's digital zoom per camera view
@@ -546,16 +550,20 @@ class Session:
     def finder_labels(self) -> list[list]:
         """Names on the finder view, [[name, kind, x, y], ...] with x, y as fractions from the
         view's center (kind: star, target or planet), from the last plate solve's map and where
-        the finder points now (astro/pointing/labels.py). Empty until the first solve."""
+        the finder points now (astro/pointing/labels.py). The map is saved, so names come back
+        after a restart without a new solve; empty until the first solve ever."""
         sol = getattr(self.finder, "last_solution", None)
         frame = self.camera_frame("finder")
-        if sol is None or frame is None:
+        if frame is None or (sol is None and self.finder_map is None):
             return []
         h, w = frame[0].shape
         c, now = self._labels, time.monotonic()
         if c is None or c["sol"] is not sol or now - c["at"] > LABELS_REFRESH_S:
             when = self.clock()
-            m = c["m"] if c and c["sol"] is sol else tube_map(sol, w, self.site, when)  # at its solve
+            if sol is not None and (c is None or c["sol"] is not sol):  # a new solve: its map, now
+                self.finder_map = tube_map(sol, w, self.site, when)
+                self._save_calibration()  # fixed to the tube: it holds after a restart
+            m = self.finder_map
             names, kinds, ra, dec = self._label_objects()
             alt, az = altaz_now(ra, dec, self.site, when)
             bodies = [*PLANETS, "moon"]
@@ -813,6 +821,7 @@ class Session:
                             if offset.observations else None),
             "mount": None,
             "main_box": self.main_box,
+            "finder_map": self.finder_map.tolist() if self.finder_map is not None else None,
             "main_in_finder": ({"a": self.main_in_finder.a.tolist(),
                                 "center": self.main_in_finder.center.tolist(),
                                 "residual_px": self.main_in_finder.residual_px}
@@ -834,6 +843,8 @@ class Session:
         if data.get("camera_axes") is not None:
             self.centerer.axes.matrix = np.array(data["camera_axes"])
         self.main_box = data.get("main_box")  # main field corners on the finder view
+        if data.get("finder_map") is not None:
+            self.finder_map = np.array(data["finder_map"])
         if (mif := data.get("main_in_finder")) is not None:
             self.main_in_finder = MainInFinder(np.array(mif["a"]), np.array(mif["center"]),
                                                mif["residual_px"])
