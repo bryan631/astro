@@ -163,13 +163,12 @@ class FinderSync:
             gray, when = finder_gray(self.camera.capture()), self.clock()
         except (RuntimeError, OSError):
             return False, "The finder camera isn't responding. Is it unplugged?"
-        focus = check_focus(gray)
-        if not focus.ok:
-            return False, focus.reason
-        sol = self.solver.solve(gray, bayer=False, binned=2)
+        focus = check_focus(gray)  # a solve can still work when this doubts it: it only explains
+        sol = self.solver.solve(gray, bayer=False, binned=2) if focus.stars else None
         if sol is None:
-            return False, ("I can see stars but couldn't recognize the pattern. "
-                           "Something may be blocking part of the view.")
+            return False, focus.reason if not focus.ok else (
+                "I can see stars but couldn't recognize the pattern. "
+                "Something may be blocking part of the view.")
         self.last_solution = sol
         log_solution(sol)
         alt, az = radec_to_altaz(sol.ra_deg, sol.dec_deg, self.site, when)
