@@ -945,10 +945,8 @@ class Session:
                                 "residual_px": self.main_in_finder.residual_px}
                                if self.main_in_finder else None),
         }
-        model = getattr(self.finder, "model", None)
-        if model is not None and self.finder.synced:
-            data["mount"] = {"site": [self.site.lat_deg, self.site.lon_deg],
-                             **calibration_store.model_to_dict(model)}
+        if hasattr(self.finder, "model_dict") and self.finder.synced:
+            data["mount"] = {"site": [self.site.lat_deg, self.site.lon_deg], **self.finder.model_dict()}
         return data
 
     def _save_calibration(self) -> None:
