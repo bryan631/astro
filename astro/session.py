@@ -159,6 +159,7 @@ class Session:
         self._label_catalog: tuple | None = None
         self.finder_map: np.ndarray | None = None  # alt-az -> finder pixels, from a solve (labels)
         self._solved_try_at = -1e9
+        self._said_later: list[dict] = []  # from background work, said on the next tick
         self._collimation_at = -1e9
         self.main_camera, self.main_sensor = main_camera, main_sensor
         self.zoom = {"finder": 1, "main": 1}  # the page's digital zoom per camera view
@@ -684,7 +685,8 @@ class Session:
     # --- guidance loop -------------------------------------------------------------------
     def tick(self, t: float) -> list[dict]:
         with self._lock:
-            return self._no_repeats([*self._capture_progress(t), *self._tick(t)], t)
+            later, self._said_later = self._said_later, []
+            return self._no_repeats([*later, *self._capture_progress(t), *self._tick(t)], t)
 
     def _capture_progress(self, t: float) -> list[dict]:
         """While a capture runs, its frame count and time for the page, every PROGRESS_S."""
@@ -726,7 +728,14 @@ class Session:
         if self.finder is None or time.monotonic() - self._solved_try_at < AUTO_SOLVE_EVERY_S:
             return
         self._solved_try_at = time.monotonic()
-        threading.Thread(target=self.finder.sync, kwargs={"fresh": True}, daemon=True).start()
+        threading.Thread(target=self._auto_solve, daemon=True).start()
+
+    def _auto_solve(self) -> None:
+        was_synced = getattr(self.finder, "synced", True)
+        ok, why = self.finder.sync(fresh=True)
+        log.info("auto solve", extra={"data": {"ok": ok, "why": why}})
+        if ok and not was_synced:
+            self._said_later.append(say("Found where the scope points (plate solve)."))
 
     def _tick(self, t: float) -> list[dict]:
         self._daylight_settings(t)
