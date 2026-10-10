@@ -450,18 +450,21 @@ class Session:
         if self._camera_busy():
             return [say("I'm already recording." if self.recorder.busy else "I'm already stacking.")]
         disk = self.target not in EXTENDED_TARGETS and self._planet_in_view()
-        if disk and disk != "planet":
-            self.target = disk  # not picked in Go to: a deep-sky stack would blow out its disk
-        name = self.target or ("the planet" if disk else "the field")  # unnamed: as seen
+        # a disk in view wins over an older Go to target (a deep-sky stack would blow it out);
+        # the session's target changes only once the capture has started
+        target = (None if disk == "planet" else disk) if disk else self.target
+        name = target or ("the planet" if disk else "the field")  # unnamed: as seen
         try:
-            if self.target in EXTENDED_TARGETS or disk:  # planets, Moon: video; anything else stacks
+            if target in EXTENDED_TARGETS or disk:  # planets, Moon: video; anything else stacks
                 self.recorder.start(name, self.record_seconds)
+                self.target = target
                 self._picture_started()
                 self._announced_done = False
                 return [say("Recording. Tap Stop capture when it nears the edge of the picture.")]
             self.stacker.start(name, self.stack_seconds)  # deep-sky: live stack short subs
         except CaptureRefused as e:
             return [say(str(e))]  # nothing started: guidance carries on as before
+        self.target = target
         self._picture_started()
         self._stack_done_announced, self._preview_seen = False, 0
         return [say(f"Stacking short pictures of {name}. Watch it build up on the screen. "
@@ -745,7 +748,8 @@ class Session:
             self._solving = False
         log.info("auto solve", extra={"data": {"ok": ok, "why": why}})
         if ok and not was_synced:
-            self._said_later.append(say("Found where the scope points (plate solve)."))
+            with self._lock:  # tick swaps the list under it
+                self._said_later.append(say("Found where the scope points (plate solve)."))
 
     def _tick(self, t: float) -> list[dict]:
         self._daylight_settings(t)

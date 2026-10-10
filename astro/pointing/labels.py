@@ -52,7 +52,8 @@ def tube_map(sol: Solution, width_px: int, site: Site, when: datetime) -> np.nda
     """2x2: local tangent-plane degrees around the finder's alt-az (x: azimuth, y: altitude)
     -> finder pixels from the image center. Measured with two probe points from the solve."""
     alt0, az0 = radec_to_altaz(sol.ra_deg, sol.dec_deg, site, when)
-    probes = [(alt0 + STEP_DEG, az0), (alt0, az0 + STEP_DEG / max(np.cos(np.radians(alt0)), 0.05))]
+    up = STEP_DEG if alt0 + STEP_DEG < 89.5 else -STEP_DEG  # near the zenith, probe downward
+    probes = [(alt0 + up, az0), (alt0, az0 + STEP_DEG / max(np.cos(np.radians(alt0)), 0.05))]
     local, pixels = [], []
     for alt, az in probes:
         ra, dec = altaz_to_radec(alt, az, site, when)

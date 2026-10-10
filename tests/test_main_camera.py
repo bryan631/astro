@@ -389,3 +389,32 @@ def test_recenter_leads_back_to_an_unnamed_field(tmp_path):
 def test_recenter_needs_a_capture(tmp_path):
     s, _ = make_session(tmp_path)
     assert "Start one first" in texts(s.action("recenter"))[0]
+
+
+class MeteredDisk:
+    """A disk whose brightness follows the exposure (8-bit, clipped): for Recorder._meter."""
+
+    def __init__(self, counts_per_s):
+        self.rate, self.exposure_s = counts_per_s, rec_module.PLANET_EXPOSURE_S
+
+    def set_exposure(self, s):
+        self.exposure_s = s
+
+    def capture(self):
+        frame = np.zeros((512, 512), np.uint8)
+        frame[200:300, 200:300] = min(255, self.rate * self.exposure_s)
+        return frame
+
+
+@pytest.mark.parametrize("rate", [50_000, 5_000])  # clipped at 20 ms (Jupiter), and dim
+def test_metering_brings_the_disk_into_range(tmp_path, rate):
+    cam = MeteredDisk(rate)
+    Recorder(cam, (512, 512), tmp_path)._meter()
+    lo, hi = rec_module.PLANET_PEAK
+    assert lo <= rate * cam.exposure_s <= hi
+
+
+def test_metering_stops_at_the_shortest_exposure(tmp_path):
+    cam = MeteredDisk(1e9)  # clipped at any exposure
+    Recorder(cam, (512, 512), tmp_path)._meter()
+    assert cam.exposure_s == rec_module.MIN_PLANET_EXPOSURE_S

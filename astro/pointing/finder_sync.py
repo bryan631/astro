@@ -5,6 +5,7 @@ silent solve failure (pre-flight focus gate, docs/plan.md Phase 1 step 3).
 """
 
 import logging
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -138,6 +139,7 @@ class FinderSync:
         # Seconds since the encoders last reported (None if not tracked, e.g. simulators).
         self.encoder_age: Callable[[], float] | None = None
         self.raw_counts: Callable[[], tuple[int, int]] | None = None  # (az, alt), debug view only
+        self._model_lock = threading.Lock()  # background solves refit while guidance reads
 
     def alignment(self) -> tuple[int, float | None]:
         """(number of syncs, model RMS in arcmin or None) for the setup wizard."""
@@ -145,13 +147,16 @@ class FinderSync:
 
     def reset(self, site: Site) -> None:
         """New site: the old mount model's alt/az frame no longer applies; re-sync from scratch."""
-        self.site, self.model, self.synced = site, MountModel(), False
+        with self._model_lock:
+            self.site, self.model, self.synced = site, MountModel(), False
         if self.on_change:
             self.on_change()
 
     def position(self) -> tuple[float, float]:
         """Current true (alt, az) through the mount model."""
-        return self.model.to_sky(*self.encoders())
+        enc = self.encoders()
+        with self._model_lock:
+            return self.model.to_sky(*enc)
 
     def focus_report(self) -> FocusReport:
         return check_focus(finder_gray(self.camera.capture()))  # callers handle a dead camera
@@ -175,15 +180,16 @@ class FinderSync:
         self.last_solution = sol
         log_solution(sol)
         alt, az = radec_to_altaz(sol.ra_deg, sol.dec_deg, self.site, when)
-        if replace_near_deg is not None:
-            self.model.syncs = [s for s in self.model.syncs if separation_deg(
-                s.true_alt_deg, s.true_az_deg, alt, az) > replace_near_deg]
-        rms = self.model.add_sync(Sync(enc[0], enc[1], alt, az))
-        self.last_rms = rms
-        self.synced = True
+        with self._model_lock:  # the solve ran unlocked; only the refit is serialized
+            if replace_near_deg is not None:
+                self.model.syncs = [s for s in self.model.syncs if separation_deg(
+                    s.true_alt_deg, s.true_az_deg, alt, az) > replace_near_deg]
+            rms = self.model.add_sync(Sync(enc[0], enc[1], alt, az))
+            self.last_rms, self.synced = rms, True
+            syncs = len(self.model.syncs)
         if self.on_change:
             self.on_change()
         msg = "Got it, I know where we're pointing."
-        if len(self.model.syncs) >= LOOSE_SYNC_SYNCS and rms > LOOSE_SYNC_ARCMIN:
+        if syncs >= LOOSE_SYNC_SYNCS and rms > LOOSE_SYNC_ARCMIN:
             msg += " The alignment is still rough; another sync in a different part of the sky helps."
         return True, msg
