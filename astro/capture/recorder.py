@@ -33,6 +33,9 @@ def prune(out_dir: Path, keep: int = KEEP_RECORDINGS) -> None:
         old.unlink(missing_ok=True)
 
 
+PLANET_EXPOSURE_S, PLANET_GAIN = 0.02, 250
+
+
 class CaptureRefused(Exception):
     """Recording could not start; the message is a spoken reason."""
 
@@ -70,6 +73,10 @@ class Recorder:
                                  "Old recordings need to be cleared.")
         try:
             self.camera.set_roi(None)
+            # Short exposures freeze the seeing and keep the planet from burning out; the video's
+            # 0.25 s gave white blobs (2026-10-10).
+            self.camera.set_exposure(PLANET_EXPOSURE_S)
+            self.camera.set_gain(PLANET_GAIN)
             center = brightest_blob(self.camera.capture())
         except (RuntimeError, OSError) as e:  # SDK gave up after its retry
             raise CaptureRefused(f"The main camera isn't responding: {e}") from e
