@@ -57,7 +57,7 @@ def test_capture_records_right_away(tmp_path):
 def test_capture_on_an_unpicked_planet_records_it(tmp_path):
     """2026-10-10: Jupiter captured without Go to was stacked as a star field and blown out.
     A clipped disk in the main view, with a planet where the scope points, means planet mode."""
-    s, cam = make_session(tmp_path)
+    s, _ = make_session(tmp_path)
     s.target = None
     disk = np.zeros((1080, 1920), np.uint8)
     disk[400:600, 800:1000] = 255  # 40000 clipped pixels

@@ -191,7 +191,7 @@ class Session:
         self._progress_at, self._capture_at = -1e9, 0.0  # capture progress messages
         self._capture_radec = (0.0, 0.0)  # where a capture began (Recenter's target if unnamed)
         self._recentering = False  # a paused capture: guidance leads back to its target
-        self._light: bool | None = None  # daytime when the camera settings were last switched
+        self._light: dict[str, bool] = {}  # per camera: daytime when its settings were last switched
         self._night = {name: (cam.exposure_s, cam.gain) for name, cam in
                        (("finder", getattr(finder, "camera", None)), ("main", main_camera))
                        if hasattr(cam, "latest")}  # streamed cameras: the page's views
@@ -488,7 +488,8 @@ class Session:
         so Recenter can lead back to an unnamed field."""
         self._capture_at = time.monotonic()
         self._centering, self.guide = False, None
-        self._capture_radec = altaz_to_radec(*self.position(), self.site, self.clock())
+        main_at = self.centerer.offset.main_center(*self.position())  # the field, not the finder
+        self._capture_radec = altaz_to_radec(*main_at, self.site, self.clock())
 
     def _camera_busy(self) -> bool:
         return any(job is not None and job.busy for job in (self.recorder, self.stacker))
@@ -823,14 +824,13 @@ class Session:
         if not cams:
             return
         day = self.daytime()
-        if day != self._light:
-            self._light = day
-            for name, cam in cams.items():
-                if name == "main" and self._camera_busy():
-                    continue  # a capture set its own; the next switch catches up
-                exposure, gain = MAIN_DAY if day and name == "main" else self._night[name]
-                cam.set_exposure(exposure)
-                cam.set_gain(gain)
+        for name, cam in cams.items():  # each camera on its day or night settings, once per switch
+            if self._light.get(name) == day or (name == "main" and self._camera_busy()):
+                continue  # a capture set its own: caught up once it ends
+            self._light[name] = day
+            exposure, gain = MAIN_DAY if day and name == "main" else self._night[name]
+            cam.set_exposure(exposure)
+            cam.set_gain(gain)
         if self._align is not None:
             return
         for name, cam in cams.items():  # by day (finder), or once dawn clips the night settings

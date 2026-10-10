@@ -31,7 +31,7 @@
   .view > img.cam { max-width: 100%; max-height: 100%; display: block; }
   body:not(.day) img.cam, body:not(.day) #inset, body:not(.day) #viewer img, body:not(.day) #pictures img {
     filter: grayscale(1) sepia(1) saturate(5) hue-rotate(-50deg) brightness(var(--b, .6)); }
-  body.day img.cam { filter: brightness(var(--b, 1)); }
+  body.day img.cam, body.day #viewer img { filter: brightness(var(--b, 1)); }
   .frame { position: absolute; pointer-events: none; }  /* covers the picture exactly (see fit()) */
   .frame::before, .frame::after { content: ""; position: absolute; background: var(--fg); opacity: .6; }
   .frame::before { left: 0; right: 0; top: 50%; height: 1px; }
@@ -312,7 +312,8 @@ $("stop").onclick = () => action("stop");
 $("align").onclick = () => action("align");
 $("recenter").onclick = () => { action("recenter"); showView("finder"); };
 $("focus").onclick = () => { const on = document.body.classList.toggle("focusing");
-  $("focus").classList.toggle("on", on); if (on) action("focus"); };
+  $("focus").classList.toggle("on", on);
+  if (on) { for (const v of Object.values(views)) v.focus = []; action("focus"); } };  // a fresh best and graph
 $("sync").onclick = () => action("sync");
 document.querySelectorAll("[data-text]").forEach(b => b.onclick = () => sendText(b.dataset.text));
 const open = id => { $(id).hidden = false; }, close = el => { el.closest(".sheet").hidden = true; };
@@ -359,7 +360,7 @@ inset.onclick = () => openViewer(inset.src);
 function openViewer(src) { const img = $("viewer").querySelector("img"); img.src = src; img.style.transform = ""; open("viewer"); }
 document.querySelectorAll("[data-vb]").forEach(b => b.onclick = () => {
   viewerB = Math.min(4, Math.max(0.25, viewerB * (b.dataset.vb === "+" ? 1.4 : 1 / 1.4)));
-  $("viewer").querySelector("img").style.setProperty("--b", .6 * viewerB);
+  $("viewer").querySelector("img").style.setProperty("--b", (document.body.classList.contains("day") ? 1 : .6) * viewerB);
 });
 document.querySelectorAll("[data-vz]").forEach(b => b.onclick = () => { $("viewer").querySelector("img").style.transform = `scale(${b.dataset.vz})`; });
 
@@ -394,7 +395,10 @@ setInterval(pollStatus, 5000); setTimeout(pollStatus, 1000);
 connect();
 viewLoop("finder"); viewLoop("main");
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").then(r => r.update());  // installable (V1)
-if (navigator.wakeLock) navigator.wakeLock.request("screen").catch(() => {});  // keep the tablet awake
+// Keep the tablet awake; the lock is dropped whenever the page is hidden, so take it again on return.
+const keepAwake = () => navigator.wakeLock && navigator.wakeLock.request("screen").catch(() => {});
+keepAwake();
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") keepAwake(); });
 
 // GUI design demo (scripts/dev/sim_pictures.py): ?demo=m42 (or m31, m45) plays a made-up live
 // stack in the main view, then Pictures shows the made-up pictures.
