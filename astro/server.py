@@ -45,7 +45,7 @@ from astro.pointing.coords import Site
 from astro.pointing.finder_sync import FinderSync
 from astro.pointing.mount_model import MountModel
 from astro.pointing.platesolve import FinderSolver
-from astro.process.view import jpeg
+from astro.process.view import ROTATE, jpeg
 from astro.session import Session, utcnow
 from astro.voice.speech import Stt, Tts
 from astro.wake import add_wake, collapse_repeats, strip_wake
@@ -604,7 +604,7 @@ def api_camera(name: str) -> Response:
     if frame is None:  # say why, so a blank view isn't a mystery
         raise HTTPException(404, "no frame yet: it hasn't taken a picture since the server started")
     raw, bayer, age = frame
-    return Response(jpeg(raw, bayer, session.zoom[name]), media_type="image/jpeg", headers={"X-Frame-Age": f"{age:.1f}"})
+    return Response(jpeg(raw, bayer, session.zoom[name], ROTATE[name]), media_type="image/jpeg", headers={"X-Frame-Age": f"{age:.1f}"})
 
 
 @app.get("/api/camera/{name}.mjpg")

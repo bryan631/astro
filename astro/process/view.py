@@ -9,6 +9,9 @@ from astro.capture.focus import laplacian_variance
 from astro.process.planet import superpixel_rgb
 
 MAX_WIDTH = 960
+# Display rotation per camera, as mounted. The finder optics flip the view; the main camera was
+# turned 180 degrees in its holder (2026-10-10) to undo the same flip.
+ROTATE = {"finder": 180, "main": 0}
 DAY_MEDIAN = 50  # 8-bit: a typical pixel this bright is no night sky
 HOT_SIGMA = 4  # this far above all its neighbors (in noise units) is a hot pixel, not a star
 MIN_RANGE = 40  # 8-bit counts: a dark frame stays dark instead of stretching its noise to full scale
@@ -24,8 +27,8 @@ def remove_hot_pixels(rgb: np.ndarray) -> np.ndarray:
     return np.where(rgb - neighbors > HOT_SIGMA * noise, neighbors, rgb)
 
 
-def jpeg(raw: np.ndarray, bayer: str, zoom: int = 1) -> bytes:
-    """Turned 180 degrees: the optics show the world upside down, the page shows it upright.
+def jpeg(raw: np.ndarray, bayer: str, zoom: int = 1, rotate: int = 180) -> bytes:
+    """Turned by `rotate` degrees (ROTATE: each camera as mounted) so the page shows it upright.
     `zoom` crops the center; the sharpness of what's shown is printed in the corner."""
     h, w = raw.shape[0] // 2 * 2, raw.shape[1] // 2 * 2
     ch, cw = h // zoom // 2 * 2, w // zoom // 2 * 2
@@ -38,7 +41,7 @@ def jpeg(raw: np.ndarray, bayer: str, zoom: int = 1) -> bytes:
     else:
         hi = max(np.percentile(rgb, 99.8), lo + MIN_RANGE)
         img = Image.fromarray((((rgb - lo) / (hi - lo)).clip(0, 1) ** 0.6 * 255).astype(np.uint8))
-    img = img.rotate(180)
+    img = img.rotate(rotate)
     width = min(MAX_WIDTH, w // 2)  # zoomed views are scaled up to the same size: same text size
     img = img.resize((width, round(img.height * width / img.width)))
     text = f"sharpness {sharpness:.0f}" + (f"  {zoom}x" if zoom > 1 else "")
