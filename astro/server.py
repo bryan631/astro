@@ -1,7 +1,9 @@
-"""FastAPI server: serves the tablet PWA and a WebSocket for voice/text and guidance.
+"""FastAPI server: serves the tablet page, both cameras' live views, and a WebSocket for the
+buttons, messages and guidance. Everything works with the volume off (Phase 3b): voice input
+and output are not wired in (astro/voice, wake.py and intents.py stay for later).
 
 Run:  ASTRO_SIM=1 uvicorn astro.server:app --host 0.0.0.0 --port 8000
-In sim mode a simulated user follows the spoken cues so the whole loop can be watched.
+In sim mode a simulated user follows the guidance cues so the whole loop can be watched.
 """
 
 import asyncio
@@ -9,21 +11,17 @@ import contextlib
 import functools
 import hashlib
 import hmac
-import io
 import json
 import logging
 import math
 import os
-import re
 import socket
-import threading
 import time
-import wave
 from collections.abc import Callable
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, PlainTextResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketState
 
@@ -35,8 +33,6 @@ from astro.devices.sim.finder import SimFinderCamera
 from astro.devices.sim.main_cam import SimMainCamera
 from astro.devices.sim.scope import SimEncoders, SimScope, SimUser
 from astro.devices.stream import ThreadStream
-from astro.guidance.centering import centering_phrases
-from astro.guidance.engine import cue_phrases
 from astro.optics import MAIN_SENSOR_PX
 from astro.planner import horizon_store
 from astro.planner import report as tonight_report
@@ -46,16 +42,14 @@ from astro.pointing.coords import Site
 from astro.pointing.finder_sync import FinderSync
 from astro.pointing.mount_model import MountModel
 from astro.pointing.platesolve import FinderSolver
-from astro.process.view import ROTATE, jpeg
+from astro.process.view import ROTATE, render
 from astro.session import Session, utcnow
-from astro.voice.speech import Stt, Tts
-from astro.wake import add_wake, collapse_repeats, strip_wake
 
 ROOT = Path(__file__).resolve().parents[1]
 SIM = os.environ.get("ASTRO_SIM") == "1"
 OFFLINE = os.environ.get("ASTRO_OFFLINE") == "1"  # no forecast fetches (tests, field hotspot)
 TICK_S = 0.1
-ARMED_S = 8.0  # after the wake word alone, how long the next utterance counts as the command
+FRAME_WAIT_S = 3.0  # a view's request waits this long for a frame newer than the one it has
 THINKING_AFTER_S = 1.0  # say "Let me think." if an answer takes longer than this
 SORRY = "Sorry, something went wrong. Please try that again."
 
@@ -72,12 +66,9 @@ def load_env(path: Path = ROOT / ".env") -> None:
 log = logging.getLogger("astro.server")
 LOGGED = {"say", "picture", "get_location"}  # not the 10 Hz "state" or "live" updates
 GALLERY = ROOT / "data" / "gallery"
-UTTERANCES = ROOT / "data" / "utterances"  # ASTRO_SAVE_AUDIO=1: what the tablet sent, to tune voice
-UTTERANCE_KEEP_DAYS, UTTERANCE_MAX_BYTES = 60, 2 * 1024**3  # then the oldest go
 LIVE = ROOT / "data" / "live"  # live-stack previews while they build (not gallery pictures)
 
-# Module state: speech engines, and the shared hubs (one per process; see get_hub).
-stt, tts = Stt(), Tts()
+# Module state: the shared hubs (one per process; see get_hub).
 _real_hub: "Hub | None" = None
 _sim_hub: "Hub | None" = None
 
@@ -185,40 +176,26 @@ async def lifespan(app: FastAPI):
     LIVE.mkdir(parents=True, exist_ok=True)
     if not os.environ.get("ASTRO_NO_LOG_FILE"):  # tests
         log.info("server start", extra={"data": {"log": str(logs.setup(ROOT)), "sim": SIM}})
-    warm_speech()
     try:
         yield
     finally:  # also on errors/cancellation: never leave heaters, cameras or the solver running
-        for hub in (_sim_hub, _real_hub):
-            if hub is not None:
-                hub.session.stop_video()  # its thread captures until stopped: before closing
         close_hardware()
 
 
 app = FastAPI(lifespan=lifespan)
 
 
-def warm_speech() -> None:
-    """Load Piper and pre-render the guidance cues in the background: "stop" must be instant."""
-    if tts.available():
-        phrases = cue_phrases() + centering_phrases()
-        threading.Thread(target=tts.warm, args=(phrases,), daemon=True).start()
-
-
 class Hub:
     """One session's tablets: a single guidance loop whose output goes to every client.
 
-    Everything outgoing goes through one queue and one sender task: messages keep their order,
-    a message and its audio are never interleaved with another, and the guidance loop never
-    waits for speech synthesis."""
+    Everything outgoing goes through one queue and one sender task, so messages keep their
+    order and a slow tablet never holds up the guidance loop."""
 
     def __init__(self, session: Session, scope: SimScope | None):
         self.session, self.scope = session, scope
         self.agent = Agent(session)
         self.user = SimUser() if scope else None
         self.clients: set[WebSocket] = set()
-        self.speaking_until = 0.0  # monotonic time the last queued reply finishes playing
-        self.handsfree: set[WebSocket] = set()  # tablets in hands-free mode: hints name the wake word
         self._loop: asyncio.Task | None = None
         self._sender: asyncio.Task | None = None
         self._outbox: asyncio.Queue[dict | None] = asyncio.Queue()
@@ -234,7 +211,6 @@ class Hub:
 
     def leave(self, socket: WebSocket) -> None:
         self.clients.discard(socket)
-        self.handsfree.discard(socket)
         if not self.clients:
             for task in (self._loop, self._sender):
                 if task is not None:
@@ -257,15 +233,6 @@ class Hub:
                 msg, self._state = self._state, None
             if msg["type"] in LOGGED:
                 log.info(msg["type"], extra={"data": {k: v for k, v in msg.items() if k != "type"}})
-            audio = None
-            if msg["type"] == "say" and self.handsfree:  # one shared session: text and audio agree
-                msg = {**msg, "text": add_wake(msg["text"])}
-            if msg["type"] == "say" and tts.available():
-                try:
-                    audio = await asyncio.to_thread(tts.synthesize, msg["text"])
-                    self.speaking_until = max(self.speaking_until, time.monotonic()) + wav_seconds(audio)
-                except Exception:  # the words still go out as text
-                    log.exception("speech synthesis failed")
             to = list(self.clients)
             asker = msg.pop("_to", None)  # GPS requests go only to the tablet that asked:
             if asker in self.clients:     # every tablet answering with its own fix would race
@@ -273,8 +240,6 @@ class Hub:
             for client in to:
                 try:
                     await client.send_json(msg)
-                    if audio:
-                        await client.send_bytes(audio)
                 except (WebSocketDisconnect, RuntimeError):
                     self.clients.discard(client)
 
@@ -372,12 +337,8 @@ async def ws(socket: WebSocket) -> None:
         await socket.send_json({"type": "unavailable", "text": f"The telescope isn't ready: {e}"})
         await socket.close()
         return
-    await socket.send_json({"type": "hello", "server_stt": stt.available(),
-                            "server_tts": tts.available()})
+    await socket.send_json({"type": "hello"})
     hub.join(socket)
-    if name := hub.session.video_now():  # video keeps running across reloads: show it again
-        await socket.send_json({"type": "view", "what": name, "video": True})
-    conn = {"handsfree": False, "armed_until": 0.0, "last": ""}  # per-tablet voice mode
     if not site_store.has_saved(ROOT):  # setup: first run at this installation
         for out in hub.session.request_location():
             await hub.broadcast(_for(out, socket))
@@ -387,7 +348,7 @@ async def ws(socket: WebSocket) -> None:
             if msg["type"] == "websocket.disconnect":
                 break
             try:  # one bad message must not drop the tablet
-                await handle_message(hub, socket, conn, msg)
+                await handle_message(hub, socket, msg)
             except WebSocketDisconnect:
                 break
             except Exception:
@@ -400,116 +361,36 @@ async def ws(socket: WebSocket) -> None:
     finally:
         hub.leave(socket)
         if hub is _sim_hub and not hub.clients:
-            hub.session.stop_video()  # no orphan capture thread
             _sim_hub = None  # the next tablet starts a fresh simulated world
 
 
-def wav_seconds(audio: bytes) -> float:
-    with wave.open(io.BytesIO(audio)) as w:
-        return w.getnframes() / w.getframerate()
-
-
-def save_utterance(audio: bytes, text: str, handsfree: bool) -> None:
-    """Keep the recording and what whisper heard: real audio to score voice changes against."""
-    UTTERANCES.mkdir(parents=True, exist_ok=True)
-    stem = UTTERANCES / f"{time.strftime('%Y%m%d-%H%M%S')}-{int(time.time() * 1000) % 1000:03d}"
-    ext = "wav" if audio[:4] == b"RIFF" else "webm"
-    Path(f"{stem}.{ext}").write_bytes(audio)
-    Path(f"{stem}.json").write_text(json.dumps({"heard": text, "handsfree": handsfree}))
-    prune_media(UTTERANCES, UTTERANCE_KEEP_DAYS, UTTERANCE_MAX_BYTES)
-
-
-def prune_media(folder: Path, keep_days: float, max_bytes: int) -> None:
-    """Delete files older than `keep_days`, then the oldest until the folder fits `max_bytes`."""
-    files = sorted((f for f in folder.iterdir() if f.is_file()), key=lambda f: f.stat().st_mtime)
-    cutoff, total = time.time() - keep_days * 86400, sum(f.stat().st_size for f in files)
-    for f in files:
-        if f.stat().st_mtime >= cutoff and total <= max_bytes:
-            break
-        total -= f.stat().st_size
-        f.unlink(missing_ok=True)
-
-
-async def handle_spoken(hub: Hub, socket: WebSocket, conn: dict, text: str) -> None:
-    """Speech from the tablet. In hands-free mode only "Astro ..." (or the utterance right after
-    a bare "Astro") is a command; anything else is shown but ignored."""
-    text = collapse_repeats(text)
-    if conn["handsfree"]:
-        now = time.monotonic()
-        command = strip_wake(text)
-        if command is None and now < conn["armed_until"]:
-            command = text
-        if command is None:
-            log.info("ignored", extra={"data": {"text": text}})  # tune the wake word from these
-            await socket.send_json({"type": "ignored", "text": text})
-            return
-        if not command:
-            conn["armed_until"] = now + ARMED_S
-            await socket.send_json({"type": "armed", "seconds": ARMED_S})
-            return
-        conn["armed_until"] = 0.0
-        same = re.sub(r"\W+", " ", command).strip().lower()
-        if same == conn["last"] and now < hub.speaking_until:  # the same command while it answers
-            await socket.send_json({"type": "ignored", "text": text})
-            return
-        conn["last"] = same
-        text = command
-    await hub.handle_text(socket, text)
-
-
-async def handle_message(hub: Hub, socket: WebSocket, conn: dict, msg: dict) -> None:
+async def handle_message(hub: Hub, socket: WebSocket, msg: dict) -> None:
     session = hub.session
-    if msg.get("bytes"):  # recorded speech from the tablet
-        try:
-            text = await asyncio.to_thread(stt.transcribe, msg["bytes"])
-        except Exception:
-            if not conn["handsfree"]:
-                raise  # the tablet's own press: tell them it failed
-            log.exception("transcription failed")  # hands-free hears background noise: stay quiet
-            await socket.send_json({"type": "ignored", "text": ""})
-            return
-        if os.environ.get("ASTRO_SAVE_AUDIO") == "1":
-            save_utterance(msg["bytes"], text, conn["handsfree"])
-        if text:
-            await handle_spoken(hub, socket, conn, text)
-        elif conn["handsfree"]:  # background noise: stay quiet
-            await socket.send_json({"type": "ignored", "text": ""})
-        else:
-            await hub.broadcast({"type": "say", "text": "Sorry, I didn't hear anything."})
-        return
     if not msg.get("text"):
         return
     data = json.loads(msg["text"])
     request_id = int(data["id"]) if data.get("id") is not None else None
-    if data.get("type") == "client_log":  # a failure inside the tablet's browser
+    kind = data.get("type")
+    if kind == "client_log":  # a failure inside the tablet's browser
         log.warning("client", extra={"data": {"text": str(data.get("text", ""))[:300]}})
-    elif data.get("type") == "handsfree":
-        conn["handsfree"], conn["armed_until"] = bool(data.get("on")), 0.0
-        (hub.handsfree.add if conn["handsfree"] else hub.handsfree.discard)(socket)
-    elif data.get("type") == "checks":  # the daytime "skip checks" toggle
+    elif kind == "checks":  # the daytime "skip checks" toggle
         session.override = bool(data.get("off"))
-    elif data.get("type") == "side_finder":  # scripts/dev/drift_offset.py: both cameras at once
-        await asyncio.to_thread(session.side_finder, bool(data.get("on")))
-    elif data.get("type") == "camera":  # the camera view's exposure and zoom buttons
-        if data.get("camera") in ("finder", "main"):
-            await asyncio.to_thread(session.adjust_camera, data["camera"], data.get("exposure"),
-                                    data.get("zoom"))
-    elif data.get("type") == "video":  # the Live video button: answered silently
-        for out in await asyncio.to_thread(session.video, data.get("camera"), data.get("then")):
-            await hub.broadcast(out)
-    elif data.get("type") == "text":
-        if data.get("spoken"):  # the browser's own recognizer
-            await handle_spoken(hub, socket, conn, data["text"])
-        else:
-            await hub.handle_text(socket, data["text"])
-    elif data.get("type") == "location":
+    elif kind == "camera":  # a camera view's zoom
+        session.adjust_camera(str(data.get("camera")), data.get("zoom"))
+    elif kind == "action":  # the page's buttons
+        log.info("action", extra={"data": {k: v for k, v in data.items() if k != "type"}})
+        for out in await asyncio.to_thread(session.action, str(data.get("do")), data.get("target")):
+            await hub.broadcast(_for(out, socket))
+    elif kind == "text":  # typed (or the agent's) commands
+        await hub.handle_text(socket, data["text"])
+    elif kind == "location":
         log.info("location", extra={"data": {"accuracy_m": data.get("accuracy")}})
         alt = float(data["alt"]) if data.get("alt") is not None else None
         accuracy = float(data["accuracy"]) if data.get("accuracy") is not None else None
         for out in session.set_location(float(data["lat"]), float(data["lon"]), alt, accuracy,
                                         request_id):
             await hub.broadcast(out)
-    elif data.get("type") == "location_error":
+    elif kind == "location_error":
         for out in session.location_failed(str(data.get("message", "")), request_id):
             await hub.broadcast(out)
 
@@ -595,45 +476,58 @@ def api_status() -> dict:
             "main_box": hub.session.main_box}
 
 
+@app.get("/api/targets")
+async def api_targets() -> list[dict]:
+    """The Go to button's list (planning takes ~0.5 s: off the event loop)."""
+    return await asyncio.to_thread(running_hub().session.target_list)
+
+
 @app.get("/api/debug")
 def api_debug() -> dict:
     return running_hub().session.debug_info()
 
 
+_rendered: dict[str, tuple[tuple, bytes, dict]] = {}  # per camera: (frame seq, zoom), JPEG, metrics
+
+
 @app.get("/api/camera/{name}.jpg")
-def api_camera(name: str) -> Response:
-    """The named camera's last frame (finder or main), as the page's live view polls it."""
-    if name not in ("finder", "main"):
-        raise HTTPException(404)
-    session = running_hub().session
-    frame = session.camera_frame(name)
-    if frame is None:  # say why, so a blank view isn't a mystery
-        raise HTTPException(404, "no frame yet: it hasn't taken a picture since the server started")
-    raw, bayer, age = frame
-    return Response(jpeg(raw, bayer, session.zoom[name], ROTATE[name]), media_type="image/jpeg", headers={"X-Frame-Age": f"{age:.1f}"})
-
-
-@app.get("/api/camera/{name}.mjpg")
-async def api_camera_stream(name: str) -> StreamingResponse:
-    """Live video: every new frame of the camera as motion JPEG, while the video runs."""
+async def api_camera(name: str, after: int = 0) -> Response:
+    """The camera's newest frame as a JPEG. `after`: the frame number the page already shows;
+    the request waits (up to FRAME_WAIT_S) for a newer one, so each view is a simple loop of
+    requests that never re-downloads a frame. Headers: X-Seq (frame number), X-Frame-Age (s),
+    X-Focus (focus number, higher is sharper)."""
     if name not in ("finder", "main"):
         raise HTTPException(404)
     session = running_hub().session
     cam = session.camera(name)
     if cam is None:
-        raise HTTPException(404, "no such camera")
+        raise HTTPException(404, f"there's no {name} camera")
+    deadline = time.monotonic() + FRAME_WAIT_S
+    while _seq(cam) <= after and time.monotonic() < deadline:
+        await asyncio.sleep(0.05)
+    frame = session.camera_frame(name)
+    if frame is None:  # say why, so a blank view isn't a mystery
+        why = "not connected" if not getattr(cam, "connected", True) else "no picture yet"
+        raise HTTPException(404, why)
+    raw, bayer, age = frame
+    if _seq(cam) <= after:  # nothing newer: the page keeps its picture and shows the age
+        return Response(status_code=204, headers={"X-Seq": str(after), "X-Frame-Age": f"{age:.1f}"})
+    key = (_seq(cam), session.zoom[name])
+    cached = _rendered.get(name)
+    if cached is None or cached[0] != key:
+        data, metrics = await asyncio.to_thread(render, raw, bayer, session.zoom[name], ROTATE[name])
+        cached = _rendered[name] = (key, data, metrics)
+    _, data, metrics = cached
+    headers = {"X-Seq": str(key[0]), "X-Frame-Age": f"{age:.1f}"}
+    if metrics.get("focus") is not None:
+        headers["X-Focus"] = f"{metrics['focus']:.1f}"
+    return Response(data, media_type="image/jpeg", headers=headers)
 
-    async def frames():
-        seen = 0.0
-        while session.video_active(name):  # the stream ends with the video
-            if cam.last is not None and cam.last_at != seen:
-                seen = cam.last_at
-                data = await asyncio.to_thread(jpeg, cam.last, cam.bayer, session.zoom[name])
-                yield (b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n" % len(data)
-                       + data + b"\r\n")
-            await asyncio.sleep(0.03)
 
-    return StreamingResponse(frames(), media_type="multipart/x-mixed-replace; boundary=frame")
+def _seq(cam) -> int:
+    """The camera's frame number: streams count frames; a plain tapped camera has its time."""
+    seq = getattr(cam, "seq", None)
+    return int(seq) if seq is not None else int(getattr(cam, "last_at", 0) * 1000)
 
 
 @app.get("/sw.js")

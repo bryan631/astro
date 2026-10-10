@@ -152,15 +152,6 @@ def test_sim_main_camera_shows_every_planet(planet):
     assert brightest_blob(cam.capture()) is not None
 
 
-def test_focus_refused_while_recording(tmp_path):
-    s, _ = make_session(tmp_path)
-    s.main_focus_ok, s.record_seconds = True, 2
-    s.handle("take a picture")
-    assert "recording right now" in texts(s.handle("focus"))[0]
-    s.recorder.stop()
-    s.recorder.current.done.wait(5)
-
-
 class UnresettableCamera(DriftingPlanet):
     def set_roi(self, roi):
         if roi is None and self.n:

@@ -77,7 +77,7 @@ def test_barlow_and_focus_tools():
     s, _ = run_tool("barlow", {"inserted": True})
     assert s.barlow
     s, result = run_tool("focus", {"camera": "finder"})
-    assert "finder camera" in result  # no finder in this test session
+    assert "focus number" in result  # focusing is visual: the number on the camera view
 
 
 def test_session_status_tool_reports_facts():

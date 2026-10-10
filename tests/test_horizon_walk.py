@@ -2,7 +2,6 @@ from datetime import UTC, datetime
 
 import pytest
 
-from astro.capture.focus import FocusCoach
 from astro.intents import Intent, parse
 from astro.planner import horizon_store
 from astro.planner.horizon import HorizonMask
@@ -68,13 +67,6 @@ def test_record_the_horizon_is_not_a_capture():
     assert parse("record the horizon") == Intent("horizon_start")
     assert parse("record the horizon walk") == Intent("horizon_start")
     assert parse("record") == Intent("capture")
-
-
-def test_horizon_walk_ends_focus_coaching():
-    s, _ = walk_session([])
-    s._focus_coach, s._focus_mode = FocusCoach(), "finder"
-    s.handle("start the horizon walk")
-    assert s._focus_coach is None
 
 
 def test_stopping_the_walk_keeps_the_marks():

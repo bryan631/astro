@@ -178,6 +178,12 @@ class CameraStream:
         _, seq, t_mid, _ = self._slot.read()
         return t_mid + self.exposure_s / 2 + self._mono_minus_unix if seq else 0.0
 
+    @property
+    def seq(self) -> int:
+        """Frames published so far (cheap: no copy). Reading it keeps a simulator streaming."""
+        self._touch()
+        return int(self._slot.header[SEQ])
+
     def latest(self) -> tuple[np.ndarray | None, int, float]:
         """(frame, sequence number, mid-exposure Unix time) without waiting."""
         self._touch()

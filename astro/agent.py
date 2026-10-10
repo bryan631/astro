@@ -61,12 +61,12 @@ TOOLS = [
     {"name": "next", "description": "Go to the next suggestion from tonight's list.",
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "take_picture", "description": "Take a picture of the current target: video for "
-     "planets/Moon, a live stack for everything else. Asks for focus first if needed.",
+     "planets/Moon, a live stack for everything else. It runs until stopped.",
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "stop_picture", "description": "Stop a picture being taken (keeps what's done).",
      "input_schema": {"type": "object", "properties": {}}},
-    {"name": "focus", "description": "Start the spoken focus helper for the main camera, or "
-     "for the finder if camera='finder'. The user says 'done' at the sharpest point.",
+    {"name": "focus", "description": "How to focus the main camera, or the finder if "
+     "camera='finder': turn the knob to maximize the focus number shown on that camera's view.",
      "input_schema": {"type": "object", "properties": {
          "camera": {"type": "string", "enum": ["main", "finder"]}}}},
     {"name": "sync", "description": "Look at the stars through the finder to find exactly "

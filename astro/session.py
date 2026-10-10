@@ -21,12 +21,10 @@ from astropy.coordinates import SkyCoord, get_body
 from astro import calibration_store
 from astro.capture.collimation import CENTERED as COLLIMATED
 from astro.capture.collimation import CollimationCoach, Donut, analyze
-from astro.capture.focus import FocusCoach, laplacian_variance
 from astro.capture.live_stacker import LiveStacker
-from astro.capture.live_view import LiveView
 from astro.capture.recorder import CaptureRefused, Recorder, prune
 from astro.capture.roi import brightest_blob, roi_around
-from astro.devices.base import Camera, Roi
+from astro.devices.base import Camera
 from astro.devices.tap import tap
 from astro.guidance.centering import CALIBRATED, Centerer
 from astro.guidance.engine import CueLimiter, DirectionLearner, Guide, wrap180
@@ -40,10 +38,9 @@ from astro.planner.horizon import HorizonMask
 from astro.planner.moon_features import FEATURES
 from astro.planner.tonight import PLANET_NOTES, PLANETS, next_dark, plan
 from astro.pointing.coords import Site, body_altaz, radec_to_altaz
-from astro.pointing.finder_sync import FinderSync, check_focus
+from astro.pointing.finder_sync import FinderSync
 from astro.pointing.geometry import separation_deg
 from astro.pointing.main_offset import MainOffset, fit_axes_and_offset, local_delta
-from astro.pointing.platesolve import finder_gray
 from astro.process.planet import MIN_FRAMES, StackResult, process_ser
 from astro.safety import DAYTIME_SUN_ALT_DEG, SafetyResult, check_target
 from astro.spots import Spot, upsert, with_mask
@@ -51,28 +48,13 @@ from astro.wizard import SetupWizard
 
 Clock = Callable[[], datetime]
 TARGET_REFRESH_S = 1.0  # targets drift ~15"/s, so re-resolve their alt/az once a second
-# Live video for checking cap, focus and framing: exposure s, gain, centre crop (the main
-# camera's full frame is too slow to stream; a 1280x720 crop ran at ~47 fps on the checkout).
-VIDEO = {"finder": (0.1, 400, False), "main": (0.25, 480, False)}  # full frame while finding things: the crop is only 0.17 deg
-# Auto-exposure limits, seconds. Not on the main camera: the SDK reopens it on every exposure
-# change (seconds each), which froze its video in the field.
-VIDEO_EXPOSURE = {"finder": (0.0001, 0.5), "main": None}
-MAIN_DAY_VIDEO = (0.004, 0)  # main camera by day (no auto-exposure), measured on a sunny tree
-VIDEO_CROP = (1280, 720)
-ZOOMS = (1, 2, 4)
-# Commands that leave live video running; anything else needs a camera (or might) and ends it.
+ZOOMS = (1, 2, 4)  # the page's digital zoom per camera view
 NOT_UNDERSTOOD = "Sorry, I didn't catch that. Say 'what's good tonight' or 'go to Saturn'."
-KEEPS_VIDEO = {"goto", "next", "describe", "barlow_on", "barlow_off", "location", "horizon_start",
-               "horizon_mark", "stop_capture", "stop"}
-FINDER_FOCUS_TOL = 0.15  # field test: 3% made it flip "sharper"/"passed it" every second
 REPEAT_S = 6.0  # the same spoken cue from the guidance or coaching loop, at most this often
-FOCUS_STEP_S = 1.0  # one finder focus measurement per second while coaching
-MIN_FOCUS_SAMPLES = 3  # focus readings before "done" counts (else the gate was never checked)
 CENTER_STEP_S = 0.5  # main-camera centering cue rate
 DIRECTION_PROBE_S = 1.5  # after a left/right cue, look this long for the azimuth to move
 FIX_STALE_S = 2.0  # a plate-solve fix older than this is too old to steer by
 ENCODER_STALE_S = 1.0  # encoder positions older than this mean the board or cable is gone
-MIN_HFR_PX = 0.5  # floor so a perfectly sharp (tiny) star can't blow up the focus score
 # Guidance "on target" tolerance. 4' kept the user nudging in the field (encoder steps are 2.3');
 # 8' still lands the target well inside the main camera's 32' x 18' view.
 OFFSET_CAL_S, OFFSET_CAL_MIN = 90.0, 10  # "X is centered": give up after; frames needed
@@ -85,7 +67,6 @@ EXTENDED_TARGETS = {p.capitalize() for p in PLANETS} | {"Moon", *MOON_FEATURES} 
 RECORD_SECONDS = 300  # planetary video
 STACK_SECONDS = 300  # deep-sky live stack
 PROGRESS_S = 1.0  # capture progress to the page this often
-FOCUS_CROP_PX = 256  # sharpness measured on a crop around the planet
 COLLIMATION_STEP_S = 2.0  # time to turn a screw and let the image settle between checks
 COLLIMATING = "We're checking collimation. Say stop to finish that first."
 COLLIMATION_CROP_PX = 512  # around the defocused star (the donut is ~100-300 px across)
@@ -146,19 +127,12 @@ class Session:
         self.guide: Guide | None = None
         self._suggestions: list[str] = []
         self._resolved_at = -1e9
-        self._focus_coach: FocusCoach | None = None
         self._last_said, self._last_said_at = "", -1e9  # tick speech, for _no_repeats
         self._collimation: CollimationCoach | None = None
         self._collimation_at = -1e9
-        self._focus_mode = ""  # "finder" or "main"
         self.main_camera, self.main_sensor = main_camera, main_sensor
-        self._video: tuple[str, LiveView] | None = None  # live video in progress: (camera, loop)
-        self._video_announce = True  # started by voice: its end is spoken too
-        self._video_day = False  # whether the running video started by day
-        self._video_settings: dict[tuple[str, bool], tuple[float, int, bool]] = {}  # (camera, day): last, manual
         self.zoom = {"finder": 1, "main": 1}  # the page's digital zoom per camera view
         self.barlow = False
-        self.main_focus_ok = False  # pre-flight gate: reset per session and on Barlow change
         self.record_seconds = RECORD_SECONDS
         self.recorder = (Recorder(main_camera, main_sensor, data_dir / "captures") if main_camera else None)
         self._announced_done = True
@@ -172,7 +146,6 @@ class Session:
         self._processor = ThreadPoolExecutor(max_workers=1)  # one stacking job at a time
         self._holding = False  # asked the user to hold still for a fresh fix
         self._jobs: list[tuple[str, Future[StackResult]]] = []  # pictures being made, in order
-        self._focus_at = -1e9
         self.centerer = Centerer((main_sensor[0], main_sensor[1]))  # learns finder->main offset
         self._centering = False
         self._center_at = -1e9
@@ -181,7 +154,6 @@ class Session:
         self.main_box: list | None = None  # main field on the finder view (drift_offset.py)
         self._offset_cal: dict | None = None
         self._progress_at, self._capture_at = -1e9, 0.0  # capture progress messages
-        self._side: LiveView | None = None  # side_finder: finder frames alongside main video  # "Saturn is centered": samples being collected
         # G3: which way "right" turns the scope, learned from the first left/right push.
         self.right_is_plus_az = True
         self._direction_learner = DirectionLearner()
@@ -284,6 +256,38 @@ class Session:
         with self._lock:
             return self._handle(text)
 
+    def action(self, do: str, target: str | None = None) -> list[dict]:
+        """The page's buttons (Phase 3b): Go to, Capture, Focus, Sync, STOP. Answers are text."""
+        if do == "tonight":
+            return self.tonight()  # planning is slow and read-only: keep it off the lock
+        with self._lock:
+            if do == "goto":
+                name = match_name(target or "", self.names())
+                return self.goto(name) if name else [say(f"I don't know {target}.")]
+            handler = {"capture": self._toggle_capture, "stop": self._stop, "sync": self.sync,
+                       "focus": self.focus_hint}.get(do)
+            return handler() if handler else [notice(f"{do.capitalize()} isn't ready yet.")]
+
+    def _toggle_capture(self) -> list[dict]:
+        """One button: start a capture, or stop the one running."""
+        return self._stop_capture() if self._camera_busy() else self.capture()
+
+    def target_list(self, limit: int = 20) -> list[dict]:
+        """The Go to list: tonight's best first, each with where it is now and whether it's up
+        (above the treeline)."""
+        with self._lock:
+            site, horizon = self.site, self.horizon
+        now = self.clock()
+        start = next_dark(site, now.astimezone(site.timezone)) or now
+        choices = plan(site, start, mask=horizon, cloud_cover=self.clouds(site), per_category=6)
+        out = []
+        for c in sorted((c for cs in choices.values() for c in cs), key=lambda c: -c.score)[:limit]:
+            alt, az = self.altaz_of(c.name)
+            out.append({"name": c.name, "category": c.category, "note": c.note,
+                        "alt": round(alt, 1), "az": round(az, 1),
+                        "up": bool(alt > float(horizon.min_alt(az)))})
+        return sorted(out, key=lambda t: not t["up"])  # what can be seen now first, best first
+
     def goto_spoken(self, target: str) -> list[dict]:
         """Go to a target named in free text (agent tool): matched by name, never re-parsed."""
         with self._lock:
@@ -295,9 +299,6 @@ class Session:
         if intent is not None and intent.name in ("ready", "skip") and not self.wizard_active:
             # Outside setup, "okay" is conversation, and "next step" just means "next".
             intent = Intent("next") if "next" in text.lower() else None
-        if intent is not None and not intent.name.startswith(("view_", "video_")) \
-                and intent.name not in KEEPS_VIDEO:
-            self.stop_video()  # the command wants the camera
         if intent is not None and intent.name in ("setup", "ready", "skip"):
             return self._wizard_command(intent.name)
         if intent is None:
@@ -312,40 +313,16 @@ class Session:
         if intent.name in ("barlow_on", "barlow_off"):
             return self._set_barlow(intent.name == "barlow_on")
         command = {
-            "stop": self._stop, "focus": self.start_main_focus, "capture": self.capture,
+            "stop": self._stop, "focus": self.focus_hint, "capture": self.capture,
             "stop_capture": self._stop_capture, "sync": self.sync,
-            "finder_focus": self.start_finder_focus, "tonight": self.tonight, "next": self._next,
+            "finder_focus": self.focus_hint, "tonight": self.tonight, "next": self._next,
             "horizon_start": self.start_horizon, "horizon_mark": self.mark_horizon,
             "location": self.request_location, "where": self.where,
             "collimate": self.start_collimation,
-            "video_finder": lambda: self.start_video("finder"),
-            "video_main": lambda: self.start_video("main"), "video_stop": self._video_stop,
-            "view_finder": lambda: self.show("finder"), "view_main": lambda: self.show("main"),
-            "view_debug": lambda: self.show("debug"), "view_hide": lambda: self.show("none"),
         }.get(intent.name)
         if command is None:
             return [say(f"{intent.name.replace('_', ' ').capitalize()} isn't ready yet.")]
         return command()
-
-    def _video_stop(self) -> list[dict]:
-        name = self.stop_video()
-        return [{"type": "view", "what": name}, say("OK, video stopped.")] if name else [
-            say("There's no video running.")]
-
-    def video(self, name: str | None, then: str | None = None) -> list[dict]:
-        """The page's Live video button: start video of `name`, or stop it and show `then`.
-        Silent: only a spoken or typed request is answered aloud."""
-        if name not in (None, *VIDEO) or then not in (None, "finder", "main", "debug", "none"):
-            return []
-        with self._lock:
-            if name is None:
-                stopped = self.stop_video()
-                return [{"type": "view", "what": then or stopped or "none"}]
-            out = [notice(m["text"]) if m["type"] == "say" else m
-                   for m in self.start_video(name, announce=False)]
-            if not any(m["type"] == "view" for m in out):  # busy (guiding, focus): its last frames
-                out.append({"type": "view", "what": name})
-            return out
 
     def _stop(self) -> list[dict]:
         """'Stop' (or 'done') ends whatever is going on, most specific first."""
@@ -357,30 +334,18 @@ class Session:
         if self._collimation is not None:
             self._collimation = None
             return [say("OK, collimation check stopped. Remember to refocus.")]
-        if self._focus_coach is not None:
-            if self._focus_coach.samples < MIN_FOCUS_SAMPLES:
-                return [say("Keep turning slowly a little longer, so I can find the "
-                            "sharpest point.")]
-            if self._focus_mode == "main":
-                self.main_focus_ok = True
-            self._focus_coach = None
-            return [say("OK, focus is set.")]
         if self._camera_busy():  # "stop" while taking a picture ends the picture
             return self._stop_capture()
-        if self._video is not None:  # nothing else is going on (guidance ends the video)
-            return self._video_stop()
         self.target, self.guide, self._centering = None, None, False
         self._offset_cal = None
         return [say("Stopped.")]
 
     def _set_barlow(self, inserted: bool) -> list[dict]:
         self.barlow = inserted
-        self.main_focus_ok = False
-        if self._focus_coach is not None and self._focus_mode == "main":
-            self._focus_coach = FocusCoach()  # old scores don't compare across optics
         if self.guide is not None:  # an active guide switches tolerance too
             self.guide.tol_deg = self._tolerance_arcmin() / 60
-        return [say("Got it. The Barlow changes focus, so we'll refocus before taking pictures.")]
+        return [say("Got it. The Barlow changes focus: refocus with the focus number before "
+                    "capturing.")]
 
     def _stop_capture(self) -> list[dict]:
         if self.stacker is not None and self.stacker.busy:
@@ -401,37 +366,16 @@ class Session:
             return [say("There's no finder camera connected.")]
         return [say(self.finder.sync()[1])]
 
-    def start_finder_focus(self) -> list[dict]:
-        if self._collimation is not None:
-            return [say(COLLIMATING)]
-        if self.finder is None:
-            return [say("There's no finder camera connected.")]
-        self.target, self.guide = None, None
-        # The finder's score (stars / HFR) jumps 10-20% frame to frame: smooth it, judge coarser.
-        self._focus_coach, self._focus_mode = FocusCoach(FINDER_FOCUS_TOL, smooth=3), "finder"
-        return [say("Point at some stars, then turn the finder's focus ring slowly. "
-                    "I'll tell you when it gets sharper. Say stop when I say it's the sharpest.")]
-
-    def start_main_focus(self) -> list[dict]:
-        if self.main_camera is None:
-            return [say("There's no main camera connected.")]
-        if self._collimation is not None:
-            return [say(COLLIMATING)]
-        if self._camera_busy():  # one user of the camera at a time
-            return [say("I'm recording right now. Say 'stop recording' first.")]
-        self.guide = None  # keep the target; we're on it
-        # No spoken coach (it reacted to noise and talked too much): live video with the
-        # "focus" number printed on it; the user turns the knob to maximize it.
-        return [*self.start_video("main", announce=False),
-                notice("Turn the focus knob to make the focus number as high as you can.")]
+    def focus_hint(self) -> list[dict]:
+        """Focus is visual: the number on each camera view (higher is sharper). No coach."""
+        return [say("Turn the focus knob to make the focus number on the camera view as high "
+                    "as you can.")]
 
     def capture(self) -> list[dict]:
         if self.recorder is None:
             return [say("There's no main camera connected.")]
         if self._collimation is not None:
             return [say(COLLIMATING)]
-        if self._focus_coach is not None:  # focus is still using a camera
-            return [say("Let's finish focusing first. Say done when it's sharpest.")]
         if self._camera_busy():
             return [say("I'm already recording." if self.recorder.busy else "I'm already stacking.")]
         name = self.target or "capture"
@@ -459,8 +403,6 @@ class Session:
         return any(job is not None and job.busy for job in (self.recorder, self.stacker))
 
     def goto(self, name: str) -> list[dict]:
-        if self.video_now() == "finder":  # its solves need the finder; the main view can stay
-            self.stop_video()
         if self._camera_busy():
             return [say("I'm taking a picture. Say stop first, then we can move.")]
         pre: list[dict] = []
@@ -476,7 +418,7 @@ class Session:
         guide = Guide(*self._aim(alt, az), tolerance_arcmin=self._tolerance_arcmin(),
                           right_is_plus_az=self.right_is_plus_az)
         self._centering = False
-        self.target, self.guide, self._focus_coach = name, guide, None
+        self.target, self.guide = name, guide
         self._center_gave_up = None  # a new "go to" tries the main camera again
         return [*pre, say(f"Let's find {name}.")]
 
@@ -543,92 +485,10 @@ class Session:
             return None
         return cam.last, cam.bayer, time.monotonic() - cam.last_at
 
-    def start_video(self, name: str, announce: bool = True) -> list[dict]:
-        cam = self.camera(name)
-        if cam is None:
-            return [say(f"There's no {name} camera connected.")]
-        if (self._camera_busy() or self._focus_coach or self._collimation or self._centering
-                or (name == "finder" and self.guide is not None)):  # guidance needs finder fixes
-            return [say("Let me finish what I'm doing first. Say stop, then ask for the video.")]
-        self.stop_video()
-        exposure, gain, crop = VIDEO[name]
-        max_gain = gain
-        if name == "main" and self.daytime():
-            exposure, gain = MAIN_DAY_VIDEO
-        day = self.daytime()  # the settings are remembered under the day/night they started in
-        exposure, gain, manual = self._video_settings.get((name, day), (exposure, gain, False))
-        roi = None
-        if crop:
-            w, h = self.main_sensor
-            roi = Roi((w - VIDEO_CROP[0]) // 4 * 2, (h - VIDEO_CROP[1]) // 4 * 2, *VIDEO_CROP)
-        pause = getattr(self.finder, "paused", None) if name == "finder" else None
-        if pause is not None:  # the plate-solve tracker leaves the finder camera alone
-            pause.set()
-        lock = getattr(self.finder, "camera_lock", None) if name == "finder" else None
-        try:
-            self._video = (name, LiveView(cam, exposure, gain, roi, lock,
-                                               None if manual else VIDEO_EXPOSURE[name], max_gain).start())
-            self._video_day = day
-        finally:
-            if self._video is None and pause is not None:  # it didn't start: solve again
-                pause.clear()
-        self._video_announce = announce
-        return [{"type": "view", "what": name, "video": True},
-                *([say(f"Showing live video of the {name} camera.")] if announce else [])]
-
-    def side_finder(self, on: bool) -> None:
-        """Finder frames in the background while the main camera's video runs (calibration
-        scripts need both cameras at the same moments). Fixed solve settings, no auto-exposure."""
-        with self._lock:
-            if self._side is not None:
-                self._side.stop()
-                self._side = None
-                if hasattr(self.finder, "paused"):
-                    self.finder.paused.clear()
-            cam = self.camera("finder")
-            if on and cam is not None and not (self._video and self._video[0] == "finder"):
-                if hasattr(self.finder, "paused"):
-                    self.finder.paused.set()
-                self._side = LiveView(cam, cam.exposure_s, cam.gain, None,
-                                      getattr(self.finder, "camera_lock", None), None, cam.gain).start()
-
-    def stop_video(self) -> str | None:
-        """End live video and give the camera back. Returns which camera it was, or None."""
-        if self._video is None:
-            return None
-        name, loop = self._video
-        self._video = None
-        loop.stop()
-        # Next start picks up here; Brighter/Darker (manual) stays manual across camera switches.
-        self._video_settings[(name, self._video_day)] = (loop.exposure_s, loop.gain, loop.exposure_range is None)
-        if name == "finder" and hasattr(self.finder, "paused"):
-            self.finder.paused.clear()
-        return name
-
-    def adjust_camera(self, name: str, exposure: str | None = None, zoom: int | None = None) -> None:
-        """The page's camera controls: exposure 'up'/'down' (live video only) and digital zoom."""
-        with self._lock:  # video start/stop run under it too
-            if zoom in ZOOMS:
-                self.zoom[name] = zoom
-            if exposure in ("up", "down") and self._video is not None and self._video[0] == name:
-                self._video[1].nudge(2.0 if exposure == "up" else 0.5)
-
-    def video_active(self, name: str) -> bool:
-        return self._video is not None and self._video[0] == name and self._video[1].running
-
-    def video_now(self) -> str | None:
-        """The camera live video is running on, so a page that (re)connects shows it."""
-        return self._video[0] if self._video is not None else None
-
-    def show(self, what: str) -> list[dict]:
-        self.stop_video()
-        if what == "main" and self.main_camera is None:
-            return [say("There's no main camera connected.")]
-        if what == "finder" and self.finder is None:
-            return [say("There's no finder camera connected.")]
-        words = {"finder": "the finder", "main": "the main camera", "debug": "the details",
-                 "none": "nothing"}
-        return [{"type": "view", "what": what}, say(f"Showing {words[what]}.")]
+    def adjust_camera(self, name: str, zoom: int | None = None) -> None:
+        """The page's digital zoom for a camera view (brightness is the page's own)."""
+        if name in self.zoom and zoom in ZOOMS:
+            self.zoom[name] = zoom
 
     def connections(self) -> dict:
         """What's plugged in and working, for the status line: True, False or None (not fitted)."""
@@ -726,11 +586,6 @@ class Session:
             self._positions.append((time.monotonic(), *self.position()))
         if self._offset_cal is not None:
             return self._offset_cal_step(t)
-        if self._video is not None and not self._video[1].running:  # it ended by itself (camera unplugged)
-            reason = self._video[1].stopped_because or "the camera stopped"
-            tell = say if self._video_announce else notice
-            name = self.stop_video()
-            return [{"type": "view", "what": name}, tell(f"Stopping the video: {reason}.")]
         rec = self.recorder.current if self.recorder else None
         if rec is not None and rec.done.is_set() and not self._announced_done:
             self._announced_done = True
@@ -755,10 +610,6 @@ class Session:
                 return self._announce_stack(live)
         if self._collimation is not None:
             return self._collimation_step(t)
-        if self._focus_coach is not None:
-            if self._focus_mode == "main":
-                return self._main_focus_step(t)
-            return self._finder_focus_step(t)
         if (self._centering or self.guide is not None) and (lost := self._pointing_lost()):
             self.guide, self._centering = None, False  # keep the target: "go to" it again later
             return [say(lost)]
@@ -789,7 +640,6 @@ class Session:
             self._start_direction_probe(cue.text, az_now, t)
             out.append(say(cue.text))
             if cue.text == "stop" and state.on_target and self._should_center():
-                self.stop_video()  # centering captures with the main camera itself
                 self._centering, self.guide = True, None  # finish with the main camera
                 self.centerer.restart(self.altaz_of(self.target))  # true, uncorrected target
                 self._center_limiter = CueLimiter()
@@ -903,10 +753,9 @@ class Session:
             return [say("I need to know where the telescope points first. Say 'sync', then try again.")]
         if self.main_camera is None:
             return [say("There's no main camera connected.")]
-        out = [] if self._video and self._video[0] == "main" else self.start_video("main", announce=False)
         self._offset_cal = {"name": name, "sky": [], "px": [], "seen": self.main_camera.last_at,
                             "until": time.monotonic() + OFFSET_CAL_S}
-        return [*out, say(f"Now move the scope slowly so {name} wanders around the main camera's "
+        return [say(f"Now move the scope slowly so {name} wanders around the main camera's "
                           "picture, up, down and sideways. I'll tell you when I have it.")]
 
     def _offset_cal_step(self, t: float) -> list[dict]:
@@ -976,28 +825,13 @@ class Session:
         spoken = self._center_limiter.speak(step.say, t, urgent) if step.say else None
         return [say(spoken)] if spoken else []
 
-    def _finder_focus_step(self, t: float) -> list[dict]:
-        if t - self._focus_at < FOCUS_STEP_S or self.finder is None or self._focus_coach is None:
-            return []
-        self._focus_at = t
-        try:
-            report = self.finder.focus_report()
-        except (RuntimeError, OSError) as e:
-            return self._camera_failed("finder", e)
-        if report.stars == 0:
-            return [say("I can't see any stars yet.")]
-        # Fewer visible stars also means softer focus, so fold the count into the score.
-        cue = self._focus_coach.update(report.stars / max(report.hfr_px, MIN_HFR_PX))
-        return [say(cue)] if cue else []
-
     def start_collimation(self) -> list[dict]:
         """F3: coach the primary mirror's screws from a defocused star in the main camera."""
         if self.main_camera is None:
             return [say("There's no main camera connected.")]
-        if self._camera_busy() or self._focus_coach is not None:
+        if self._camera_busy():
             return [say("Let's finish what the camera is doing first.")]
         self.guide, self._centering = None, False
-        self.main_focus_ok = False  # we're about to defocus on purpose
         self._collimation = CollimationCoach()
         return [say("Let's check collimation. Center a bright star, then turn the focus knob "
                     "until it becomes a big donut with a dark middle. Say stop when we're done.")]
@@ -1023,30 +857,6 @@ class Session:
         if donut.off <= COLLIMATED:
             self._collimation = None  # done: the user refocuses next
             cue = f"{cue} Now turn the focus knob back until the star is a sharp point."
-            self.main_focus_ok = False
-        return [say(cue)] if cue else []
-
-    def _main_focus_step(self, t: float) -> list[dict]:
-        if t - self._focus_at < FOCUS_STEP_S or self.main_camera is None or self._focus_coach is None:
-            return []
-        self._focus_at = t
-        try:
-            frame = self.main_camera.capture()
-        except (RuntimeError, OSError) as e:
-            return self._camera_failed("main", e)
-        if self.target is None or self.target in EXTENDED_TARGETS:
-            center = brightest_blob(frame)
-            if center is None:
-                return [say("I don't see anything bright in the main camera.")]
-            h, w = frame.shape
-            r = roi_around(center, FOCUS_CROP_PX, (w, h))
-            score = laplacian_variance(frame[r.y:r.y + r.height, r.x:r.x + r.width])
-        else:  # stars: smaller is sharper
-            report = check_focus(finder_gray(frame))  # expects hot-pixel-cleaned, binned gray
-            if report.stars == 0:
-                return [say("I don't see any stars in the main camera.")]
-            score = 1 / max(report.hfr_px, MIN_HFR_PX)
-        cue = self._focus_coach.update(score)
         return [say(cue)] if cue else []
 
     def _announce_picture(self) -> list[dict]:
@@ -1068,11 +878,6 @@ class Session:
                     "pictures. Tap Pictures to see it."),
                 {"type": "picture", "file": live.picture.name}]
 
-    def _camera_failed(self, which: str, error: Exception) -> list[dict]:
-        """A camera failed even after the driver's retry: stop focusing and say so."""
-        self._focus_coach = None
-        return [say(f"The {which} camera stopped responding, so I stopped focusing. ({error})")]
-
     # --- horizon walk (calibration wizard) ------------------------------------------------
     def start_horizon(self) -> list[dict]:
         if self._collimation is not None:
@@ -1084,7 +889,6 @@ class Session:
         self._horizon = []
         self.target, self.guide, self._centering = None, None, False
         self._offset_cal = None
-        self._focus_coach = None  # one mode at a time: focus prompts would talk over the walk
         return [say("Let's record the treeline. Point the telescope just above the trees and "
                     "say 'mark'. Then move along the treeline and mark again. "
                     "Eight to fifteen marks all the way around is ideal. Say 'done' to finish.")]
@@ -1126,7 +930,7 @@ class Session:
             self.wizard = SetupWizard(self.request_location, self.finder.sync,
                                       self.finder.alignment, self.start_horizon,
                                       self.cancel_location)
-            self.target, self.guide, self._centering, self._focus_coach = None, None, False, None
+            self.target, self.guide, self._centering = None, None, False
             self._offset_cal = None
             return self.wizard.start()
         return self.wizard.ready() if name == "ready" else self.wizard.skip()
@@ -1148,8 +952,6 @@ class Session:
                              f"{sol.scale_arcsec_px:.1f} arcsec per pixel")
         facts.append(f"target: {self.target}" if self.target else "no target")
         facts.append("Barlow in" if self.barlow else "no Barlow")
-        if self.main_camera is not None:
-            facts.append("focus checked" if self.main_focus_ok else "focus not checked yet")
         if self._camera_busy():
             facts.append("a picture is being taken")
         pictures = list(self.gallery_dir.glob("*.png")) if self.gallery_dir.exists() else []
@@ -1200,7 +1002,7 @@ class Session:
             self._model_site = new
             if self.finder is not None:
                 self.finder.reset(new)
-            self.target, self.guide, self._centering, self._focus_coach = None, None, False, None
+            self.target, self.guide, self._centering = None, None, False
             self._offset_cal = None
             self._horizon, self._suggestions = None, []
             self.horizon = HorizonMask()
