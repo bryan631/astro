@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+import numpy as np
+
 from astro.capture.edge import EdgeClock
 from astro.capture.roi import brightest_blob, roi_around
 from astro.capture.ser import SerWriter
@@ -37,6 +39,8 @@ def prune(out_dir: Path, keep: int = KEEP_RECORDINGS) -> None:
 
 
 PLANET_EXPOSURE_S, PLANET_GAIN = 0.02, 250
+PLANET_PEAK = (150, 230)  # 8-bit: the disk's brightest pixels land here (Jupiter clipped at 20 ms)
+MIN_PLANET_EXPOSURE_S = 0.0002
 
 
 class CaptureRefused(Exception):
@@ -110,9 +114,22 @@ class Recorder:
         roi = roi_around(center, ROI_PX, self.sensor)
         try:
             self.camera.set_roi(roi)
+            self._meter()
         except (RuntimeError, OSError) as e:
             raise CaptureRefused(f"The main camera isn't responding: {e}") from e
         return roi
+
+    def _meter(self) -> None:
+        """Exposure for the disk: its brightest pixels (0.1% of the ROI, inside the disk) in
+        PLANET_PEAK, so the video keeps detail instead of a white disk (2026-10-10)."""
+        exposure = PLANET_EXPOSURE_S
+        for _ in range(6):
+            peak = float(np.percentile(self.camera.capture(), 99.9))
+            if PLANET_PEAK[0] <= peak <= PLANET_PEAK[1]:
+                return
+            exposure *= 0.25 if peak >= 250 else sum(PLANET_PEAK) / 2 / max(peak, 1.0)
+            exposure = float(np.clip(exposure, MIN_PLANET_EXPOSURE_S, 4 * PLANET_EXPOSURE_S))
+            self.camera.set_exposure(exposure)
 
     def _restore_view(self) -> None:
         """Back to the live view's full frame and settings (the main view stays useful)."""
