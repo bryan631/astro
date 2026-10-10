@@ -7,8 +7,9 @@ from astro.devices.stream import CameraStream
 
 
 class TappedCamera:
-    """Wraps a camera. Whoever captures (tracker, focus coach, stacker, recorder), the last frame
-    is kept; everything else passes through, so nothing is captured just to be displayed."""
+    """Wraps a camera. Whoever captures (tracker, centering, collimation, stacker, recorder),
+    the last frame is kept; everything else passes through, so nothing is captured just to be
+    displayed."""
 
     def __init__(self, camera):
         self._camera, self.last, self.last_at = camera, None, 0.0

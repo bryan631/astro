@@ -1,7 +1,10 @@
-"""One observing session: ties planner, safety, mount position and guidance together.
+"""One observing session: ties planner, safety, pointing, guidance and the cameras together.
 
-`handle(text)` answers offline intents; `tick()` runs guidance at ~10 Hz. Both return
-messages for the tablet: {"type": "say", "text": ...} and {"type": "state", ...}.
+`action()` runs the page's buttons, `handle(text)` typed or spoken commands (offline intents),
+and `tick()` the guidance, captures and background solves at ~10 Hz. All return messages for
+the tablet, e.g. {"type": "say", "text": ...} and {"type": "state", ...}. Pieces with their own
+state live next door: Sky (targets and plans), FinderLabels (names), ViewSettings (day and night
+exposure), AlignRun, Recorder and LiveStacker.
 """
 
 import logging
