@@ -77,7 +77,7 @@ SATURATED_RAW = 250  # 8-bit raw: clipped
 PLANET_DISK_PX = 2000  # one clipped blob this big (raw px) is a disk: Jupiter ~30000, Sirius ~700
 PLANET_NEAR_DEG = 3.0  # ... and it's the planet within this of where the scope points
 ALIGN_SCALE = (25.0, 130.0)  # main pixels per finder pixel: ~58 for this pair (14.6" vs 0.25")
-LABEL_SOLVE_EVERY_S = 30.0  # names on but never solved: try a plate solve this often
+AUTO_SOLVE_EVERY_S = 20.0  # not synced (or names never placed): try a plate solve this often
 LABELS_REFRESH_S = 5.0  # the sky turns ~0.02 degrees in 5 s: under 2 finder pixels
 # By day the finder's view auto-exposes; the main camera gets fixed daylight settings (every
 # exposure change reopens it in the SDK, which froze its view in the field). At night both go
@@ -158,7 +158,7 @@ class Session:
         self._labels: dict | None = None  # finder_labels' cache: the solve's map, objects' alt-az
         self._label_catalog: tuple | None = None
         self.finder_map: np.ndarray | None = None  # alt-az -> finder pixels, from a solve (labels)
-        self._label_solve_at = -1e9
+        self._solved_try_at = -1e9
         self._collimation_at = -1e9
         self.main_camera, self.main_sensor = main_camera, main_sensor
         self.zoom = {"finder": 1, "main": 1}  # the page's digital zoom per camera view
@@ -444,11 +444,12 @@ class Session:
             return [say(COLLIMATING)]
         if self._camera_busy():
             return [say("I'm already recording." if self.recorder.busy else "I'm already stacking.")]
-        if self.target not in EXTENDED_TARGETS and (planet := self._planet_in_view()):
-            self.target = planet  # not picked in Go to: a deep-sky stack would blow out its disk
-        name = self.target or "the field"  # an unnamed patch of sky
+        disk = self.target not in EXTENDED_TARGETS and self._planet_in_view()
+        if disk and disk != "planet":
+            self.target = disk  # not picked in Go to: a deep-sky stack would blow out its disk
+        name = self.target or ("the planet" if disk else "the field")  # unnamed: as seen
         try:
-            if self.target in EXTENDED_TARGETS:  # planets, Moon: video; anything else stacks
+            if self.target in EXTENDED_TARGETS or disk:  # planets, Moon: video; anything else stacks
                 self.recorder.start(name, self.record_seconds)
                 self._picture_started()
                 self._announced_done = False
@@ -462,8 +463,9 @@ class Session:
                     "Try not to touch the telescope.")]
 
     def _planet_in_view(self) -> str | None:
-        """The planet (or Moon) nearest where the scope points, if the main view shows a disk:
-        one overexposed blob far bigger than any star's."""
+        """If the main view shows a disk (one clipped blob far bigger than any star's): the
+        planet or Moon nearest where the scope points, or "planet" when none is near (the
+        pointing may be off: a disk is still a disk)."""
         frame = self.camera_frame("main")
         if frame is None:
             return None
@@ -473,7 +475,7 @@ class Session:
         alt, az = self.position()
         near = [(separation_deg(alt, az, *body_altaz(b, self.site, self.clock())), b) for b in (*PLANETS, "moon")]
         sep, body = min(near)
-        return body.capitalize() if sep < PLANET_NEAR_DEG else None
+        return body.capitalize() if sep < PLANET_NEAR_DEG else "planet"
 
     def _picture_started(self) -> None:
         """The picture has the camera: guidance goes quiet (no "right a little" while the user
@@ -577,9 +579,7 @@ class Session:
         sol = getattr(self.finder, "last_solution", None)
         frame = self.camera_frame("finder")
         if sol is None and self.finder_map is None:  # never solved: solve now, in the background
-            if self.finder is not None and time.monotonic() - self._label_solve_at > LABEL_SOLVE_EVERY_S:
-                self._label_solve_at = time.monotonic()
-                threading.Thread(target=self.finder.sync, kwargs={"fresh": True}, daemon=True).start()
+            self._solve_soon()
             return []
         if frame is None:
             return []
@@ -719,8 +719,19 @@ class Session:
             kept.append(m)
         return kept
 
+    def _solve_soon(self) -> None:
+        """A plate solve in the background, at most every AUTO_SOLVE_EVERY_S: without one the
+        encoders mean nothing (2026-10-10: the board rebooted, the saved model was dropped, and
+        captures, names and Recenter all used a pointing 45 degrees off)."""
+        if self.finder is None or time.monotonic() - self._solved_try_at < AUTO_SOLVE_EVERY_S:
+            return
+        self._solved_try_at = time.monotonic()
+        threading.Thread(target=self.finder.sync, kwargs={"fresh": True}, daemon=True).start()
+
     def _tick(self, t: float) -> list[dict]:
         self._daylight_settings(t)
+        if self.finder is not None and not getattr(self.finder, "synced", True) and not self.daytime():
+            self._solve_soon()
         if self._align is not None:
             return self._align_step()
         rec = self.recorder.current if self.recorder else None
