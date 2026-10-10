@@ -7,8 +7,8 @@ import numpy as np
 import pytest
 from scipy import ndimage
 
-from astro import session as session_module
 from astro.devices.stream import ThreadStream
+from astro.pointing import align
 from astro.pointing.align import (
     box_on_finder_view,
     finder_offset_to_sky,
@@ -186,8 +186,8 @@ class CloudedFinder(FakeFinder):
 @pytest.mark.parametrize("clear", [True, False])
 def test_align_button_fits_the_main_camera_onto_the_finder(monkeypatch, tmp_path, clear):
     """Without a plate solve (clouds), Align still moves the box; Go to keeps its old aim."""
-    monkeypatch.setattr(session_module, "ALIGN_S", 2.5)
-    monkeypatch.setattr(session_module, "ALIGN_SCALE", (10.0, 40.0))  # the fakes' scale is 20
+    monkeypatch.setattr(align, "ALIGN_S", 2.5)
+    monkeypatch.setattr(align, "ALIGN_SCALE", (10.0, 40.0))  # the fakes' scale is 20
     start = time.monotonic()
     finder_cam, main_cam = ThreadStream(DriftingSky(False, start)), ThreadStream(DriftingSky(True, start))
     s = Session(Site(26.6, -80.1), clock=lambda: datetime(2026, 10, 10, 2, 0, tzinfo=UTC),
@@ -220,8 +220,8 @@ class DarkMain(DriftingSky):
     (DarkMain, (10.0, 40.0), "I don't see a bright star"),
 ])
 def test_align_failures_keep_the_old_box(monkeypatch, tmp_path, main_cls, scale, expected):
-    monkeypatch.setattr(session_module, "ALIGN_S", 1.5)
-    monkeypatch.setattr(session_module, "ALIGN_SCALE", scale)
+    monkeypatch.setattr(align, "ALIGN_S", 1.5)
+    monkeypatch.setattr(align, "ALIGN_SCALE", scale)
     start = time.monotonic()
     finder_cam, main_cam = ThreadStream(DriftingSky(False, start)), ThreadStream(main_cls(True, start))
     old_box = [[1, 2], [3, 4], [5, 6], [7, 8]]

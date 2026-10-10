@@ -27,7 +27,7 @@ from astro.capture.live_stacker import LiveStacker
 from astro.capture.recorder import CaptureRefused, Recorder, prune
 from astro.capture.roi import brightest_blob, roi_around
 from astro.devices.base import Camera
-from astro.devices.tap import tap
+from astro.devices.tap import frame_with_time, tap
 from astro.guidance.centering import CALIBRATED, Centerer
 from astro.guidance.engine import CueLimiter, DirectionLearner, Guide, wrap180
 from astro.intents import Intent, match_name, parse
@@ -40,11 +40,11 @@ from astro.planner.horizon import HorizonMask
 from astro.planner.moon_features import FEATURES
 from astro.planner.tonight import PLANET_NOTES, PLANETS, next_dark, plan
 from astro.pointing.align import (
+    ALIGN_S,
+    AlignRun,
     MainInFinder,
     box_on_finder_view,
     finder_offset_to_sky,
-    fit_main_in_finder,
-    pick_star,
     sky_offset_to_altaz,
 )
 from astro.pointing.coords import Site, altaz_to_radec, body_altaz, radec_to_altaz
@@ -52,7 +52,6 @@ from astro.pointing.finder_sync import FinderSync
 from astro.pointing.geometry import separation_deg
 from astro.pointing.labels import FinderLabels, altaz_now
 from astro.pointing.main_offset import MainOffset
-from astro.pointing.platesolve import finder_gray
 from astro.process.planet import MIN_FRAMES, StackResult, process_ser
 from astro.process.view import ROTATE
 from astro.safety import DAYTIME_SUN_ALT_DEG, SafetyResult, check_target
@@ -72,12 +71,10 @@ FIX_STALE_S = 2.0  # a plate-solve fix older than this is too old to steer by
 ENCODER_STALE_S = 1.0  # encoder positions older than this mean the board or cable is gone
 # Guidance "on target" tolerance. 4' kept the user nudging in the field (encoder steps are 2.3');
 # 8' still lands the target well inside the main camera's 32' x 18' view.
-ALIGN_S = 10.0  # Align watches the bright star drift this long in both cameras
 PLANET_DISK_PX = 2000  # one clipped blob this big (raw px) is a disk: Jupiter ~30000, Sirius ~700
 UNNAMED_PLANET = "the planet"  # a disk in the picture when the pointing can't name it
 FIELD_RADIUS_DEG = 0.3  # the telescope's 32' x 18' view, center to corner
 PLANET_NEAR_DEG = 3.0  # ... and it's the planet within this of where the scope points
-ALIGN_SCALE = (25.0, 130.0)  # main pixels per finder pixel: ~58 for this pair (14.6" vs 0.25")
 AUTO_SOLVE_EVERY_S = 5.0  # background plate solves at night (back to back while not synced)
 AUTO_SOLVE_NEAR_DEG = 5.0  # a background solve replaces model syncs this close (keeps the spread)
 DARK_SUN_ALT_DEG = -10.0  # Sun lower than this: the views get the night stretch (twilight: as is)
@@ -178,7 +175,7 @@ class Session:
         self._center_at = -1e9
         self._center_gave_up: str | None = None  # main camera lost this target: finder only
         self.main_box: list | None = None  # main field on the finder view (Align)
-        self._align: dict | None = None  # Align in progress: samples from both cameras
+        self._align: AlignRun | None = None  # Align in progress
         self.main_in_finder: MainInFinder | None = None  # the last Align's fit
         self._progress_at, self._capture_at = -1e9, 0.0  # capture progress messages
         self._capture_radec = (0.0, 0.0)  # where a capture began (Recenter's target if unnamed)
@@ -955,63 +952,32 @@ class Session:
         h, w = frame[0].shape if frame else (960, 1280)
         near = self.main_in_finder.center if self.main_in_finder else np.array([w / 2, h / 2])
         self.guide, self._centering = None, False
-        self._align = {"until": time.monotonic() + ALIGN_S, "near": near,
-                       "sol": self.finder.last_solution if solved else None,
-                       "finder": [], "main": [], "seen": {"finder": None, "main": None},
-                       "finder_size": (w, h), "main_size": None, "no_star": 0}
+        self._align = AlignRun(near, (w, h), self.finder.last_solution if solved else None)
         box_only = "" if solved else (" The finder can't plate-solve right now (clouds?), so this "
                                       "moves the box only; Go to keeps its old aim.")
         return [say(f"Aligning: keep the bright star in the telescope view and don't touch the scope "
                     f"for {ALIGN_S:.0f} seconds.{box_only}")]
 
     def _align_step(self) -> list[dict]:
-        cal = self._align
+        run = self._align
         for name in ("finder", "main"):
-            got = _frame_with_time(self.camera(name))
-            if got is None or got[1] == cal["seen"][name]:
-                continue
-            frame, cal["seen"][name], t_mid = got
-            if name == "finder":
-                star = pick_star(finder_gray(frame), tuple(cal["near"] / 2))  # binned 2x2
-                if star is None:
-                    cal["no_star"] += 1
-                else:
-                    cal["finder"].append((t_mid, star[0] * 2, star[1] * 2))
-            elif (blob := brightest_blob(frame)) is not None:
-                h, w = frame.shape
-                cal["main_size"] = (w, h)
-                cal["main"].append((t_mid, blob[0] - w / 2, blob[1] - h / 2))
-        if time.monotonic() < cal["until"]:
+            run.add(name, frame_with_time(self.camera(name)))
+        if time.monotonic() < run.until:
             return []
         self._align = None
-        if len(cal["main"]) < 5:
-            return [say("I don't see a bright star in the telescope view. Put one in the middle of "
-                        "it, then tap Align.")]
-        if len(cal["finder"]) < 2:
-            return [say("I couldn't tell which finder star is the one in the telescope view. Pick a "
-                        "brighter star, one you can see by eye, and tap Align.")]
-        f, m = np.array(cal["finder"]), np.array(cal["main"])
-        fit = fit_main_in_finder(f[:, 0], f[:, 1:], m[:, 0], m[:, 1:])
-        log.info("align tracks", extra={"data": {"finder": f.round(2).tolist(), "main": m.round(2).tolist(),
-                                                  "no_star": cal["no_star"], "scale": fit and fit.scale,
-                                                  "rotation": fit and fit.rotation_deg}})
-        if fit is not None and not ALIGN_SCALE[0] <= fit.scale <= ALIGN_SCALE[1]:
-            return [say(f"That didn't fit (the star moved {fit.scale:.1f} times as far in the "
-                        "telescope as in the finder; it should be about 58). The scope may have moved, "
-                        "or I followed the wrong star. Tap Align again; the box is unchanged.")]
-        if fit is None:
-            return [say("The star didn't drift enough to measure. Tap Align and wait the full "
-                        f"{ALIGN_S:.0f} seconds without touching the scope.")]
-        w, h = cal["finder_size"]
-        self.main_box = box_on_finder_view(fit, cal["main_size"], (w, h), ROTATE["finder"])
+        fit = run.result()
+        if isinstance(fit, str):
+            return [say(fit)]
+        w, h = run.finder_size
+        self.main_box = box_on_finder_view(fit, run.main_size, (w, h), ROTATE["finder"])
         self.main_in_finder = fit
-        if cal["sol"] is None:  # no solve: the box from the drift alone, Go to's aim unchanged
+        if run.sol is None:  # no solve: the box from the drift alone, Go to's aim unchanged
             self._save_calibration()
             return [say(f"Box moved: the telescope's view is on the finder view, turned "
                         f"{fit.rotation_deg:.0f} degrees. Go to keeps its old aim until an Align "
                         "with the finder seeing clear sky.")]
-        east, north = finder_offset_to_sky(fit.center[0] - w / 2, fit.center[1] - h / 2, cal["sol"], w)
-        self.centerer.offset = sky_offset_to_altaz(cal["sol"], east, north, self.site, self.clock())
+        east, north = finder_offset_to_sky(fit.center[0] - w / 2, fit.center[1] - h / 2, run.sol, w)
+        self.centerer.offset = sky_offset_to_altaz(run.sol, east, north, self.site, self.clock())
         self._save_calibration()
         return [say(f"Aligned. The telescope points {np.hypot(east, north) * 60:.0f} arcminutes "
                     f"from the finder's center, turned {fit.rotation_deg:.0f} degrees. Its box is "
@@ -1285,16 +1251,3 @@ def _azimuth_coverage(azs: list[float]) -> float:
 def _clock(t: datetime) -> str:
     """Local wall-clock time as spoken: '9:15 PM'."""
     return t.strftime("%I:%M %p").lstrip("0")
-
-
-def _frame_with_time(cam) -> tuple[np.ndarray, int, float] | None:
-    """(frame, frame number, mid-exposure Unix time) of a camera's newest frame, or None."""
-    if cam is None:
-        return None
-    if hasattr(cam, "latest"):  # a stream (astro/devices/stream.py)
-        frame, seq, t_mid = cam.latest()
-        return None if frame is None else (frame, seq, t_mid)
-    if getattr(cam, "last", None) is None:  # a plain tapped camera (tests)
-        return None
-    t_end = time.time() - (time.monotonic() - cam.last_at)
-    return cam.last, round(cam.last_at * 1e6), t_end - cam.exposure_s / 2

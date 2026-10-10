@@ -13,6 +13,8 @@ Newtonian) and c the main camera's center on the finder's sensor. From that: the
 box on the finder view, and with one finder plate solve, its offset on the sky for "go to".
 """
 
+import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -20,9 +22,14 @@ import numpy as np
 from scipy import ndimage
 
 from astro.capture.focus import flatten_sky
+from astro.capture.roi import brightest_blob
 from astro.pointing.coords import Site, radec_to_altaz
 from astro.pointing.main_offset import MainOffset, local_delta
-from astro.pointing.platesolve import Solution
+from astro.pointing.platesolve import Solution, finder_gray
+
+ALIGN_S = 10.0  # Align watches the bright star drift this long in both cameras
+ALIGN_SCALE = (25.0, 130.0)  # main pixels per finder pixel: ~58 for this pair (14.6" vs 0.25")
+log = logging.getLogger(__name__)
 
 MIN_DRIFT_PX = 50.0  # main-camera pixels the star must move for a rotation (~2 s of sidereal drift)
 MIN_SAMPLES = 5
@@ -133,3 +140,56 @@ def box_on_finder_view(fit: MainInFinder, main_size: tuple[int, int], finder_siz
     if finder_rotate == 180:
         frac = -frac
     return [[round(float(x), 4), round(float(y), 4)] for x, y in frac]
+
+
+class AlignRun:
+    """One Align in progress: the bright star's track in both cameras for ALIGN_S."""
+
+    def __init__(self, near: np.ndarray, finder_size: tuple[int, int], sol: Solution | None):
+        """`near`: where the main camera's center sat on the finder last time (sensor px);
+        `sol`: a fresh finder solve, or None (clouds: the box moves, the sky offset doesn't)."""
+        self.until = time.monotonic() + ALIGN_S
+        self.near, self.finder_size, self.sol = near, finder_size, sol
+        self.finder: list[tuple[float, float, float]] = []  # (t, x, y) finder sensor px
+        self.main: list[tuple[float, float, float]] = []  # (t, x, y) main px from its center
+        self.main_size: tuple[int, int] | None = None
+        self.seen: dict[str, int | None] = {"finder": None, "main": None}  # newest frame used
+        self.no_star = 0  # finder frames without one clear star near `near`
+
+    def add(self, name: str, got: tuple[np.ndarray, int, float] | None) -> None:
+        """A camera's newest (frame, frame number, mid-exposure time), once per frame."""
+        if got is None or got[1] == self.seen[name]:
+            return
+        frame, self.seen[name], t_mid = got
+        if name == "finder":
+            star = pick_star(finder_gray(frame), tuple(self.near / 2))  # binned 2x2
+            if star is None:
+                self.no_star += 1
+            else:
+                self.finder.append((t_mid, star[0] * 2, star[1] * 2))
+        elif (blob := brightest_blob(frame)) is not None:
+            h, w = frame.shape
+            self.main_size = (w, h)
+            self.main.append((t_mid, blob[0] - w / 2, blob[1] - h / 2))
+
+    def result(self) -> MainInFinder | str:
+        """The fit, or what went wrong, said to the user (the old box stays)."""
+        if len(self.main) < MIN_SAMPLES:
+            return ("I don't see a bright star in the telescope view. Put one in the middle of "
+                    "it, then tap Align.")
+        if len(self.finder) < 2:
+            return ("I couldn't tell which finder star is the one in the telescope view. Pick a "
+                    "brighter star, one you can see by eye, and tap Align.")
+        f, m = np.array(self.finder), np.array(self.main)
+        fit = fit_main_in_finder(f[:, 0], f[:, 1:], m[:, 0], m[:, 1:])
+        log.info("align tracks", extra={"data": {"finder": f.round(2).tolist(), "main": m.round(2).tolist(),
+                                                  "no_star": self.no_star, "scale": fit and fit.scale,
+                                                  "rotation": fit and fit.rotation_deg}})
+        if fit is None:
+            return ("The star didn't drift enough to measure. Tap Align and wait the full "
+                    f"{ALIGN_S:.0f} seconds without touching the scope.")
+        if not ALIGN_SCALE[0] <= fit.scale <= ALIGN_SCALE[1]:
+            return (f"That didn't fit (the star moved {fit.scale:.1f} times as far in the "
+                    "telescope as in the finder; it should be about 58). The scope may have moved, "
+                    "or I followed the wrong star. Tap Align again; the box is unchanged.")
+        return fit
