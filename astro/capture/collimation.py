@@ -8,10 +8,13 @@ from dataclasses import dataclass
 import numpy as np
 from scipy import ndimage
 
+from astro.capture.roi import brightest_blob, roi_around
+
 CENTERED = 0.05  # shadow offset (fraction of the ring radius) that counts as collimated
 MIN_RADIUS_PX = 15  # smaller: not defocused enough to see the shadow
 SECTORS = 8  # ring brightness is compared around the circle in this many slices
 CHANGE = 0.02  # offset change (fraction of radius) worth calling better or worse
+CROP_PX = 512  # around the defocused star (the donut is ~100-300 px across)
 
 
 @dataclass(frozen=True)
@@ -59,6 +62,21 @@ class CollimationCoach:
 
     def __init__(self):
         self.last: float | None = None  # offset when we last said something: small turns add up
+
+    def check(self, frame: np.ndarray) -> tuple[str | None, bool]:
+        """What to say about a main-camera frame, and whether collimation is done."""
+        center = brightest_blob(frame)
+        if center is None:
+            return "I don't see a star in the telescope view.", False
+        h, w = frame.shape
+        r = roi_around(center, CROP_PX, (w, h))
+        donut = analyze(frame[r.y:r.y + r.height, r.x:r.x + r.width])
+        if not isinstance(donut, Donut):
+            return donut, False
+        cue = self.update(donut)
+        if donut.off <= CENTERED:  # done: the user refocuses next
+            return f"{cue} Now turn the focus knob back until the star is a sharp point.", True
+        return cue, False
 
     def update(self, donut: Donut) -> str | None:
         prev = self.last

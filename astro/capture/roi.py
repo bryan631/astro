@@ -53,3 +53,10 @@ def companions(frame: np.ndarray, planet: tuple[float, float], reach: float) -> 
     near = np.hypot(*(centers - planet).T) <= reach
     keep = near & (ids != own) & (areas <= MAX_COMPANION_AREA_PX)
     return [tuple(map(float, centers[i])) for i in np.flatnonzero(keep)[np.argsort(-peaks[keep])]]
+
+
+def has_disk(frame: np.ndarray, min_px: int, clipped: int = 250) -> bool:
+    """One clipped blob of at least `min_px` raw pixels (counted on every other pixel): a
+    planet's or the Moon's disk, far bigger than any star's."""
+    labels, n = ndimage.label(frame[::2, ::2] >= clipped)
+    return n > 0 and np.bincount(labels.ravel())[1:].max() * 4 >= min_px
