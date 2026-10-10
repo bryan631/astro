@@ -17,6 +17,18 @@ HOT_SIGMA = 4  # this far above all its neighbors (in noise units) is a hot pixe
 MIN_RANGE = 40  # 8-bit counts: a dark frame stays dark instead of stretching its noise to full scale
 
 
+def focus_score(lum: np.ndarray) -> float:
+    """Percent of the brightest object's light within 2 px of its peak (of a 15 px box): higher
+    is sharper, whatever the brightness or exposure. For stars and planets alike."""
+    smooth = ndimage.uniform_filter(lum, 3)
+    y, x = np.unravel_index(np.argmax(smooth), smooth.shape)
+    box = lum[max(y - 7, 0):y + 8, max(x - 7, 0):x + 8]
+    box = box - np.median(lum)  # sky background off
+    core = lum[max(y - 2, 0):y + 3, max(x - 2, 0):x + 3] - np.median(lum)
+    total = box.clip(0).sum()
+    return 100 * core.clip(0).sum() / total if total > 0 else 0.0
+
+
 def remove_hot_pixels(rgb: np.ndarray) -> np.ndarray:
     """Hot pixels look like stars that never move. A star spreads over several pixels; a hot
     pixel is one bright pixel with dark neighbors, so it gets its brightest neighbor's value."""
@@ -34,8 +46,10 @@ def jpeg(raw: np.ndarray, bayer: str, zoom: int = 1, rotate: int = 180) -> bytes
     ch, cw = h // zoom // 2 * 2, w // zoom // 2 * 2
     y, x = (h - ch) // 4 * 2, (w - cw) // 4 * 2  # even offsets keep the Bayer pattern
     rgb = remove_hot_pixels(superpixel_rgb(raw[y:y + ch, x:x + cw], bayer).astype(float))
-    sharpness = laplacian_variance(rgb.mean(axis=2))
+    lum = rgb.mean(axis=2)
     lo = np.percentile(rgb, 50)  # the sky background is the typical pixel
+    # Night: how concentrated the brightest object is (maximize it); day: edge contrast.
+    label = f"sharpness {laplacian_variance(lum):.0f}" if lo > DAY_MEDIAN else f"focus {focus_score(lum):.0f}"
     if lo > DAY_MEDIAN:  # day mode (a room or daylight): show it as it is, no sky stretch
         img = Image.fromarray(rgb.clip(0, 255).astype(np.uint8))
     else:
@@ -44,7 +58,7 @@ def jpeg(raw: np.ndarray, bayer: str, zoom: int = 1, rotate: int = 180) -> bytes
     img = img.rotate(rotate)
     width = min(MAX_WIDTH, w // 2)  # zoomed views are scaled up to the same size: same text size
     img = img.resize((width, round(img.height * width / img.width)))
-    text = f"sharpness {sharpness:.0f}" + (f"  {zoom}x" if zoom > 1 else "")
+    text = label + (f"  {zoom}x" if zoom > 1 else "")
     draw, font = ImageDraw.Draw(img), ImageFont.load_default(size=28)
     draw.text((10, 8), text, fill=(255, 60, 60), font=font, stroke_width=2, stroke_fill=(0, 0, 0))
     out = io.BytesIO()

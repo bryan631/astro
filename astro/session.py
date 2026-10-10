@@ -416,10 +416,10 @@ class Session:
         if self._camera_busy():  # one user of the camera at a time
             return [say("I'm recording right now. Say 'stop recording' first.")]
         self.guide = None  # keep the target; we're on it
-        self.main_focus_ok = False  # a new focus pass must finish before capture
-        self._focus_coach, self._focus_mode = FocusCoach(), "main"
-        return [say("Turn the telescope's focus knob slowly. I'll tell you when it gets sharper. "
-                    "Say stop when I say it's the sharpest.")]
+        # No spoken coach (it reacted to noise and talked too much): live video with the
+        # "focus" number printed on it; the user turns the knob to maximize it.
+        return [*self.start_video("main", announce=False),
+                notice("Turn the focus knob to make the focus number as high as you can.")]
 
     def capture(self) -> list[dict]:
         if self.recorder is None:
@@ -428,8 +428,6 @@ class Session:
             return [say(COLLIMATING)]
         if self._focus_coach is not None:  # focus is still using a camera
             return [say("Let's finish focusing first. Say done when it's sharpest.")]
-        if not self.main_focus_ok:  # pre-flight gate (plan Phase 1 step 8)
-            return [say("Let's make sure it's sharp first."), *self.start_main_focus()]
         if self._camera_busy():
             return [say("I'm already recording." if self.recorder.busy else "I'm already stacking.")]
         name = self.target or "capture"
