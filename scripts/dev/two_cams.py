@@ -4,7 +4,7 @@ One process per camera (two capture threads in one process segfaulted the SDK, 2
 Each prints its frame rate and errors, and saves frames with their mid-exposure time, so the
 pairs can serve as test data. Stop the astro service first (it holds the cameras):
     sudo systemctl stop astro
-    .venv/bin/python scripts/dev/two_cams.py 30 data/fixtures/night-2026-10-10
+    .venv/bin/python scripts/dev/two_cams.py 30 data/fixtures/night-2026-10-10 [save every s]
 """
 
 import multiprocessing as mp
@@ -15,10 +15,9 @@ from pathlib import Path
 import numpy as np
 
 CAMERAS = {"finder": ("SV905C", 0.8, 200), "main": ("SV705C", 0.25, 480)}
-SAVE_EVERY_S = 2.0
 
 
-def run(name: str, seconds: float, out: Path) -> None:
+def run(name: str, seconds: float, out: Path, every_s: float) -> None:
     from astro.devices.svbony import SvbonyCamera  # noqa: PLC0415 - the SDK loads in this process only
 
     model, exposure, gain = CAMERAS[name]
@@ -37,7 +36,7 @@ def run(name: str, seconds: float, out: Path) -> None:
             continue
         when = time.time() - exposure / 2  # mid-exposure
         frames += 1
-        if when - saved_at >= SAVE_EVERY_S:
+        if when - saved_at >= every_s:
             saved_at = when
             np.savez_compressed(out / f"{name}_{when:.3f}.npz", frame=frame, t=when,
                                 exposure_s=exposure, gain=gain, bayer=cam.bayer)
@@ -49,9 +48,10 @@ def run(name: str, seconds: float, out: Path) -> None:
 if __name__ == "__main__":
     seconds = float(sys.argv[1]) if len(sys.argv) > 1 else 30
     out = Path(sys.argv[2] if len(sys.argv) > 2 else "data/fixtures/two_cams")
+    every_s = float(sys.argv[3]) if len(sys.argv) > 3 else 2.0  # save a frame this often
     out.mkdir(parents=True, exist_ok=True)
     ctx = mp.get_context("spawn")  # a fresh interpreter per camera: no SDK state shared
-    procs = [ctx.Process(target=run, args=(name, seconds, out)) for name in CAMERAS]
+    procs = [ctx.Process(target=run, args=(name, seconds, out, every_s)) for name in CAMERAS]
     for p in procs:
         p.start()
     for p in procs:
