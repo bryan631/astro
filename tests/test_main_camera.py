@@ -196,7 +196,7 @@ def test_capture_start_failure_is_spoken(tmp_path):
     s, _ = make_session(tmp_path)
     s.recorder.camera = DeadCamera()
     s.main_focus_ok = True
-    assert texts(s.handle("take a picture"))[0].startswith("The main camera isn't responding")
+    assert texts(s.handle("take a picture"))[0].startswith("The telescope camera isn't responding")
 
 
 def test_stop_recording_after_it_finished(tmp_path):

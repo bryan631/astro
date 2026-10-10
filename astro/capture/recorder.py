@@ -107,16 +107,16 @@ class Recorder:
             self.camera.set_gain(PLANET_GAIN)
             center = brightest_blob(self.camera.capture())
         except (RuntimeError, OSError) as e:  # SDK gave up after its retry
-            raise CaptureRefused(f"The main camera isn't responding: {e}") from e
+            raise CaptureRefused(f"The telescope camera isn't responding: {e}") from e
         if center is None:
-            raise CaptureRefused("I don't see anything bright in the main camera. "
+            raise CaptureRefused("I don't see anything bright in the telescope view. "
                                  "Let's center it first.")
         roi = roi_around(center, ROI_PX, self.sensor)
         try:
             self.camera.set_roi(roi)
             self._meter()
         except (RuntimeError, OSError) as e:
-            raise CaptureRefused(f"The main camera isn't responding: {e}") from e
+            raise CaptureRefused(f"The telescope camera isn't responding: {e}") from e
         return roi
 
     def _meter(self) -> None:

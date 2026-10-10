@@ -9,8 +9,8 @@
   /* One screen, both cameras always live, buttons along the bottom. Portrait: finder above main.
      Landscape: one camera fills the screen; swipe (or tap its name) for the other.
      Everything works with the volume off (Phase 3b): every message is text on the screen. */
-  :root { --bg: #000; --fg: #ff3b30; --dim: #7a1c17; --hi: #ff6a5f; }
-  body.day { --bg: #111; --fg: #f2f2f2; --dim: #555; --hi: #7cff7c; }
+  :root { --bg: #000; --fg: #ff3b30; --dim: #7a1c17; --hi: #ff6a5f; --box: #ff6a5f; }
+  body.day { --bg: #111; --fg: #f2f2f2; --dim: #555; --hi: #7cff7c; --box: #ff9500; }  /* box: orange, not green */
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }  /* else a hidden sheet's own display covers the buttons */
   html, body { height: 100%; }
@@ -37,7 +37,7 @@
   .frame::before { left: 0; right: 0; top: 50%; height: 1px; }
   .frame::after { top: 0; bottom: 0; left: 50%; width: 1px; }
   .frame svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-  .frame polygon { fill: none; stroke: var(--hi); stroke-width: 2px; stroke-dasharray: 6 4;
+  .frame polygon { fill: none; stroke: var(--box); stroke-width: 2px; stroke-dasharray: 6 4;
                    vector-effect: non-scaling-stroke; }
   .label { position: absolute; left: 0; top: 0; padding: 6px 14px 10px 8px; font-size: 16px; text-shadow: 0 0 4px #000; }
   .cap { position: absolute; left: 8px; bottom: 6px; font-size: 15px; opacity: .85; text-shadow: 0 0 4px #000; }
@@ -105,9 +105,9 @@
       <div class="ctl"><button id="names">Names</button><button data-b="-">−</button><button data-b="+">+</button><button data-z>1x</button></div>
     </div>
     <div class="view" id="v-main">
-      <img class="cam" alt="main camera">
+      <img class="cam" alt="telescope camera">
       <div class="frame"><div id="field" hidden></div></div>
-      <div class="label">Main camera<span class="swap"> ⇄</span></div><div class="focus"><b></b><small></small><canvas width="160" height="40"></canvas></div>
+      <div class="label">Telescope<span class="swap"> ⇄</span></div><div class="focus"><b></b><small></small><canvas width="160" height="40"></canvas></div>
       <div id="capinfo"></div><img id="inset" hidden alt="live stack">
       <div class="cap"></div>
       <div class="ctl"><button data-b="-">−</button><button data-b="+">+</button><button data-z>1x</button></div>
@@ -385,7 +385,7 @@ async function pollStatus() {
   if (s.build) { if (build && s.build !== build) { location.reload(); return; } build = s.build; }
   mainBox = s.main_box || mainBox; drawMainBox();
   $("status").innerHTML = [item("Tablet link", link, link ? "" : "reconnecting"), item("Finder", s.finder),
-    item("Main camera", s.main), item("Encoders", s.encoders), item("Internet", s.internet),
+    item("Telescope", s.main), item("Encoders", s.encoders), item("Internet", s.internet),
     s.claude ? item("Claude", s.claude === "ok", s.claude === "ok" ? "" : `(${s.claude})`) : ""].filter(Boolean).join("");
   $("checks").hidden = !s.daytime; $("checksoff").checked = !!s.checks_off;
 }

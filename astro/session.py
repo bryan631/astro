@@ -444,7 +444,7 @@ class Session:
 
     def capture(self) -> list[dict]:
         if self.recorder is None:
-            return [say("There's no main camera connected.")]
+            return [say("There's no telescope camera connected.")]
         if self._collimation is not None:
             return [say(COLLIMATING)]
         if self._camera_busy():
@@ -974,7 +974,7 @@ class Session:
                        "finder_size": (w, h), "main_size": None, "no_star": 0}
         box_only = "" if solved else (" The finder can't plate-solve right now (clouds?), so this "
                                       "moves the box only; Go to keeps its old aim.")
-        return [say(f"Aligning: keep the bright star in the main view and don't touch the scope "
+        return [say(f"Aligning: keep the bright star in the telescope view and don't touch the scope "
                     f"for {ALIGN_S:.0f} seconds.{box_only}")]
 
     def _align_step(self) -> list[dict]:
@@ -998,10 +998,10 @@ class Session:
             return []
         self._align = None
         if len(cal["main"]) < 5:
-            return [say("I don't see a bright star in the main camera. Put one in the middle of "
-                        "the main view, then tap Align.")]
+            return [say("I don't see a bright star in the telescope view. Put one in the middle of "
+                        "it, then tap Align.")]
         if len(cal["finder"]) < 2:
-            return [say("I couldn't tell which finder star is the one in the main camera. Pick a "
+            return [say("I couldn't tell which finder star is the one in the telescope view. Pick a "
                         "brighter star, one you can see by eye, and tap Align.")]
         f, m = np.array(cal["finder"]), np.array(cal["main"])
         fit = fit_main_in_finder(f[:, 0], f[:, 1:], m[:, 0], m[:, 1:])
@@ -1009,8 +1009,8 @@ class Session:
                                                   "no_star": cal["no_star"], "scale": fit and fit.scale,
                                                   "rotation": fit and fit.rotation_deg}})
         if fit is not None and not ALIGN_SCALE[0] <= fit.scale <= ALIGN_SCALE[1]:
-            return [say(f"That didn't fit (the star moved {fit.scale:.1f} times as far in the main "
-                        "camera as in the finder; it should be about 58). The scope may have moved, "
+            return [say(f"That didn't fit (the star moved {fit.scale:.1f} times as far in the "
+                        "telescope as in the finder; it should be about 58). The scope may have moved, "
                         "or I followed the wrong star. Tap Align again; the box is unchanged.")]
         if fit is None:
             return [say("The star didn't drift enough to measure. Tap Align and wait the full "
@@ -1020,13 +1020,13 @@ class Session:
         self.main_in_finder = fit
         if cal["sol"] is None:  # no solve: the box from the drift alone, Go to's aim unchanged
             self._save_calibration()
-            return [say(f"Box moved: the main camera's view is on the finder view, turned "
+            return [say(f"Box moved: the telescope's view is on the finder view, turned "
                         f"{fit.rotation_deg:.0f} degrees. Go to keeps its old aim until an Align "
                         "with the finder seeing clear sky.")]
         east, north = finder_offset_to_sky(fit.center[0] - w / 2, fit.center[1] - h / 2, cal["sol"], w)
         self.centerer.offset = sky_offset_to_altaz(cal["sol"], east, north, self.site, self.clock())
         self._save_calibration()
-        return [say(f"Aligned. The main camera points {np.hypot(east, north) * 60:.0f} arcminutes "
+        return [say(f"Aligned. The telescope points {np.hypot(east, north) * 60:.0f} arcminutes "
                     f"from the finder's center, turned {fit.rotation_deg:.0f} degrees. Its box is "
                     "on the finder view.")]
 
@@ -1051,7 +1051,7 @@ class Session:
             frame = self.main_camera.capture()
         except (RuntimeError, OSError) as e:
             self._centering = False
-            return [say(f"The main camera stopped responding. ({e})")]
+            return [say(f"The telescope camera stopped responding. ({e})")]
         step = self.centerer.update(self.position(), brightest_blob(frame))
         if step.lost:  # back to finder guidance, as the words promise
             self._centering = False
@@ -1069,7 +1069,7 @@ class Session:
     def start_collimation(self) -> list[dict]:
         """F3: coach the primary mirror's screws from a defocused star in the main camera."""
         if self.main_camera is None:
-            return [say("There's no main camera connected.")]
+            return [say("There's no telescope camera connected.")]
         if self._camera_busy():
             return [say("Let's finish what the camera is doing first.")]
         self.guide, self._centering = None, False
@@ -1085,10 +1085,10 @@ class Session:
             frame = self.main_camera.capture()
         except (RuntimeError, OSError) as e:
             self._collimation = None
-            return [say(f"The main camera stopped responding, so I stopped. ({e})")]
+            return [say(f"The telescope camera stopped responding, so I stopped. ({e})")]
         center = brightest_blob(frame)
         if center is None:
-            return [say("I don't see a star in the main camera.")]
+            return [say("I don't see a star in the telescope view.")]
         h, w = frame.shape
         r = roi_around(center, COLLIMATION_CROP_PX, (w, h))
         donut = analyze(frame[r.y:r.y + r.height, r.x:r.x + r.width])

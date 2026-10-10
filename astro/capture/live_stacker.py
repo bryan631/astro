@@ -65,7 +65,7 @@ class LiveStacker:
             self.camera.set_exposure(SUB_EXPOSURE_S)
             self.camera.set_gain(SUB_GAIN)
         except (RuntimeError, OSError) as e:
-            raise CaptureRefused(f"The main camera isn't responding: {e}") from e
+            raise CaptureRefused(f"The telescope camera isn't responding: {e}") from e
         stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.preview_dir.mkdir(parents=True, exist_ok=True)
