@@ -22,6 +22,7 @@ MAX_STARS = 300
 MIN_HFR_PX = 0.5  # a perfectly sharp star can't make the number blow up
 PLANET_AREA_PX = 80  # a bright blob at least this big is a disk (Saturn: ~20 px across, binned)
 SKY_BLOCK_PX = 64  # the sky's own gradient (cloud glow, the horizon) is smooth over this
+GRADIENT_DOMINATES = 4.0  # take the gradient off only when the spread drops this much without it
 
 
 @dataclass(frozen=True)
@@ -55,8 +56,18 @@ def sky_map(img: np.ndarray) -> np.ndarray:
 
 
 def flatten_sky(img: np.ndarray) -> np.ndarray:
-    """The frame minus its smooth sky (sky_map)."""
-    return img - sky_map(img)
+    """The frame minus its sky: the smooth sky_map when a gradient dominates the frame's spread
+    (cloud glow: 30x less spread without it), else one level. Treetops have sharp edges a smooth
+    sky can't follow: the gaps between leaves would pass for stars (only 2x less spread)."""
+    flat = img - sky_map(img)
+    if _spread(img) > GRADIENT_DOMINATES * _spread(flat):
+        return flat
+    return img - np.median(img)
+
+
+def _spread(img: np.ndarray) -> float:
+    sample = img[::2, ::2]
+    return float(np.median(np.abs(sample - np.median(sample))))
 
 
 def measure_focus(lum: np.ndarray) -> FocusMeasure:

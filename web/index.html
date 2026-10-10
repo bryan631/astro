@@ -42,9 +42,11 @@
   .label { position: absolute; left: 0; top: 0; padding: 6px 14px 10px 8px; font-size: 16px; text-shadow: 0 0 4px #000; }
   .cap { position: absolute; left: 8px; bottom: 6px; font-size: 15px; opacity: .85; text-shadow: 0 0 4px #000; }
   .focus { position: absolute; right: 10px; top: 6px; text-align: right; text-shadow: 0 0 4px #000; }
-  .focus b { font-size: 34px; } .focus canvas { display: block; margin-left: auto; }
+  .focus { font-size: 15px; opacity: .85; }  /* small until Focus is on */
+  .focus b { font-weight: normal; } .focus canvas { display: block; margin-left: auto; }
   .focus small { display: block; font-size: 15px; }
-  body:not(.focusing) .focus canvas { display: none; }
+  body:not(.focusing) .focus canvas, body:not(.focusing) .focus small { display: none; }
+  body.focusing .focus { opacity: 1; } body.focusing .focus b { font-weight: bold; }
   body.focusing .focus b { font-size: 64px; }
   .ctl { position: absolute; right: 6px; bottom: 6px; display: flex; gap: 6px; }
   .ctl button { padding: 4px 10px; font-size: 16px; border-radius: 8px; }

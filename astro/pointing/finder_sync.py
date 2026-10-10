@@ -79,9 +79,9 @@ def check_focus(gray: np.ndarray) -> FocusReport:
     """Count stars and measure their sharpness on a (binned) gray finder frame."""
     raw, gray = gray, flatten_sky(gray.astype(np.float32))  # cloud glow's gradient would hide the stars
     bg = np.median(gray)
-    noise = MAD_TO_SIGMA * np.median(np.abs(gray - bg))
-    if noise == 0:  # over half the pixels equal the median (dark, quantized): MAD says nothing
-        noise = _clipped_std(gray)
+    # MAD alone misses heavy-tailed noise (high gain) and says nothing when over half the pixels
+    # equal the median (dark, quantized); the clipped spread catches both.
+    noise = max(MAD_TO_SIGMA * np.median(np.abs(gray - bg)), _clipped_std(gray))
     noise = max(noise, MIN_NOISE_ADU)
     labels, _ = ndimage.label(gray > bg + DETECT_SIGMA * noise)
     areas = np.bincount(labels.ravel())[1:]
