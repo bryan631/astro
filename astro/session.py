@@ -69,6 +69,7 @@ ENCODER_STALE_S = 1.0  # encoder positions older than this mean the board or cab
 # Guidance "on target" tolerance. 4' kept the user nudging in the field (encoder steps are 2.3');
 # 8' still lands the target well inside the main camera's 32' x 18' view.
 ALIGN_S = 10.0  # Align watches the bright star drift this long in both cameras
+ALIGN_SCALE = (25.0, 130.0)  # main pixels per finder pixel: ~58 for this pair (14.6" vs 0.25")
 LABELS_REFRESH_S = 5.0  # the sky turns ~0.02 degrees in 5 s: under 2 finder pixels
 # By day the finder's view auto-exposes; the main camera gets fixed daylight settings (every
 # exposure change reopens it in the SDK, which froze its view in the field). At night both go
@@ -929,6 +930,13 @@ class Session:
                         "brighter star, one you can see by eye, and tap Align.")]
         f, m = np.array(cal["finder"]), np.array(cal["main"])
         fit = fit_main_in_finder(f[:, 0], f[:, 1:], m[:, 0], m[:, 1:])
+        log.info("align tracks", extra={"data": {"finder": f.round(2).tolist(), "main": m.round(2).tolist(),
+                                                  "no_star": cal["no_star"], "scale": fit and fit.scale,
+                                                  "rotation": fit and fit.rotation_deg}})
+        if fit is not None and not ALIGN_SCALE[0] <= fit.scale <= ALIGN_SCALE[1]:
+            return [say(f"That didn't fit (the star moved {fit.scale:.1f} times as far in the main "
+                        "camera as in the finder; it should be about 58). The scope may have moved, "
+                        "or I followed the wrong star. Tap Align again; the box is unchanged.")]
         if fit is None:
             return [say("The star didn't drift enough to measure. Tap Align and wait the full "
                         f"{ALIGN_S:.0f} seconds without touching the scope.")]
