@@ -19,6 +19,7 @@ from datetime import datetime
 import numpy as np
 from scipy import ndimage
 
+from astro.capture.focus import flatten_sky
 from astro.pointing.coords import Site, radec_to_altaz
 from astro.pointing.main_offset import MainOffset, local_delta
 from astro.pointing.platesolve import Solution
@@ -80,7 +81,7 @@ def pick_star(gray: np.ndarray, near: tuple[float, float], radius: float = SEARC
               ) -> tuple[float, float] | None:
     """The bright star near `near` (finder gray-frame pixels): the brightest within `radius`,
     if it outshines every other candidate by BRIGHTER_BY; None if none or ambiguous."""
-    img = gray.astype(np.float32)
+    img = flatten_sky(gray.astype(np.float32))  # cloud glow's gradient would hide the star
     bg = float(np.median(img))
     noise = max(1.4826 * float(np.median(np.abs(img - bg))), 0.5)
     labels, n = ndimage.label(ndimage.uniform_filter(img, 3) > bg + DETECT_SIGMA * noise)

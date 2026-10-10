@@ -39,9 +39,10 @@ def _sky(img: np.ndarray) -> tuple[float, float]:
     return bg, max(noise, 0.5)
 
 
-def _flatten(img: np.ndarray) -> np.ndarray:
+def flatten_sky(img: np.ndarray) -> np.ndarray:
     """The frame minus its smooth sky: a median per block, interpolated. Cloud glow brightens
-    one side of the finder ~2.5x; with one sky level for the frame, that hid every star."""
+    one side of the finder ~2.5x; with one sky level for the frame, that hid every star (also
+    used by Align's star pick)."""
     b = SKY_BLOCK_PX
     h, w = img.shape[0] // b * b, img.shape[1] // b * b
     if h == 0 or w == 0:
@@ -55,7 +56,7 @@ def _flatten(img: np.ndarray) -> np.ndarray:
 def measure_focus(lum: np.ndarray) -> FocusMeasure:
     """The focus number for a frame (8-bit scale gray, hot pixels already removed)."""
     raw = lum.astype(np.float32)
-    img = _flatten(raw)
+    img = flatten_sky(raw)
     bg, noise = _sky(img)
     above = bg + DETECT_SIGMA * noise
     labels, n = ndimage.label(ndimage.gaussian_filter(img, 1.0) > above)

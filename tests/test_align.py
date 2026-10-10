@@ -67,6 +67,14 @@ def test_pick_star_wants_one_clear_winner_near_the_expected_place():
     assert pick_star(ambiguous, near) is None
 
 
+def test_pick_star_sees_through_a_cloud_glow_gradient():
+    """2026-10-10: cloud glow made the finder's bottom ~2.5x brighter than its top; one sky
+    level for the frame put the threshold above the stars."""
+    yy = np.mgrid[:480, :640][0]
+    glow = star_field([(330, 150, 3000)]) + 80.0 * yy / 480
+    assert pick_star(glow, (320, 240)) == pytest.approx((330, 150), abs=0.5)
+
+
 def test_real_field_without_a_bright_star_is_ambiguous():
     """2026-10-10: the main camera's star was one of several equally faint finder stars, so
     Align must ask for a brighter star rather than guess."""
