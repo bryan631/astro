@@ -168,6 +168,42 @@ Phase 1 is done when: in sim mode a full session works end-to-end via the tablet
    pushing speed; enlarge UI as needed.
 6. Remote support: confirm Tailscale access from developer's home; nightly log upload.
 
+## Phase 3b — Visual workflow (decided 2026-10-10, after the second field night)
+The voice-first flow failed in the field: audio can't guide focus or pointing, commands relayed
+too slowly for a sky that drifts out of a 32' field in two minutes, and cameras froze because
+only one thing could use a camera at a time. New rules: everything works with the volume off,
+a few buttons do the few jobs well, and both cameras are live at all times.
+
+1. **Always-on cameras.** Each camera runs its own capture process (the SVBony SDK segfaulted
+   with two capture threads in one process) and publishes its latest frame, with a timestamp at
+   mid-exposure, to shared memory. Everything else only reads frames: the page's views, plate
+   solving, the focus number, stacking, recording. Nothing takes a camera away. Settings: the
+   finder stays at its solve settings; the main camera has a view mode and a planet mode (20 ms),
+   and while a planet records the main view shows those frames, stretched for display. Sim mode
+   uses the same interface with a thread instead of a process.
+2. **Screen: landscape, locked** (manifest). Finder and main views side by side on top, always
+   live; one row of big buttons below: Go to (target list), Align, Focus, Capture (start/stop),
+   Recenter, STOP. A status line and short message log replace speech: every message is text.
+3. **Voice off.** The page's talk button, hands-free and speech playback, and the session's voice
+   routing are removed; astro/voice, wake.py and intents.py stay for later.
+4. **Pointing is visual only:** target marker and the main camera's box on the finder view, an
+   edge arrow when the target is off screen, distance. No spoken cues.
+5. **Align: assume nearly aligned, adjust in one step.** With a bright object in the main view and
+   a finder fix, both cameras' frames at the same moments give the offset; a few seconds of drift
+   give the rotation (as `scripts/dev/drift_offset.py` did by hand). Align = put a bright star in
+   the main view, tap Align, wait ~10 s; the box on the finder view updates.
+6. **Focus number: median half-flux radius** over detected stars, saturated stars skipped, so the
+   many faint stars outweigh a few bright ones; shown as a number to maximize (100/HFR) with the
+   star count and a short trend. Planets: edge sharpness on the disk. No coach, no voice.
+7. **Capture: one Start/Stop button.** A small live-stack preview (JPEG, not the 4.5 MB PNG), the
+   raw main view beside it with an edge margin and "time to edge" from the predicted drift.
+   Recenter pauses the capture; the finder view and arrows bring the target back; Resume
+   continues (deep-sky re-registers to the first frame; planets add a video segment, processed
+   together). Option: pause automatically near the edge.
+
+Order: cameras (daytime test on the Mele) → screen and buttons → focus number → capture with
+recenter → Align. Each step tested indoors with the simulators before the next night.
+
 ## Known risks / open questions
 - SV705C Linux SDK stability (fallback: ZWO ASI585MC).
 - Azimuth encoder slips if the base's central bolt is loose (the disk turns with the base): keep it snug.
