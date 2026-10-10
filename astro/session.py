@@ -784,7 +784,7 @@ class Session:
         synced. Without one the encoders mean nothing (2026-10-10: the board rebooted, the saved model was dropped, and
         captures, names and Recenter all used a pointing 45 degrees off)."""
         synced = getattr(self.finder, "synced", True)
-        if self.finder is None or self._solving or (
+        if not hasattr(self.finder, "sync") or self._solving or (
                 synced and time.monotonic() - self._solved_try_at < AUTO_SOLVE_EVERY_S):
             return
         self._solved_try_at, self._solving = time.monotonic(), True

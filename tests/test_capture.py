@@ -63,4 +63,4 @@ def test_file_names_are_safe():
 
 def test_roi_never_negative_on_a_small_sensor():
     roi = roi_around((100, 100), 512, (400, 300))
-    assert (roi.x, roi.y, roi.width, roi.height) == (0, 0, 300, 300)
+    assert (roi.x, roi.y, roi.width, roi.height) == (0, 0, 296, 296)  # width: a multiple of 8
