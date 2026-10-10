@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from astro.pointing.main_offset import CameraAxes, MainOffset
+from astro.pointing.main_offset import CameraAxes, MainOffset, fit_axes_and_offset
 
 SCALE = 7200  # px per degree (0.5"/px)
 
@@ -64,3 +64,15 @@ def test_correction_moves_target_toward_center():
     cam_alt, cam_az_sky = aim_alt + cam_offset[1], aim_az * cos + cam_offset[0]
     assert cam_alt == pytest.approx(t_alt, abs=1e-6)
     assert cam_az_sky == pytest.approx(t_az * cos, abs=1e-6)
+
+
+def test_fit_axes_and_offset_from_moving_target():
+    rng = np.random.default_rng(0)
+    a = np.array([[0.0, -7200.0], [7200.0, 0.0]]) @ np.diag([1, -1])  # rotated and mirrored
+    offset = np.array([0.72, -0.04])
+    sky = offset + rng.uniform(-0.05, 0.05, (12, 2))  # the user wiggles the scope near target
+    px = (sky - offset) @ a.T + rng.normal(0, 3, (12, 2))
+    axes, off = fit_axes_and_offset(sky, px)
+    assert np.allclose(axes, a, atol=150)  # 2% of 7200 px/deg
+    assert abs(off.d_az_sky_deg - 0.72) < 0.002 and abs(off.d_alt_deg + 0.04) < 0.002
+    assert fit_axes_and_offset(sky[:, :1].repeat(2, axis=1), px) is None  # one direction only

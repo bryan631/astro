@@ -13,6 +13,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from astro.capture.edge import EdgeClock
 from astro.capture.recorder import CaptureRefused, safe_name
 from astro.devices.base import Camera
 from astro.process.finish import finish, save_fits
@@ -22,6 +23,8 @@ SUB_EXPOSURE_S = 0.2  # ~6 px of drift at prime focus: still round-ish stars
 SUB_GAIN = 300
 PREVIEW_EVERY_S = 3.0  # refresh the tablet's live view this often
 MAX_SKIPS_IN_A_ROW = 10  # target drifted away, or clouds
+PREVIEW_WIDTH = 960  # the page's live-stack picture: a small JPEG (the full PNG was 4.5 MB)
+PAUSED_WAIT_S = 0.1
 
 
 @dataclass
@@ -34,6 +37,8 @@ class LiveSession:
     error: str = ""
     preview_version: int = 0  # bumps whenever the preview file changes
     done: threading.Event = field(default_factory=threading.Event)
+    paused: threading.Event = field(default_factory=threading.Event)  # Recenter: frames not added
+    edge: EdgeClock | None = None  # where the stack's field is in the frame; when it hits the edge
 
 
 class LiveStacker:
@@ -64,8 +69,8 @@ class LiveStacker:
         stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.preview_dir.mkdir(parents=True, exist_ok=True)
-        file = f"{stamp}_{safe_name(name)}.png"
-        live = LiveSession(name, self.preview_dir / file, self.out_dir / file)
+        file = f"{stamp}_{safe_name(name)}"
+        live = LiveSession(name, self.preview_dir / f"{file}.jpg", self.out_dir / f"{file}.png")
         self._stop.clear()
         self.current = live
         threading.Thread(target=self._run, args=(live, seconds), daemon=True).start()
@@ -74,18 +79,37 @@ class LiveStacker:
     def stop(self) -> None:
         self._stop.set()
 
+    def pause(self) -> None:
+        """Recenter: keep the stack, add nothing until resume() (it re-registers then)."""
+        if self.current is not None:
+            self.current.paused.set()
+
+    def resume(self) -> None:
+        if self.current is not None:
+            self.current.paused.clear()
+            self._skips_in_a_row = 0
+
     def _run(self, live: LiveSession, seconds: float) -> None:
         stack = LiveStack(self.camera.bayer)
         end = time.monotonic() + seconds
         saved = -1e9  # save on the first frame
-        skips_in_a_row = 0
+        self._skips_in_a_row = 0
         try:
             while time.monotonic() < end and not self._stop.is_set():
+                if live.paused.is_set():
+                    live.edge and live.edge.reset()
+                    self._stop.wait(PAUSED_WAIT_S)
+                    continue
                 if stack.add(self.camera.capture()):
-                    live.frames, skips_in_a_row = stack.status.frames_added, 0
+                    live.frames, self._skips_in_a_row = stack.status.frames_added, 0
+                    if (where := stack.reference_center()) is not None:
+                        if live.edge is None:
+                            live.edge = EdgeClock(*stack.frame_size)
+                        live.edge.add(time.monotonic(), *where)
                 else:
-                    live.skipped, skips_in_a_row = stack.status.frames_skipped, skips_in_a_row + 1
-                    if skips_in_a_row >= MAX_SKIPS_IN_A_ROW:
+                    live.skipped = stack.status.frames_skipped
+                    self._skips_in_a_row += 1
+                    if self._skips_in_a_row >= MAX_SKIPS_IN_A_ROW:
                         live.error = ("I lost the stars, maybe clouds, or the target drifted out "
                                       "of view, so I stopped stacking.")
                         break
@@ -125,7 +149,10 @@ class LiveStacker:
 
     def _save(self, stack: LiveStack, live: LiveSession) -> None:
         """Write next to the preview, then swap it in: the tablet never reads a half file."""
-        tmp = live.preview.with_name(live.preview.name + ".tmp")  # never matches *.png
-        Image.fromarray(stretch(stack.image())).save(tmp, format="PNG")
+        tmp = live.preview.with_name(live.preview.name + ".tmp")
+        img = Image.fromarray(stretch(stack.image()))
+        if img.width > PREVIEW_WIDTH:
+            img = img.resize((PREVIEW_WIDTH, round(img.height * PREVIEW_WIDTH / img.width)))
+        img.save(tmp, format="JPEG", quality=85)
         os.replace(tmp, live.preview)
         live.preview_version += 1

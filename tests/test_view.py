@@ -3,7 +3,7 @@ import io
 import numpy as np
 from PIL import Image
 
-from astro.process.view import jpeg
+from astro.process.view import jpeg, remove_hot_pixels
 
 
 def decode(raw):
@@ -29,3 +29,11 @@ def test_zoom_crops_the_center():
     raw[150:250, 300:500] = 200  # a bright center fills the 4x view
     zoomed = Image.open(io.BytesIO(jpeg(raw, "GRBG", zoom=4)))
     assert zoomed.size == (400, 200) and np.asarray(zoomed)[100:, :].mean() > 150
+
+
+def test_hot_pixel_removed_star_kept():
+    rgb = np.random.default_rng(0).normal(20, 2, (40, 40, 3))
+    rgb[10, 10] = 200  # hot pixel: alone
+    rgb[29:32, 29:32] = 150  # star: several pixels
+    out = remove_hot_pixels(rgb)
+    assert out[10, 10].max() < 40 and out[30, 30].min() == 150

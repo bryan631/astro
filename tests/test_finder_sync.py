@@ -104,17 +104,6 @@ def test_goto_refuses_with_reason_when_finder_soft(solver):
     assert "out of focus" in s.handle("go to albireo")[0]["text"]
 
 
-def test_voice_guided_finder_focus(solver):
-    _, fs, s = make_session(solver, blur_px=6)
-    assert "focus ring" in s.handle("focus the finder")[0]["text"]
-    said = []
-    for i, blur in enumerate([6, 4, 2.5, 2.0, 3.5]):  # user turns the ring past best focus
-        fs.camera.blur_px = blur
-        said += [m["text"] for m in s.tick(float(i * 2))]
-    assert "sharper" in said and said[-1].startswith("passed it")
-    assert s.handle("stop")[0]["text"] == "OK, focus is set."
-
-
 def test_where_syncs_before_answering(solver):
     _, fs, s = make_session(solver, 70, 300)
     out = s.handle("what am I looking at")[0]["text"]

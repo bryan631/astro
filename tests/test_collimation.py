@@ -55,7 +55,7 @@ def test_session_coaches_until_centered_then_asks_to_refocus():
     said = [m["text"] for t in (10, 12, 14) for m in s.tick(t)]
     assert "3 o'clock" in said[0] and said[1] == "Better, keep going."
     assert "centered" in said[2] and "sharp point" in said[2]
-    assert s._collimation is None and not s.main_focus_ok
+    assert s._collimation is None
 
 
 def test_small_turns_add_up_to_better():
@@ -65,12 +65,10 @@ def test_small_turns_add_up_to_better():
     assert "Better, keep going." in said  # each step < CHANGE, together > CHANGE
 
 
-def test_collimation_blocks_capture_and_drops_the_focus_gate():
+def test_collimation_blocks_capture_and_other_modes():
     evening = datetime(2026, 10, 3, 21, 0, tzinfo=timezone(timedelta(hours=-4)))
     s = Session(Site(26.7, -80.1), lambda: (45, 180), clock=lambda: evening,
                 main_camera=object())
-    s.main_focus_ok = True
     s.handle("collimate")
-    assert not s.main_focus_ok
-    for cmd in ("take a picture", "focus", "start the horizon walk", "set up the telescope"):
+    for cmd in ("take a picture", "start the horizon walk", "set up the telescope"):
         assert "checking collimation" in s.handle(cmd)[0]["text"]

@@ -6,30 +6,32 @@
     ASTRO_SIM=1 .venv/bin/pytest -q
     ASTRO_SIM=1 .venv/bin/uvicorn astro.server:app --host 0.0.0.0 --port 8000
 
-Open http://localhost:8000. In sim mode the mount starts uncalibrated: the first goto
-plate-solves the simulated finder (it renders the real sky) to learn where the scope points, and
-a simulated user follows the spoken cues so you can watch the arrow and hear the guidance.
+Open http://localhost:8000 (landscape). Both camera views are always live: each camera streams
+continuously (`astro/devices/stream.py`: a process per SVBony camera on the Mele, a paced thread
+for the simulators) and every reader shares it. In sim mode the mount starts uncalibrated: the
+first Go to plate-solves the simulated finder (it renders the real sky), and a simulated user
+follows the guidance so you can watch the arrow.
 
-Voice/text commands (offline grammar; Claude handles anything vaguer):
+The page works with the volume off (Phase 3b, docs/plan.md). Buttons send `{type: "action"}`:
 
-| Say | Does |
+| Button | Does |
 |---|---|
-| what's good tonight / next | ranked targets for the next 4 hours / go to the next one |
-| go to *name* / stop | push-to guidance (syncs first if needed) / stop |
-| sync / where am I | plate-solve the finder / name the nearest target |
-| focus the finder / focus / done | voice focus coach for finder or main camera / accept |
-| take a picture / stop recording | planets & Moon: SER video then a stacked PNG; others: live stack |
-| Barlow in / Barlow out | resets the focus gate, guidance tolerance 4' to 2' |
-| use my location | tablet GPS, saved to `data/site.toml` (git-ignored) |
-| start the horizon walk / mark / done | record the treeline; saved to `data/horizon.toml` (+ Stellarium file) |
-| check the collimation / stop | F3 prototype: defocused-star shadow offset, coach the primary's screws |
-| set up the telescope / ready / skip | first-time setup: GPS, 3 syncs (reports alignment), horizon walk |
+| Go to | list from `/api/targets` (tonight, best first); guidance with an arrow on the finder view |
+| Align | bright star in the main view: 10 s of both cameras -> main box on the finder view and the finder-to-main offset (`astro/pointing/align.py`) |
+| Focus | shows the focus number large with a trend; 100 / median HFR over all usable stars (`measure_focus`) |
+| Capture | start / stop: planets & Moon a SER video, others a live stack; progress and time to edge |
+| Recenter | pause the capture, guide back to its target, Resume continues the same video or stack |
+| Pictures, More | gallery and viewer; debug, day mode, Barlow, Sync now, Tonight, treeline |
+| STOP | stops guidance or a capture |
+
+Voice is not wired in; `astro/voice/`, `wake.py` and `intents.py` stay as libraries. Typed text
+(`{type: "text"}`) still goes through the agent and the command grammar.
 
 - `ASTRO_DEV_OVERRIDE=1` lifts the daytime lockout (the 20° Sun exclusion always applies).
 - `ANTHROPIC_API_KEY` in `.env` enables the Claude agent for free-form questions; without it
   (or offline) the built-in command grammar handles exact commands (goto, stop, next, where,
   tonight). With a key, it still answers those offline-first; only vague requests go to Claude.
-- The microphone needs HTTPS on anything but localhost (see "Tablet" below).
+- Tablet GPS (first run at a new place) needs HTTPS on anything but localhost (see "Tablet" below).
 
 ## Layout
 
@@ -46,7 +48,8 @@ Voice/text commands (offline grammar; Claude handles anything vaguer):
 | `data/` | per-install, git-ignored: `site.toml`, `captures/*.ser`, `gallery/*.png` |
 | `astro/session.py` | ties it together; `agent.py` adds Claude; `server.py` serves the PWA |
 | `astro/wizard.py` | first-time setup steps (GPS, syncs, horizon walk) |
-| `astro/voice/` | offline speech: whisper.cpp (in) and Piper (out) |
+| `astro/voice/` | offline speech: whisper.cpp (in) and Piper (out); not wired in (Phase 3b) |
+| `astro/devices/stream.py` | always-on cameras: a capture process (SVBony) or thread (sim) each |
 | `astro/calibration_store.py` | calibration that survives a restart (`data/calibration.json`) |
 | `firmware/` | Arduino Nano Every: encoders, BME280 and DS18B20, dew heaters |
 | `deploy/` | systemd units (server, monthly cert renewal), installed by `setup.sh --minipc` |
@@ -73,15 +76,11 @@ The mic needs HTTPS. On the MiniPC, use Tailscale certs (enable MagicDNS + HTTPS
 console), then `scripts/tailscale-cert.sh`; it prints the tablet URL. Install the tablet in the
 tailnet, open the URL in Chrome, and "Add to Home screen".
 
-## Speech
-Hands-free mode (button under the talk button; say "Astro, ..." and the page shows what it heard) needs
-`scripts/install-vad.sh` once (Silero VAD into git-ignored `web/vendor/vad`, served offline).
-`ASTRO_SAVE_AUDIO=1` keeps every utterance the tablet sends in `data/utterances/` (audio plus what
-whisper heard), a real-audio set to label and score. `scripts/dev/voice_cases.py --transcribe` checks wake-word handling on generated speech-in-noise audio.
-
-`scripts/install-voice.sh` (MiniPC) builds whisper.cpp and installs Piper, writing `voice.env`.
-The server then announces `server_stt/server_tts` and the tablet records audio for the server
-(works offline). Without it the tablet uses Chrome's recognizer, which may need internet.
+## Speech (not wired in since Phase 3b)
+The voice code stays for later: `astro/voice/` (whisper.cpp in, Piper out, set up by
+`scripts/install-voice.sh`), `astro/wake.py`, `astro/intents.py`, `scripts/install-vad.sh` and
+`scripts/dev/voice_cases.py`. Reconnecting it means restoring the server's audio handling and the
+page's talk button (see git history before Phase 3b).
 
 ## MiniPC services
     sudo cp deploy/*.service deploy/*.timer /etc/systemd/system/
@@ -107,12 +106,12 @@ The repo must stay private: logs hold the site's location and what was said.
 
 ## Field use: HTTPS with no internet, and access token
 
-The tablet's microphone needs HTTPS, and the cert is for a Tailscale `*.ts.net` name.
+The tablet's location (GPS) needs HTTPS, and the cert is for a Tailscale `*.ts.net` name.
 Tailscale caches its peer map and MagicDNS answers locally, so an already-connected tablet
 and MeLE should still reach each other on a hotspot with no internet. This is **not yet
 verified**. To check it: connect both devices to the phone hotspot with mobile data off, then
-open the tablet URL. If the page doesn't load, voice input won't work offline, and a
-self-signed LAN cert is the fallback (V2; not implemented).
+open the tablet URL. If the page doesn't load, a self-signed LAN cert is the fallback (V2;
+not implemented).
 
 On public WiFi, set `ASTRO_TOKEN=<random>` in `.env` and open the app once as
 `https://<name>:8443/?token=<random>`. A cookie remembers the token after that.

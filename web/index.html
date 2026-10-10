@@ -2,461 +2,387 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">  <!-- an app screen: no pinch zoom (pictures have zoom buttons) -->
 <title>Astro</title>
 <link rel="manifest" href="manifest.json">
 <style>
-  :root { --bg: #000; --fg: #ff3b30; --dim: #7a1c17; }
-  body.day { --bg: #111; --fg: #f2f2f2; --dim: #555; }
+  /* One screen, both cameras always live, buttons along the bottom. Portrait: finder above main.
+     Landscape: one camera fills the screen; swipe (or tap its name) for the other.
+     Everything works with the volume off (Phase 3b): every message is text on the screen. */
+  :root { --bg: #000; --fg: #ff3b30; --dim: #7a1c17; --hi: #ff6a5f; }
+  body.day { --bg: #111; --fg: #f2f2f2; --dim: #555; --hi: #7cff7c; }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--fg); font: 28px/1.3 system-ui, sans-serif;
-         display: flex; flex-direction: column; align-items: center; gap: 24px; padding: 24px; min-height: 100vh; }
-  #said { font-size: 36px; text-align: center; min-height: 3em; max-width: 30ch; }
-  #arrow { font-size: 160px; line-height: 1; transition: transform .2s; }
-  #dist { font-size: 40px; }
-  #talk { width: 70vmin; height: 70vmin; max-width: 320px; max-height: 320px; border-radius: 50%;
-          border: 6px solid var(--fg); background: transparent; color: var(--fg); font-size: 40px; }
-  #talk { touch-action: none; }  /* a press is never a scroll (which cancels it) */
-  #talk.listening { background: var(--dim); }
-  #bigstop { font-size: 36px; padding: 16px 48px; border: 6px solid var(--fg); border-radius: 16px;
-             background: transparent; color: var(--fg); font-weight: bold; }
-  .links { font-size: 22px; } .links a { color: var(--fg); }
-  /* Night: pictures in dim red too, so they don't spoil dark-adapted eyes. */
-  body:not(.day) #live, body:not(.day) #gallery img, body:not(.day) #camimg {
-    filter: grayscale(1) sepia(1) saturate(5) hue-rotate(-50deg) brightness(.6); }
-  /* Hands-free state: text, dot and border weight differ, so it reads in dim red at night. */
-  #vstate { font-size: 28px; padding: 8px 20px; border: 2px solid var(--dim); border-radius: 999px; }
-  #vstate::before { content: "\25CB  "; }
-  #vstate[data-s="hearing"], #vstate[data-s="armed"] { border-color: var(--fg); border-width: 5px; }
-  #vstate[data-s="armed"]::before, #vstate[data-s="hearing"]::before { content: "\25CF  "; }
-  #vstate[data-s="speaking"] { border-style: dashed; border-color: var(--fg); }
-  #vstate[data-s="speaking"]::before { content: "\25B6  "; }
-  #heard { font-size: 24px; min-height: 1.3em; opacity: .8; }
-  #views button.on { border-color: var(--fg); border-width: 4px; }
-  #camview { width: 100%; max-width: 900px; text-align: center; }
-  #camimg { width: 100%; border: 2px solid var(--dim); border-radius: 12px; display: block; }
-  /* Crosshair on the image's center: line up the finder with the main camera. */
-  #camframe { position: relative; }
-  #camctl { text-align: center; margin-top: 6px; }
-  #camframe::before, #camframe::after { content: ""; position: absolute; background: #f00; opacity: .7; pointer-events: none; }
-  #camframe::before { left: 0; right: 0; top: 50%; height: 1px; }
-  #camframe::after { top: 0; bottom: 0; left: 50%; width: 1px; }
-  #camcap { font-size: 20px; opacity: .8; }
-  #debugbox { width: 100%; max-width: 900px; font: 20px/1.35 ui-monospace, monospace; white-space: pre-wrap;
-              border: 2px solid var(--dim); border-radius: 12px; padding: 12px; margin: 0; }
-  #status { font-size: 18px; opacity: .85; text-align: center; }
-  #checks { display: block; text-align: center; font-size: 18px; }
-  #checks[hidden] { display: none; }
+  [hidden] { display: none !important; }  /* else a hidden sheet's own display covers the buttons */
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 20px/1.3 system-ui, sans-serif;
+         display: grid; grid-template-rows: minmax(0, 1fr) auto auto; height: 100vh; }  /* no overflow: hidden: it stops pull-to-refresh */
+  button { font: inherit; color: var(--fg); background: var(--bg); border: 2px solid var(--dim);
+           border-radius: 12px; padding: 10px 16px; touch-action: manipulation; }
+  button.on { border-color: var(--fg); border-width: 4px; }
+  #bar { display: flex; align-items: center; gap: 14px; min-width: 0; }
+  #status { font-size: 16px; padding-right: 12px; display: flex; gap: 14px; white-space: nowrap; }
   #status .bad { text-decoration: underline; font-weight: bold; }
-  #typed { display: flex; gap: 8px; width: 100%; max-width: 600px; }
-  #typed input, button.small { font-size: 24px; padding: 12px; background: var(--bg); color: var(--fg);
-          border: 2px solid var(--dim); border-radius: 12px; }
-  #typed input { flex: 1; }
-  .on-target #arrow { color: #34c759; }
-  #livebox { width: 100%; max-width: 900px; }
-  #liveframe { overflow: hidden; border: 2px solid var(--dim); border-radius: 12px; }
-  #live { width: 100%; display: block; transform-origin: center; }
-  #livectl { text-align: center; margin-top: 6px; }
-  #gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; width: 100%; max-width: 900px; }
-  #gallery button { padding: 0; border: 0; background: none; }
-  #gallery img { width: 100%; border: 2px solid var(--dim); border-radius: 12px; }
-  body.on-target:not(.day) #arrow { color: var(--fg); }
+  #views { display: grid; grid-auto-flow: column; grid-auto-columns: 100%; grid-template-rows: minmax(0, 1fr);
+           gap: 8px; padding: 0 8px; min-height: 0; overflow-x: auto; scroll-snap-type: x mandatory;
+           scrollbar-width: none; }
+  #views > .view { scroll-snap-align: center; }
+  .view { position: relative; border: 2px solid var(--dim); border-radius: 12px; overflow: hidden;
+          display: flex; align-items: center; justify-content: center; min-height: 0; }
+  .view > img.cam { max-width: 100%; max-height: 100%; display: block; }
+  body:not(.day) img.cam, body:not(.day) #inset, body:not(.day) #viewer img, body:not(.day) #pictures img {
+    filter: grayscale(1) sepia(1) saturate(5) hue-rotate(-50deg) brightness(var(--b, .6)); }
+  body.day img.cam { filter: brightness(var(--b, 1)); }
+  .frame { position: absolute; pointer-events: none; }  /* covers the picture exactly (see fit()) */
+  .frame::before, .frame::after { content: ""; position: absolute; background: var(--fg); opacity: .6; }
+  .frame::before { left: 0; right: 0; top: 50%; height: 1px; }
+  .frame::after { top: 0; bottom: 0; left: 50%; width: 1px; }
+  .frame svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .frame polygon { fill: none; stroke: var(--hi); stroke-width: 2px; stroke-dasharray: 6 4;
+                   vector-effect: non-scaling-stroke; }
+  .label { position: absolute; left: 0; top: 0; padding: 6px 14px 10px 8px; font-size: 16px; text-shadow: 0 0 4px #000; }
+  .cap { position: absolute; left: 8px; bottom: 6px; font-size: 15px; opacity: .85; text-shadow: 0 0 4px #000; }
+  .focus { position: absolute; right: 10px; top: 6px; text-align: right; text-shadow: 0 0 4px #000; }
+  .focus { font-size: 15px; opacity: .85; }  /* small until Focus is on */
+  .focus b { font-weight: normal; } .focus canvas { display: block; margin-left: auto; }
+  .focus small { display: block; font-size: 15px; }
+  body:not(.focusing) .focus canvas, body:not(.focusing) .focus small { display: none; }
+  body.focusing .focus { opacity: 1; } body.focusing .focus b { font-weight: bold; }
+  body.focusing .focus b { font-size: 64px; }
+  .ctl { position: absolute; right: 6px; bottom: 6px; display: flex; gap: 6px; }
+  .ctl button { padding: 4px 10px; font-size: 16px; border-radius: 8px; }
+  #arrow { position: absolute; font-size: 140px; line-height: 1; opacity: .85; pointer-events: none;
+           transition: transform .2s; text-shadow: 0 0 8px #000; }
+  #dist { position: absolute; bottom: 40px; font-size: 32px; text-shadow: 0 0 6px #000; }
+  #capinfo { position: absolute; left: 8px; bottom: 30px; font-size: 22px; text-shadow: 0 0 4px #000; }
+  #capinfo.warn { font-weight: bold; font-size: 28px; }
+  #field { position: absolute; width: 40px; height: 40px; margin: -20px 0 0 -20px; border: 2px solid var(--hi);
+           border-radius: 50%; }  /* where the stacked field is now (it drifts toward an edge) */
+  #inset { position: absolute; right: 8px; top: 120px; width: 34%; border: 2px solid var(--fg);
+           border-radius: 8px; background: #000; }
+  #msg { flex: 1; min-width: 0; padding: 6px 12px; font-size: 22px; min-height: 1.6em; white-space: nowrap; overflow: hidden;
+         text-overflow: ellipsis; }
+  #buttons { display: flex; gap: 8px; padding: 6px 8px 10px; align-items: stretch; }
+  #buttons button { font-size: 22px; padding: 12px 14px; }
+  #buttons .grow { flex: 1; }
+  #stop { font-weight: bold; font-size: 26px; border: 4px solid var(--fg); padding: 12px 28px; }
+  #capture.on { background: var(--dim); }
+  .sheet { position: fixed; inset: 0; background: var(--bg); padding: 12px; overflow: auto; z-index: 5; }
+  .sheet .top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  #targets button { display: block; width: 100%; text-align: left; margin-bottom: 8px; }
+  #targets button.down { opacity: .5; }
+  #targets small { display: block; font-size: 15px; opacity: .8; }
+  #pictures { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+  #pictures button { padding: 0; border: 0; } #pictures img { width: 100%; border-radius: 8px; }
+  #viewer { display: flex; flex-direction: column; }
+  #viewer .pic { flex: 1; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+  #viewer img { max-width: 100%; max-height: 100%; transform-origin: center; }
+  #log { font-size: 18px; white-space: pre-wrap; }
+  #debugbox { font: 16px/1.35 ui-monospace, monospace; white-space: pre-wrap; }
+  .sheet a { color: var(--fg); }
+  @media (orientation: portrait) {
+    #views { grid-auto-flow: row; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); overflow: hidden; }
+    .view .label .swap { display: none; }
+    #buttons { gap: 4px; padding: 4px 4px 8px; }
+    #buttons button, #stop { flex: 1 1 auto; font-size: 16px; padding: 12px 2px; }
+    #stop { flex-grow: 1.5; border-width: 3px; }
+    #buttons .grow { display: none; }
+  }
 </style>
 </head>
 <body>
-  <div id="status"></div>
-  <label id="checks" hidden><input type="checkbox" id="checksoff"> Skip safety checks (daytime)</label>
-  <div id="said">Tap the button and say "what's good tonight?"</div>
-  <div id="arrow" hidden>&#x2191;</div>
-  <div id="dist"></div>
-  <div id="livebox" hidden><div id="liveframe"><img id="live" alt="live stack"></div>
-    <div id="livectl"><button class="small" data-exp="down">Darker</button> <button class="small" data-exp="up">Brighter</button>
-      <button class="small" data-zoom="1">1x</button> <button class="small" data-zoom="2">2x</button> <button class="small" data-zoom="4">4x</button></div></div>
-  <button id="talk">Tap to talk</button>
-  <button id="bigstop">STOP</button>
-  <button id="hands" class="small">Hands-free: off</button>
-  <div id="vstate" hidden></div>
-  <div id="heard"></div>
-  <form id="typed"><input id="text" placeholder="or type here" autocomplete="off"><button class="small">Send</button></form>
-  <div id="views"><button class="small" data-v="finder">Finder</button> <button class="small" data-v="main">Main camera</button> <button class="small" data-v="debug">Debug</button> <button class="small" id="vid" hidden>Live video</button></div>
-  <div id="camview" hidden><div id="camframe"><img id="camimg" alt="camera view"></div><div id="camcap"></div>
-    <div id="camctl"><button class="small" data-exp="down">Darker</button> <button class="small" data-exp="up">Brighter</button>
-      <button class="small" data-zoom="1">1x</button> <button class="small" data-zoom="2">2x</button> <button class="small" data-zoom="4">4x</button></div></div>
-  <pre id="debugbox" hidden></pre>
-  <div><button class="small" id="mode">Day mode</button> <button class="small" id="pics">Pictures</button> <button class="small" id="beeps">Beeps off</button></div>
-  <div id="gallery" hidden></div>
-  <div class="links"><a href="/tonight">Tonight at each spot</a> · <a href="/treeline.html">Record a treeline</a></div>
+  <div id="safe" hidden style="padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)"></div>
+  <div id="views">
+    <div class="view" id="v-finder">
+      <img class="cam" alt="finder camera">
+      <div class="frame"><svg viewBox="-0.5 -0.5 1 1" preserveAspectRatio="none"><polygon id="mainbox"/></svg></div>
+      <div class="label">Finder<span class="swap"> ⇄</span></div><div class="focus"><b></b><small></small><canvas width="160" height="40"></canvas></div>
+      <div id="arrow" hidden></div><div id="dist"></div>
+      <div class="cap"></div>
+      <div class="ctl"><button data-b="-">−</button><button data-b="+">+</button><button data-z>1x</button></div>
+    </div>
+    <div class="view" id="v-main">
+      <img class="cam" alt="main camera">
+      <div class="frame"><div id="field" hidden></div></div>
+      <div class="label">Main camera<span class="swap"> ⇄</span></div><div class="focus"><b></b><small></small><canvas width="160" height="40"></canvas></div>
+      <div id="capinfo"></div><img id="inset" hidden alt="live stack">
+      <div class="cap"></div>
+      <div class="ctl"><button data-b="-">−</button><button data-b="+">+</button><button data-z>1x</button></div>
+    </div>
+  </div>
+  <div id="bar"><div id="msg"></div><div id="status"></div></div>
+  <div id="buttons">
+    <button id="goto">Go to</button><button id="align">Align</button><button id="focus">Focus</button>
+    <button id="capture">Capture</button><button id="recenter">Recenter</button>
+    <button id="pics">Pictures</button><button id="more">More</button>
+    <span class="grow"></span><button id="stop">STOP</button>
+  </div>
+
+  <div class="sheet" id="s-goto" hidden><div class="top"><b>Go to</b><button data-close>Close</button></div><div id="targets">Loading…</div></div>
+  <div class="sheet" id="s-pics" hidden><div class="top"><b>Pictures</b><button data-close>Close</button></div><div id="pictures"></div></div>
+  <div class="sheet" id="viewer" hidden><div class="top"><span>
+      <button data-vb="-">−</button> <button data-vb="+">+</button> <button data-vz="1">1x</button> <button data-vz="2">2x</button> <button data-vz="4">4x</button></span>
+      <button data-close>Close</button></div><div class="pic"><img alt="picture"></div></div>
+  <div class="sheet" id="s-log" hidden><div class="top"><b>Messages</b><button data-close>Close</button></div><div id="log"></div></div>
+  <div class="sheet" id="s-more" hidden><div class="top"><b>More</b><button data-close>Close</button></div>
+    <p><button id="mode">Day mode</button> <button id="sync">Sync now</button>
+       <button data-text="barlow in">Barlow in</button> <button data-text="barlow out">Barlow out</button></p>
+    <p><label id="checks" hidden><input type="checkbox" id="checksoff"> Skip safety checks (daytime)</label></p>
+    <p><a href="/tonight">Tonight at each spot</a> · <a href="/treeline.html">Record a treeline</a></p>
+    <pre id="debugbox"></pre></div>
 <script>
-const HINT = `Tap the button and say "what's good tonight?"`;
-const heardEl = document.getElementById("heard"), said = document.getElementById("said"), arrow = document.getElementById("arrow"),
-      dist = document.getElementById("dist"), talk = document.getElementById("talk");
-let ws, unavailable = false, armedUntil = 0, handsOn = false, serverStt = false, serverTts = false, player = null;
+const $ = id => document.getElementById(id);
+const msgEl = $("msg"), logLines = [];
+let ws, unavailable = false;
 const pending = [];  // sent while reconnecting: delivered once the socket is back
 function connect() {
   ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
-  ws.binaryType = "blob";
-  ws.onopen = () => { if (handsOn) wsSend(JSON.stringify({type: "handsfree", on: true}));
-    while (pending.length) ws.send(pending.shift()); };
-  ws.onmessage = e => typeof e.data === "string" ? handle(JSON.parse(e.data)) : play(e.data);
+  ws.onopen = () => {
+    while (pending.length) ws.send(pending.shift());
+    setTimeout(() => {  // for fitting the layout to the tablet (remote support reads the log)
+      const rows = [...document.body.children].filter(e => e.offsetHeight).map(e => `${e.id} ${e.offsetHeight}`);
+      wsSend(JSON.stringify({type: "client_log", text: `screen ${innerWidth}x${innerHeight} css px, dpr ` +
+        `${devicePixelRatio}, page ${document.documentElement.scrollWidth}x${document.documentElement.scrollHeight}, ` +
+        `rows ${rows.join(", ")}, font ${getComputedStyle(document.body).fontSize}, visual ` +
+        `${Math.round(visualViewport.width)}x${Math.round(visualViewport.height)}, avail ${screen.availWidth}x${screen.availHeight}, ` +
+        `safe ${getComputedStyle($("safe")).padding}, ${matchMedia("(display-mode: fullscreen)").matches ? "fullscreen" : "not fullscreen"}`}));
+    }, 3000);
+  };
+  ws.onmessage = e => { if (typeof e.data === "string") handle(JSON.parse(e.data)); };
   ws.onclose = () => setTimeout(connect, unavailable ? 10000 : 1000);  // slow retries while the hardware is down
 }
-function report(text) {  // show a browser-side failure and tell the server (remote support reads its log)
-  heardEl.textContent = text; wsSend(JSON.stringify({type: "client_log", text}));
+const wsSend = data => ws && ws.readyState === WebSocket.OPEN ? ws.send(data) : pending.push(data);
+const action = (doWhat, target) => wsSend(JSON.stringify({type: "action", do: doWhat, target}));
+const sendText = text => wsSend(JSON.stringify({type: "text", text}));
+function report(text) {  // a browser-side failure: show it and tell the server (remote support reads its log)
+  show(text); wsSend(JSON.stringify({type: "client_log", text}));
 }
 addEventListener("error", e => report(`Page error: ${e.message}`));
 addEventListener("unhandledrejection", e => report(`Page error: ${e.reason && e.reason.message || e.reason}`));
-function stopAudio() { speechSynthesis.cancel(); if (player) player.pause(); }
-function play(blob) {  // server (Piper) speech; newest cue wins
-  stopAudio(); player = new Audio(URL.createObjectURL(blob));
-  player.play().catch(e => { if (e.name !== "AbortError") report(`The browser blocked speech: ${e.message}`); });  // Abort: a newer phrase cut it off
-}
-function speak(text) {
-  if (serverTts) return;  // audio arrives separately as a binary message
-  stopAudio();
-  const u = new SpeechSynthesisUtterance(text); u.rate = 0.95; speechSynthesis.speak(u);
+function show(text) {  // the message line, and the log behind it
+  msgEl.textContent = text;
+  logLines.push(`${new Date().toLocaleTimeString()}  ${text}`);
+  if (logLines.length > 100) logLines.shift();
 }
 function handle(m) {
-  if (m.type === "unavailable") {  // startup failed: show the error, say it once
-    said.textContent = m.text;
-    if (!unavailable) speak("The telescope isn't ready.");
-    unavailable = true;
-  }
-  if (m.type === "notice") said.textContent = m.text;  // a button's answer: shown, not spoken
-  if (m.type === "view") setView(m.what === "none" ? "" : m.what, !!m.video);
-  if (m.type === "hello") { unavailable = false; serverStt = m.server_stt; serverTts = m.server_tts; setupTalk(); }
-  if (m.type === "heard") { armedUntil = 0; said.textContent = `“${m.text}”`; heardEl.textContent = `Command: “${m.text}”`; }
-  if (m.type === "ignored") heardEl.textContent = `Heard, no “Astro”: “${m.text}”`;
-  if (m.type === "armed") armedUntil = performance.now() + m.seconds * 1000;
+  if (m.type === "unavailable") { show(m.text); unavailable = true; }
+  if (m.type === "hello") unavailable = false;
+  if (m.type === "say" || m.type === "notice") show(m.text);
   if (m.type === "get_location") sendLocation(m.id);
-  if (m.type === "picture" && !document.getElementById("gallery").hidden) showPictures();
-  if (m.type === "live") {  // live stack preview: same file, rewritten as frames are added
-    const img = document.getElementById("live");
-    img.src = `${m.url}?n=${m.frames}`; document.getElementById("livebox").hidden = false;
-  }
-  if (m.type === "picture") document.getElementById("livebox").hidden = true;
+  if (m.type === "state") guide(m);
   if (m.type === "hold") { arrow.hidden = true; dist.textContent = "Hold still"; holding = true; }
-  if (m.type === "say" && holding && !m.text.startsWith("Hold still")) {  // e.g. "stop"
-    holding = false; dist.textContent = "";
-  }
-  if (m.type === "say") { said.textContent = m.text; speak(m.text); }
-  if (m.type === "state") {
-    holding = false;
-    beepHz = m.on_target ? 0 : m.beep_hz; stateAt = performance.now();
-    arrow.hidden = false;
-    document.body.classList.toggle("on-target", m.on_target);
-    if (m.on_target) { arrow.innerHTML = "&#x25CF;"; arrow.style.transform = ""; dist.textContent = "On target"; return; }
-    arrow.innerHTML = "&#x2191;";
-    // Screen up = push up; screen right = the user's right (learned server-side, G3).
-    const right = m.right_is_plus_az === false ? -m.d_az_sky_deg : m.d_az_sky_deg;
-    const angle = Math.atan2(right, m.d_alt_deg) * 180 / Math.PI;
-    arrow.style.transform = `rotate(${angle}deg)`;
-    const d = m.distance_deg;
-    dist.textContent = d >= 1 ? `${d.toFixed(0)}°` : `${(d * 60).toFixed(0)}′`;
+  if (m.type === "capture") showCapture(m);
+  if (m.type === "live") { inset.src = `${m.url}?n=${m.frames}`; inset.hidden = false; }
+  if (m.type === "picture") { inset.hidden = true; showCapture({state: "done"}); if (!$("s-pics").hidden) showPictures(); }
+}
+
+// --- camera views: always live. Each view asks for a frame newer than the one it shows; the
+// server waits for it, so nothing stays open and nothing is downloaded twice.
+const views = {finder: {el: $("v-finder"), b: 1, zoom: 1, focus: []}, main: {el: $("v-main"), b: 1, zoom: 1, focus: []}};
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function viewLoop(name) {
+  const v = views[name], img = v.el.querySelector("img.cam"), cap = v.el.querySelector(".cap");
+  let seq = 0;
+  for (;;) {
+    try {
+      const r = await fetch(`/api/camera/${name}.jpg?after=${seq}`, {cache: "no-store"});
+      const age = Number(r.headers.get("X-Frame-Age"));
+      if (r.status === 200) {
+        seq = Number(r.headers.get("X-Seq")) || seq;
+        const url = URL.createObjectURL(await r.blob());
+        img.onload = () => { fit(name); URL.revokeObjectURL(url); };
+        img.src = url;
+        showFocus(name, r.headers.get("X-Focus"), r.headers.get("X-Stars"), r.headers.get("X-Focus-Mode"));
+        cap.textContent = age > 3 ? `frame ${age.toFixed(0)} s old` : "";
+      } else if (r.status === 204) {
+        cap.textContent = `no new frame for ${age.toFixed(0)} s`;
+      } else {
+        cap.textContent = (await r.json().catch(() => ({}))).detail || `error ${r.status}`;
+        await sleep(1000);
+      }
+    } catch (e) { cap.textContent = "no link to the telescope"; await sleep(1000); }
   }
 }
-// Tablet GPS for the observing site (setup, or "use my location"). Needs HTTPS.
-function wsSend(data) { ws && ws.readyState === WebSocket.OPEN ? ws.send(data) : pending.push(data); }
-function liveSend(data) { if (ws && ws.readyState === WebSocket.OPEN) ws.send(data); }  // hands-free speech: stale once the link is back
+function fit(name) {  // the overlay frame covers the picture exactly, wherever it sits in the pane
+  const v = views[name], img = v.el.querySelector("img.cam"), f = v.el.querySelector(".frame");
+  Object.assign(f.style, {left: `${img.offsetLeft}px`, top: `${img.offsetTop}px`,
+                          width: `${img.offsetWidth}px`, height: `${img.offsetHeight}px`});
+}
+// The tablet's CSS viewport (vh, dvh) runs under Android's bars; innerHeight is what shows.
+const fitPage = () => { document.body.style.height = `${innerHeight}px`; fit("finder"); fit("main"); };
+const showView = name => views[name].el.scrollIntoView({behavior: "smooth", inline: "center", block: "nearest"});
+$("v-finder").querySelector(".label").onclick = () => showView("main");  // landscape: swap cameras
+$("v-main").querySelector(".label").onclick = () => showView("finder");
+addEventListener("resize", fitPage); fitPage();
+function showFocus(name, value, stars, mode) {  // higher is sharper: turn the focuser to maximize it
+  const v = views[name], box = v.el.querySelector(".focus");
+  if (value === null) { box.querySelector("b").textContent = ""; box.querySelector("small").textContent = ""; return; }
+  const x = Number(value);
+  v.focus.push(x); if (v.focus.length > 60) v.focus.shift();
+  const best = Math.max(...v.focus);
+  box.querySelector("b").textContent = `focus ${x.toFixed(0)}`;
+  box.querySelector("small").textContent = `${mode === "planet" ? "edge" : `${stars} stars`} · best ${best.toFixed(0)}`;
+  const c = box.querySelector("canvas"), g = c.getContext("2d"), lo = Math.min(...v.focus);
+  g.clearRect(0, 0, c.width, c.height); g.strokeStyle = getComputedStyle(document.body).color; g.beginPath();
+  v.focus.forEach((f, i) => { const px = i * c.width / 59, py = c.height - 2 - (f - lo) / Math.max(best - lo, 1e-6) * (c.height - 4);
+                              i ? g.lineTo(px, py) : g.moveTo(px, py); });
+  g.stroke();
+}
+document.querySelectorAll(".view").forEach(el => {
+  const name = el.id.slice(2), v = views[name];
+  el.querySelectorAll(".ctl button").forEach(b => b.onclick = () => {
+    if (b.dataset.b) { v.b = Math.min(4, Math.max(0.25, v.b * (b.dataset.b === "+" ? 1.4 : 1 / 1.4)));
+                       el.querySelector("img.cam").style.setProperty("--b", (document.body.classList.contains("day") ? 1 : .6) * v.b); }
+    if ("z" in b.dataset) { v.zoom = v.zoom === 4 ? 1 : v.zoom * 2; b.textContent = `${v.zoom}x`;
+                            wsSend(JSON.stringify({type: "camera", camera: name, zoom: v.zoom})); drawMainBox(); }
+  });
+});
+
+// The main camera's field on the finder view (Align measures it), scaled with the finder's zoom.
+let mainBox = null;
+function drawMainBox() {
+  const poly = $("mainbox"), z = views.finder.zoom;
+  poly.setAttribute("points", mainBox ? mainBox.map(([x, y]) => `${x * z},${y * z}`).join(" ") : "");
+}
+
+// --- pointing: the arrow on the finder view says which way to push; distance below it.
+const arrow = $("arrow"), dist = $("dist");
+let stateAt = 0, holding = false;
+function guide(m) {
+  holding = false; stateAt = performance.now(); arrow.hidden = false;
+  if (m.on_target) { arrow.textContent = "●"; arrow.style.transform = ""; dist.textContent = `On ${m.target}`; return; }
+  arrow.textContent = "↑";
+  // Screen up = push up; screen right = the user's right (learned server-side, G3).
+  const right = m.right_is_plus_az === false ? -m.d_az_sky_deg : m.d_az_sky_deg;
+  arrow.style.transform = `rotate(${Math.atan2(right, m.d_alt_deg) * 180 / Math.PI}deg)`;
+  const d = m.distance_deg;
+  dist.textContent = `${m.target}: ${d >= 1 ? `${d.toFixed(0)}°` : `${(d * 60).toFixed(0)}′`}`;
+}
+setInterval(() => {  // guidance stopped (stop, unsafe, disconnect): no stale arrow
+  if (performance.now() - stateAt > 1000 && !holding && !arrow.hidden) { arrow.hidden = true; dist.textContent = ""; }
+}, 250);
+
+// --- capture: one button starts and stops; progress shows on the main view.
+let capturing = false;
+const inset = $("inset");
+function showCapture(m) {
+  capturing = m.state === "recording" || m.state === "paused";
+  $("capture").textContent = capturing ? "Stop capture" : "Capture";
+  $("capture").classList.toggle("on", capturing);
+  $("recenter").textContent = m.state === "paused" ? "Resume" : "Recenter";
+  $("recenter").classList.toggle("on", m.state === "paused");
+  const edge = m.edge_s === null || m.edge_s === undefined ? "" : ` · edge in ${m.edge_s} s`;
+  $("capinfo").textContent = m.state === "recording" ? `● ${m.name}: ${m.frames} frames, ${m.seconds} s${edge}`
+    : m.state === "paused" ? `Paused (${m.frames} frames): follow the arrow, then Resume`
+    : m.state === "processing" ? `Saved ${m.frames} frames: making the picture…`
+    : m.state === "done" ? "Picture ready (Pictures)" : "";
+  $("capinfo").classList.toggle("warn", m.state === "recording" && m.edge_s !== null && m.edge_s <= 15);
+  const f = $("field"), xy = m.kind === "stack" && m.state === "recording" ? m.target_xy : null;
+  f.hidden = !xy;
+  const z = views.main.zoom;  // the view's zoom crops the center
+  if (xy) { f.style.left = `${(0.5 + (xy[0] - 0.5) * z) * 100}%`; f.style.top = `${(0.5 + (xy[1] - 0.5) * z) * 100}%`; }
+}
+
+// --- buttons
+$("capture").onclick = () => { action("capture"); if (!capturing) showView("main"); };
+$("stop").onclick = () => action("stop");
+$("align").onclick = () => action("align");
+$("recenter").onclick = () => { action("recenter"); showView("finder"); };
+$("focus").onclick = () => { const on = document.body.classList.toggle("focusing");
+  $("focus").classList.toggle("on", on); if (on) action("focus"); };
+$("sync").onclick = () => action("sync");
+document.querySelectorAll("[data-text]").forEach(b => b.onclick = () => sendText(b.dataset.text));
+const open = id => { $(id).hidden = false; }, close = el => { el.closest(".sheet").hidden = true; };
+document.querySelectorAll("[data-close]").forEach(b => b.onclick = () => close(b));
+msgEl.onclick = () => { $("log").textContent = logLines.slice().reverse().join("\n") || "No messages yet."; open("s-log"); };
+$("goto").onclick = async () => {
+  open("s-goto"); $("targets").textContent = "Loading…";
+  try {
+    const list = await (await fetch("/api/targets")).json();
+    $("targets").innerHTML = list.map(t => `<button data-name="${t.name}" class="${t.up ? "" : "down"}">${t.name}
+      <small>${t.category} · ${t.up ? `${t.alt.toFixed(0)}° up` : "below the trees or horizon now"} · ${t.note}</small></button>`).join("")
+      || "Nothing good is up.";
+    $("targets").querySelectorAll("button").forEach(b => b.onclick = () => { action("goto", b.dataset.name); $("s-goto").hidden = true; showView("finder"); });
+  } catch (e) { $("targets").textContent = `Couldn't load the list: ${e.message}`; }
+};
+$("more").onclick = async () => {
+  open("s-more");
+  try { const r = await fetch("/api/debug"); $("debugbox").textContent = r.ok ? formatDebug(await r.json()) : await r.text(); }
+  catch (e) { $("debugbox").textContent = e.message; }
+};
+const formatDebug = info => Object.entries(info).map(([section, vals]) => section.toUpperCase() + "\n" +
+  Object.entries(vals).map(([k, v]) => `  ${k}: ${JSON.stringify(v)}`).join("\n")).join("\n\n");
+function setDay(day) {  // remembered on this tablet, so a reload keeps it
+  document.body.classList.toggle("day", day);
+  $("mode").textContent = day ? "Night mode" : "Day mode";
+  for (const v of Object.values(views))  // keep each view's own brightness
+    v.el.querySelector("img.cam").style.setProperty("--b", (day ? 1 : .6) * v.b);
+  try { localStorage.setItem("day", day ? "1" : ""); } catch {}
+}
+$("mode").onclick = () => setDay(!document.body.classList.contains("day"));
+try { if (localStorage.getItem("day")) setDay(true); } catch {}
+
+// --- pictures: a grid; tapping one opens it in the viewer (a new window crashed the installed app).
+const demo = new URLSearchParams(location.search).get("demo");
+const DEMO_PICTURES = ["m42", "m31", "m45", "jupiter", "saturn", "moon"].map(n => `/demo/${n}.jpg`);
+async function showPictures() {
+  const urls = demo ? DEMO_PICTURES : (await (await fetch("/gallery")).json()).map(f => `/pictures/${f}`);
+  $("pictures").innerHTML = urls.length ? urls.map(u => `<button><img src="${u}" alt="${u}"></button>`).join("") : "No pictures yet.";
+}
+$("pics").onclick = () => { open("s-pics"); showPictures(); };
+let viewerB = 1;
+$("pictures").onclick = e => { const img = e.target.closest("button")?.querySelector("img"); if (img) openViewer(img.src); };
+inset.onclick = () => openViewer(inset.src);
+function openViewer(src) { const img = $("viewer").querySelector("img"); img.src = src; img.style.transform = ""; open("viewer"); }
+document.querySelectorAll("[data-vb]").forEach(b => b.onclick = () => {
+  viewerB = Math.min(4, Math.max(0.25, viewerB * (b.dataset.vb === "+" ? 1.4 : 1 / 1.4)));
+  $("viewer").querySelector("img").style.setProperty("--b", .6 * viewerB);
+});
+document.querySelectorAll("[data-vz]").forEach(b => b.onclick = () => { $("viewer").querySelector("img").style.transform = `scale(${b.dataset.vz})`; });
+
+// --- tablet GPS for the observing site (setup, or "use my location"). Needs HTTPS.
 function sendLocation(id) {  // echo the request id so stale answers can be ignored
-  if (!navigator.geolocation) {
-    wsSend(JSON.stringify({type: "location_error", id, message: "This browser has no location service."}));
-    return;
-  }
+  if (!navigator.geolocation) { wsSend(JSON.stringify({type: "location_error", id, message: "This browser has no location service."})); return; }
   navigator.geolocation.getCurrentPosition(
-    p => wsSend(JSON.stringify({type: "location", id, lat: p.coords.latitude, lon: p.coords.longitude,
-                                 alt: p.coords.altitude, accuracy: p.coords.accuracy})),
+    p => wsSend(JSON.stringify({type: "location", id, lat: p.coords.latitude, lon: p.coords.longitude, alt: p.coords.altitude, accuracy: p.coords.accuracy})),
     e => wsSend(JSON.stringify({type: "location_error", id, message: e.message})),
     {enableHighAccuracy: true, timeout: 20000, maximumAge: 0});  // always a fresh fix
 }
-function send(text) { if (text.trim()) wsSend(JSON.stringify({type: "text", text})); }
-document.getElementById("typed").onsubmit = e => {
-  e.preventDefault(); const i = document.getElementById("text"); send(i.value); i.value = "";
-};
-// Stop: ends whatever is going on (focus, guidance, a picture, video), same as saying "stop".
-document.getElementById("bigstop").onclick = () => { stopAudio(); send("stop"); };
-// Tapping a picture shows it big in the live-stack viewer, with its buttons. (Opening it in a
-// new window crashed the installed app.)
-document.getElementById("gallery").onclick = e => {
-  const img = e.target.closest("button")?.querySelector("img");
-  if (!img) return;
-  document.getElementById("live").src = img.src;
-  document.getElementById("livebox").hidden = false;
-  document.getElementById("livebox").scrollIntoView({behavior: "smooth"});
-};
-async function showPictures() {
-  const box = document.getElementById("gallery");
-  const urls = demo ? DEMO_PICTURES : (await (await fetch("/gallery")).json()).map(f => `/pictures/${f}`);
-  box.innerHTML = urls.length ? urls.map(u => `<button><img src="${u}" alt="${u}"></button>`).join("")
-                               : "<p>No pictures yet.</p>";
-  box.hidden = false;
-}
-document.getElementById("pics").onclick = () => {
-  const box = document.getElementById("gallery");
-  box.hidden ? showPictures() : (box.hidden = true);
-};
-document.getElementById("mode").onclick = e => {
-  e.target.textContent = document.body.classList.toggle("day") ? "Night mode" : "Day mode";
-};
 
-// Optional proximity beeps (G4): faster as the target gets closer.
-// States stream at 10 Hz while guiding; when they stop (stop, unsafe, disconnect), the
-// beeps stop and the arrow goes away instead of pointing at the last target.
-let beepHz = 0, beepsOn = false, audio = null, lastBeep = 0, stateAt = 0, holding = false;
-document.getElementById("beeps").onclick = e => {
-  beepsOn = !beepsOn;
-  e.target.textContent = beepsOn ? "Beeps on" : "Beeps off";
-  audio = audio || new AudioContext();  // needs a tap before it may play
-};
-setInterval(() => {
-  const now = performance.now();
-  if (now - stateAt > 1000) {
-    beepHz = 0;  // no fresh state: paused (hold), stopped or disconnected
-    if (!holding && !arrow.hidden) { arrow.hidden = true; dist.textContent = ""; }
-  }
-  if (!beepsOn || !audio || beepHz <= 0 || now - lastBeep < 1000 / beepHz) return;
-  lastBeep = now;
-  const osc = audio.createOscillator(), gain = audio.createGain();
-  osc.frequency.value = 880; gain.gain.value = 0.1;
-  osc.connect(gain).connect(audio.destination);
-  osc.start(); osc.stop(audio.currentTime + 0.05);
-}, 25);
-
-// Speech input: record and send to the server (whisper.cpp) when available, which works
-// offline; otherwise use the browser's recognizer (on Android this may need internet).
-let talkReady = false;
-function setupTalk() {
-  if (talkReady) return; talkReady = true;
-  const listen = on => talk.classList.toggle("listening", on);
-  const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
-  let start, stop;
-  if (serverStt && navigator.mediaDevices) {
-    let rec, stream = null;  // the mic stays open: reopening it per press clips the first word
-    start = async () => {
-      stream = stream || await navigator.mediaDevices.getUserMedia({audio: true});
-      const chunks = []; rec = new MediaRecorder(stream);
-      rec.ondataavailable = e => chunks.push(e.data);
-      rec.onstop = () => { listen(false); wsSend(new Blob(chunks, {type: rec.mimeType})); };
-      rec.start();
-    };
-    stop = () => rec && rec.state === "recording" && rec.stop();
-  } else if (Rec) {
-    const rec = new Rec(); rec.lang = "en-US"; rec.interimResults = false;
-    rec.onresult = e => send(e.results[0][0].transcript);
-    rec.onend = () => listen(false);
-    start = () => rec.start(); stop = () => rec.stop();
-  } else {
-    talk.textContent = "Type below"; talk.disabled = true; return;
-  }
-  setupHandsFree(Rec);
-  // While the telescope talks, the big button stops it (in either mode) instead of listening.
-  const speakingNow = () => speechSynthesis.speaking || (player && !player.paused && !player.ended);
-  // Tap to talk, tap again to send (holding on a touchscreen was unreliable). A tap also cuts
-  // the telescope's speech. Recording ends by itself after MAX_TALK_MS.
-  const MAX_TALK_MS = 8000;
-  let recording = false, limit = null;
-  const finish = () => { clearTimeout(limit); if (recording) { recording = false; stop(); } };
-  setInterval(() => {
-    const label = recording ? "Tap to send" : "Tap to talk";
-    if (talk.textContent !== label) talk.textContent = label;
-    talk.disabled = !recording && handsOn;
-  }, 150);
-  talk.addEventListener("pointerdown", async e => {
-    e.preventDefault();
-    stopAudio();
-    if (recording) { finish(); return; }
-    recording = true; listen(true);
-    try {
-      await start();
-      if (!recording) { stop(); return; }  // tapped again while the microphone was opening
-      limit = setTimeout(finish, MAX_TALK_MS);
-    } catch (err) {  // e.g. microphone permission denied
-      recording = false; listen(false);
-      said.textContent = `I can't use the microphone: ${err.message}. Type below.`;
-    }
-  });
-}
-// Status line: what's connected. Problems are underlined and bold (it's all red at night).
+// --- status: only what's wrong (next to the message line; bold and underlined: it's all red at night), and
+// a reload by itself when a new version is deployed.
 let build = null;
 async function pollStatus() {
   const link = ws && ws.readyState === WebSocket.OPEN;
-  const item = (name, ok, why) => ok === null || ok === undefined ? "" :
-    `<span class="${ok ? "" : "bad"}">${name} ${ok ? "✓" : "✗" + (why ? " " + why : "")}</span>`;
+  const item = (name, ok, why) => ok === null || ok === undefined || ok ? "" :
+    `<span class="bad">${name} ✗${why ? " " + why : ""}</span>`;
   let s = {};
   if (link) { try { const r = await fetch("/api/status"); if (r.ok) s = await r.json(); } catch {} }
-  if (s.build) {  // a new version was deployed: reload by itself, keeping the open view
-    if (build && s.build !== build) {
-      try { sessionStorage.setItem("view", view); } catch {}
-      location.reload(); return;
-    }
-    build = s.build;
-  }
-  const claudeOk = s.claude === "ok";
-  document.getElementById("status").innerHTML = [
-    item("Tablet link", link, link ? "" : "reconnecting"), item("Finder", s.finder), item("Main camera", s.main),
-    item("Encoders", s.encoders), item("Internet", s.internet),
-    s.claude ? item("Claude", claudeOk, claudeOk ? "" : `(${s.claude})`) : ""].filter(Boolean).join(" · ");
-  document.getElementById("checks").hidden = !s.daytime;
-  document.getElementById("checksoff").checked = !!s.checks_off;
+  if (s.build) { if (build && s.build !== build) { location.reload(); return; } build = s.build; }
+  mainBox = s.main_box || mainBox; drawMainBox();
+  $("status").innerHTML = [item("Tablet link", link, link ? "" : "reconnecting"), item("Finder", s.finder),
+    item("Main camera", s.main), item("Encoders", s.encoders), item("Internet", s.internet),
+    s.claude ? item("Claude", s.claude === "ok", s.claude === "ok" ? "" : `(${s.claude})`) : ""].filter(Boolean).join("");
+  $("checks").hidden = !s.daytime; $("checksoff").checked = !!s.checks_off;
 }
-document.getElementById("checksoff").onchange = e =>
-  wsSend(JSON.stringify({type: "checks", off: e.target.checked}));
-setInterval(pollStatus, 5000); setTimeout(pollStatus, 1500);
-// Live camera views and the debug panel: the page polls what the server last captured.
-let view = "", viewTimer = null, camUrl = null;
-let videoOn = false;
-function setView(what, video = false) {
-  view = what; videoOn = video; clearTimeout(viewTimer);
-  const isCam = what === "finder" || what === "main";
-  const img = document.getElementById("camimg"), vid = document.getElementById("vid");
-  img.removeAttribute("src");  // drops a running stream, so the server sees nobody watching
-  vid.hidden = !isCam; vid.textContent = video ? "Stop video" : "Live video";
-  document.getElementById("camview").hidden = !isCam;
-  if (video && isCam) {
-    img.src = `/api/camera/${what}.mjpg`;
-    document.getElementById("camcap").textContent = `${what}: live video`;
-    document.querySelectorAll("#views button[data-v]").forEach(b => b.classList.toggle("on", b.dataset.v === what));
-    document.getElementById("debugbox").hidden = true;
-    return;
-  }
-  document.getElementById("debugbox").hidden = what !== "debug";
-  document.querySelectorAll("#views button").forEach(b => b.classList.toggle("on", b.dataset.v === what));
-  if (what) pollView();
-}
-// Buttons are silent: the server answers only with the view (spoken requests are spoken to).
-const video = (camera, then) => wsSend(JSON.stringify({type: "video", camera, then}));
-// Camera controls: exposure (live video only; turns auto-exposure off) and digital zoom.
-document.querySelectorAll("#camctl button").forEach(b => b.onclick = () =>
-  wsSend(JSON.stringify({type: "camera", camera: view, exposure: b.dataset.exp,
-                         zoom: b.dataset.zoom ? Number(b.dataset.zoom) : undefined})));
-document.getElementById("vid").onclick = () => videoOn ? video(null, view) : video(view);
-document.querySelectorAll("#views button[data-v]").forEach(b => b.onclick = () => {
-  const next = view === b.dataset.v ? "" : b.dataset.v;
-  if (next === "finder" || next === "main") video(next);  // a camera opens as live video
-  else if (videoOn) video(null, next || "none"); else setView(next);  // video runs until switched off
-});
-function formatDebug(info) {
-  return Object.entries(info).map(([section, vals]) => section.toUpperCase() + "\n" +
-    Object.entries(vals).map(([k, v]) => `  ${k}: ${JSON.stringify(v)}`).join("\n")).join("\n\n");
-}
-async function pollView() {
-  const what = view;
-  if (!what) return;
-  try {
-    if (what === "debug") {
-      const r = await fetch("/api/debug");
-      document.getElementById("debugbox").textContent = r.ok ? formatDebug(await r.json()) : `No debug info: ${await r.text()}`;
-    } else {
-      const r = await fetch(`/api/camera/${what}.jpg?n=${Date.now()}`);
-      if (r.ok && view === what) {
-        const url = URL.createObjectURL(await r.blob());
-        document.getElementById("camimg").src = url;
-        if (camUrl) URL.revokeObjectURL(camUrl);
-        camUrl = url;
-        document.getElementById("camcap").textContent = `${what}: frame ${r.headers.get("X-Frame-Age")} s old`;
-      } else if (!r.ok) {
-        const why = (await r.json().catch(() => ({}))).detail || "no frame yet";
-        document.getElementById("camcap").textContent = `${what}: ${why}`;
-      }
-    }
-  } catch (e) { report(`View failed: ${e.message}`); }
-  if (view === what) viewTimer = setTimeout(pollView, what === "debug" ? 1000 : 1500);
-}
-// Hands-free (half-duplex): listen continuously, ignore the mic while the telescope is speaking.
-// Short commands only. Silero VAD (scripts/install-vad.sh) finds each utterance whatever the mic
-// level; the browser's gain control and noise suppression clean the signal first.
-const loadScript = src => new Promise((ok, fail) => {
-  const el = Object.assign(document.createElement("script"), {src, onload: ok, onerror: () => fail(new Error(`${src} missing; run scripts/install-vad.sh`))});
-  document.head.append(el);
-});
-function setupHandsFree(Rec) {
-  const btn = document.getElementById("hands"), vstate = document.getElementById("vstate");
-  const TAIL_MS = 600, MAX_UTTERANCE_S = 6, VAD = "/vendor/vad/";  // absolute: onnxruntime import()s its module from here
-  let on = false, stream = null, micVad = null, recog = null, wakeLock = null, hearing = false, tainted = false, lastSpoke = 0;
-  const speaking = () => speechSynthesis.speaking || (player && !player.paused && !player.ended);
-  const states = {waiting: "Say “Astro…”", hearing: "Hearing you…", armed: "Listening for your command",
-                  speaking: "Speaking…"};
-  setInterval(() => {
-    if (speaking()) lastSpoke = performance.now();
-    const s = !on ? "" : speaking() ? "speaking" : hearing ? "hearing" : performance.now() < armedUntil ? "armed" : "waiting";
-    vstate.hidden = !on; vstate.dataset.s = s; vstate.textContent = states[s] || "";
-    if (on) talk.classList.toggle("listening", s === "hearing");  // hold-to-talk owns the class otherwise
-  }, 100);
-  const quiet = () => !speaking() && performance.now() - lastSpoke > TAIL_MS;
-  async function enable() {
-    if (serverStt && navigator.mediaDevices) {
-      stream = stream || await navigator.mediaDevices.getUserMedia(
-        {audio: {autoGainControl: true, noiseSuppression: true, echoCancellation: true}});
-      if (!window.vad) { await loadScript(VAD + "ort.wasm.min.js"); await loadScript(VAD + "bundle.min.js"); }
-      micVad = await vad.MicVAD.new({
-        getStream: async () => stream, baseAssetPath: VAD, onnxWASMBasePath: VAD, model: "v5",
-        preSpeechPadMs: 800, redemptionMs: 800, minSpeechMs: 250,  // a long pre-roll keeps "Astro" (often clipped)
-        positiveSpeechThreshold: 0.3, negativeSpeechThreshold: 0.2,  // softer: early-morning voices are quiet
-        onSpeechStart: () => { hearing = true; tainted = !quiet(); },  // started over our own voice
-        onVADMisfire: () => { hearing = false; },
-        onSpeechEnd: audio => {
-          hearing = false;
-          if (!tainted && quiet() && audio.length < MAX_UTTERANCE_S * 16000) liveSend(new Blob([vad.utils.encodeWAV(audio)], {type: "audio/wav"}));
-        },
-      });
-      micVad.start();
-    } else if (Rec) {  // Chrome's recognizer: continuous, restarted when it ends
-      recog = new Rec(); recog.lang = "en-US"; recog.continuous = true;
-      recog.onresult = e => { const r = e.results[e.results.length - 1];
-        if (r.isFinal && quiet()) liveSend(JSON.stringify({type: "text", text: r[0].transcript, spoken: true})); };
-      recog.onend = () => { if (on) try { recog.start(); } catch {} };
-      recog.start();
-    }
-  }
-  async function disable() {  // also after a failed enable: never leave the microphone on
-    if (micVad) { await micVad.destroy(); micVad = null; }
-    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
-    if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
-    hearing = false;
-    if (recog) { recog.onend = null; recog.stop(); recog = null; }
-    talk.classList.remove("listening");
-  }
-  btn.onclick = async () => {
-    on = !on;
-    btn.disabled = true;  // loading the voice detector takes a few seconds: show it, ignore taps
-    btn.textContent = `Hands-free: ${on ? "starting…" : "stopping…"}`;
-    try { if (on) await enable(); else await disable(); }
-    catch (err) { on = false; await disable().catch(() => {}); said.textContent = `I can't use the microphone: ${err.message}. Type below.`; }
-    btn.disabled = false;
-    handsOn = on; armedUntil = 0; wsSend(JSON.stringify({type: "handsfree", on}));
-    btn.textContent = `Hands-free: ${on ? "on" : "off"}`; talk.disabled = on;
-    if (on) said.textContent = "Say “Astro, what's good tonight?”";  // the hint changes with the mode
-    else if (said.textContent.startsWith("Say “Astro")) said.textContent = HINT;
-    if (on && navigator.wakeLock) navigator.wakeLock.request("screen")  // keep the tablet awake
-      .then(l => { wakeLock = l; l.onrelease = () => { if (wakeLock === l) wakeLock = null; }; }).catch(() => {});
-  };
-}
+$("checksoff").onchange = e => wsSend(JSON.stringify({type: "checks", off: e.target.checked}));
+setInterval(pollStatus, 5000); setTimeout(pollStatus, 1000);
+
 connect();
-try {  // reopen the view that was showing before an automatic reload (video comes back from the server)
-  const v = sessionStorage.getItem("view"); sessionStorage.removeItem("view");
-  if (v === "debug" || v === "finder" || v === "main") setTimeout(() => { if (!view) setView(v); }, 1500);
-} catch {}
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").then(r => r.update());  // installable (V1); check for a new build on every load
-// Live stack controls, same as the camera view's: the stack is a picture, so these change
-// only how it's shown (brightness and center zoom), not the camera.
-let liveGain = 1;
-document.querySelectorAll("#livectl button").forEach(b => b.onclick = () => {
-  if (b.dataset.exp) liveGain = Math.min(4, Math.max(0.25, liveGain * (b.dataset.exp === "up" ? 1.4 : 1 / 1.4)));
-  else document.getElementById("live").style.transform = `scale(${b.dataset.zoom})`;
-  document.getElementById("liveframe").style.filter = `brightness(${liveGain})`;
-});
-// GUI design demo (scripts/dev/sim_pictures.py): ?demo=m42 (or m31, m45) plays a made-up
-// live stack, then shows the made-up pictures in place of the gallery.
-const demo = new URLSearchParams(location.search).get("demo");
-const DEMO_PICTURES = ["m42", "m31", "m45", "jupiter", "saturn", "moon"].map(n => `/demo/${n}.jpg`);
+viewLoop("finder"); viewLoop("main");
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").then(r => r.update());  // installable (V1)
+if (navigator.wakeLock) navigator.wakeLock.request("screen").catch(() => {});  // keep the tablet awake
+
+// GUI design demo (scripts/dev/sim_pictures.py): ?demo=m42 (or m31, m45) plays a made-up live
+// stack in the main view, then Pictures shows the made-up pictures.
 if (demo) (async () => {
   for (let n = 1; n <= 10; n++) {
     handle({type: "live", url: `/demo/${demo}_${String(n).padStart(2, "0")}.jpg`, frames: n * 6});
-    handle({type: "notice", text: `Stacking ${demo.toUpperCase()}: ${n * 6} frames`});
-    await new Promise(r => setTimeout(r, 1500));
+    handle({type: "capture", state: "recording", name: demo.toUpperCase(), frames: n * 6, seconds: n * 2});
+    await sleep(1500);
   }
+  handle({type: "capture", state: "processing", frames: 60});
+  await sleep(1500);
   handle({type: "picture"});
-  handle({type: "notice", text: "Done. Here are the demo pictures."});
-  showPictures();
 })();
 </script>
 </body>

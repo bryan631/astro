@@ -9,6 +9,8 @@ gain = 200
 [main]
 driver = "svbony"      # svbony | none
 model = "SV705C"
+exposure_s = 0.25      # live view; planet captures switch to 20 ms while they record
+gain = 480
 
 [mount]
 driver = "mcu"         # mcu (encoders via the Nano) | handset (IntelliScope RS-232) | solve (finder only)
