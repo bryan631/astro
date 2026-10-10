@@ -1,8 +1,10 @@
 # Using your telescope helper
 
-Everything works with the sound off. The screen shows both cameras all the time: the
-**finder** (wide view) on the left, the **main camera** (what the telescope sees) on the right.
-Messages appear in the line under the pictures; tap it to see the earlier ones.
+Everything works with the sound off. Both cameras are live all the time: the **finder** (wide
+view) and the **main camera** (what the telescope sees). Hold the tablet upright to see both, one
+above the other; turn it sideways to see one large, and swipe or tap its name for the other.
+Messages appear in the line under the pictures (tap it to see the earlier ones), with anything
+that's wrong, like **Finder ✗**, at its right.
 
 **Getting started**
 
