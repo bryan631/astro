@@ -308,16 +308,10 @@ function setView(what, video = false) {
   view = what; videoOn = video; clearTimeout(viewTimer);
   const isCam = what === "finder" || what === "main";
   const img = document.getElementById("camimg"), vid = document.getElementById("vid");
-  img.removeAttribute("src");  // drops a running stream, so the server sees nobody watching
+  img.removeAttribute("src");  // no stale picture from the other camera
   vid.hidden = !isCam; vid.textContent = video ? "Stop video" : "Live video";
   document.getElementById("camview").hidden = !isCam;
-  if (video && isCam) {
-    img.src = `/api/camera/${what}.mjpg`;
-    document.getElementById("camcap").textContent = `${what}: live video`;
-    document.querySelectorAll("#views button[data-v]").forEach(b => b.classList.toggle("on", b.dataset.v === what));
-    document.getElementById("debugbox").hidden = true;
-    return;
-  }
+  if (isCam) document.getElementById("camcap").textContent = `${what}: ${video ? "live video" : "loading"}`;
   document.getElementById("debugbox").hidden = what !== "debug";
   document.querySelectorAll("#views button").forEach(b => b.classList.toggle("on", b.dataset.v === what));
   if (what) pollView();
@@ -352,14 +346,16 @@ async function pollView() {
         document.getElementById("camimg").src = url;
         if (camUrl) URL.revokeObjectURL(camUrl);
         camUrl = url;
-        document.getElementById("camcap").textContent = `${what}: frame ${r.headers.get("X-Frame-Age")} s old`;
+        if (!videoOn) document.getElementById("camcap").textContent = `${what}: frame ${r.headers.get("X-Frame-Age")} s old`;
       } else if (!r.ok) {
         const why = (await r.json().catch(() => ({}))).detail || "no frame yet";
         document.getElementById("camcap").textContent = `${what}: ${why}`;
       }
     }
   } catch (e) { report(`View failed: ${e.message}`); }
-  if (view === what) viewTimer = setTimeout(pollView, what === "debug" ? 1000 : 1500);
+  // Live video is fetched a frame at a time, not as a stream: streams left open by camera
+  // switches used up the browser's few connections to the Mele, and the whole page froze.
+  if (view === what) viewTimer = setTimeout(pollView, what === "debug" ? 1000 : videoOn ? 150 : 1500);
 }
 // Hands-free (half-duplex): listen continuously, ignore the mic while the telescope is speaking.
 // Short commands only. Silero VAD (scripts/install-vad.sh) finds each utterance whatever the mic
