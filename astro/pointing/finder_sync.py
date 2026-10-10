@@ -16,6 +16,7 @@ from scipy.stats import norm
 from astro.capture.focus import flatten_sky, half_flux_radius
 from astro.devices.base import Camera
 from astro.pointing.coords import Site, radec_to_altaz
+from astro.pointing.geometry import separation_deg
 from astro.pointing.mount_model import MountModel, Sync
 from astro.pointing.platesolve import FinderSolver, Solution, finder_gray
 
@@ -155,9 +156,11 @@ class FinderSync:
     def focus_report(self) -> FocusReport:
         return check_focus(finder_gray(self.camera.capture()))  # callers handle a dead camera
 
-    def sync(self, fresh: bool = True) -> tuple[bool, str]:
+    def sync(self, fresh: bool = True, replace_near_deg: float | None = None) -> tuple[bool, str]:
         """Solve the current finder view and refine the mount model. Returns (ok, message).
-        Always a new solve (`fresh` is for the same interface as SolveTracker)."""
+        Always a new solve (`fresh` is for the same interface as SolveTracker). With
+        `replace_near_deg` (background solves) it replaces older syncs that close, so a scope
+        parked on one target keeps the model's spread over the sky."""
         enc = self.encoders()  # read encoders and clock at exposure time, not after the solve
         try:
             gray, when = finder_gray(self.camera.capture()), self.clock()
@@ -172,6 +175,9 @@ class FinderSync:
         self.last_solution = sol
         log_solution(sol)
         alt, az = radec_to_altaz(sol.ra_deg, sol.dec_deg, self.site, when)
+        if replace_near_deg is not None:
+            self.model.syncs = [s for s in self.model.syncs if separation_deg(
+                s.true_alt_deg, s.true_az_deg, alt, az) > replace_near_deg]
         rms = self.model.add_sync(Sync(enc[0], enc[1], alt, az))
         self.last_rms = rms
         self.synced = True

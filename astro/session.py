@@ -77,7 +77,8 @@ SATURATED_RAW = 250  # 8-bit raw: clipped
 PLANET_DISK_PX = 2000  # one clipped blob this big (raw px) is a disk: Jupiter ~30000, Sirius ~700
 PLANET_NEAR_DEG = 3.0  # ... and it's the planet within this of where the scope points
 ALIGN_SCALE = (25.0, 130.0)  # main pixels per finder pixel: ~58 for this pair (14.6" vs 0.25")
-AUTO_SOLVE_EVERY_S = 20.0  # not synced (or names never placed): try a plate solve this often
+AUTO_SOLVE_EVERY_S = 5.0  # background plate solves at night (back to back while not synced)
+AUTO_SOLVE_NEAR_DEG = 5.0  # a background solve replaces model syncs this close (keeps the spread)
 LABELS_REFRESH_S = 5.0  # the sky turns ~0.02 degrees in 5 s: under 2 finder pixels
 # By day the finder's view auto-exposes; the main camera gets fixed daylight settings (every
 # exposure change reopens it in the SDK, which froze its view in the field). At night both go
@@ -158,7 +159,7 @@ class Session:
         self._labels: dict | None = None  # finder_labels' cache: the solve's map, objects' alt-az
         self._label_catalog: tuple | None = None
         self.finder_map: np.ndarray | None = None  # alt-az -> finder pixels, from a solve (labels)
-        self._solved_try_at = -1e9
+        self._solved_try_at, self._solving = -1e9, False
         self._said_later: list[dict] = []  # from background work, said on the next tick
         self._collimation_at = -1e9
         self.main_camera, self.main_sensor = main_camera, main_sensor
@@ -722,25 +723,30 @@ class Session:
         return kept
 
     def _solve_soon(self) -> None:
-        """A plate solve in the background, at most every AUTO_SOLVE_EVERY_S: without one the
-        encoders mean nothing (2026-10-10: the board rebooted, the saved model was dropped, and
+        """A plate solve in the background: every AUTO_SOLVE_EVERY_S, back to back while not
+        synced. Without one the encoders mean nothing (2026-10-10: the board rebooted, the saved model was dropped, and
         captures, names and Recenter all used a pointing 45 degrees off)."""
-        if self.finder is None or time.monotonic() - self._solved_try_at < AUTO_SOLVE_EVERY_S:
+        synced = getattr(self.finder, "synced", True)
+        if self.finder is None or self._solving or (
+                synced and time.monotonic() - self._solved_try_at < AUTO_SOLVE_EVERY_S):
             return
-        self._solved_try_at = time.monotonic()
-        threading.Thread(target=self._auto_solve, daemon=True).start()
+        self._solved_try_at, self._solving = time.monotonic(), True
+        threading.Thread(target=self._auto_solve, args=(synced,), daemon=True).start()
 
-    def _auto_solve(self) -> None:
-        was_synced = getattr(self.finder, "synced", True)
-        ok, why = self.finder.sync(fresh=True)
+    def _auto_solve(self, was_synced: bool) -> None:
+        try:
+            extra = {"replace_near_deg": AUTO_SOLVE_NEAR_DEG} if isinstance(self.finder, FinderSync) else {}
+            ok, why = self.finder.sync(fresh=True, **extra)
+        finally:
+            self._solving = False
         log.info("auto solve", extra={"data": {"ok": ok, "why": why}})
         if ok and not was_synced:
             self._said_later.append(say("Found where the scope points (plate solve)."))
 
     def _tick(self, t: float) -> list[dict]:
         self._daylight_settings(t)
-        if self.finder is not None and not getattr(self.finder, "synced", True) and not self.daytime():
-            self._solve_soon()
+        if self.finder is not None and not self.daytime() and not self._camera_busy():
+            self._solve_soon()  # every 5 s; back to back while the encoders mean nothing
         if self._align is not None:
             return self._align_step()
         rec = self.recorder.current if self.recorder else None
