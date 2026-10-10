@@ -847,18 +847,19 @@ class Session:
             return [say("Align needs both cameras connected.")]
         if self._camera_busy():
             return [say("Stop the capture first, then Align.")]
-        ok, msg = self.finder.sync(fresh=True)  # the solve turns finder pixels into sky
-        if not ok:
-            return [say(f"Align needs the finder to see the stars. {msg}")]
+        solved, _ = self.finder.sync(fresh=True)  # the solve turns finder pixels into sky
         frame = self.camera_frame("finder")
         h, w = frame[0].shape if frame else (960, 1280)
         near = self.main_in_finder.center if self.main_in_finder else np.array([w / 2, h / 2])
         self.guide, self._centering = None, False
-        self._align = {"until": time.monotonic() + ALIGN_S, "near": near, "sol": self.finder.last_solution,
+        self._align = {"until": time.monotonic() + ALIGN_S, "near": near,
+                       "sol": self.finder.last_solution if solved else None,
                        "finder": [], "main": [], "seen": {"finder": None, "main": None},
                        "finder_size": (w, h), "main_size": None, "no_star": 0}
+        box_only = "" if solved else (" The finder can't plate-solve right now (clouds?), so this "
+                                      "moves the box only; Go to keeps its old aim.")
         return [say(f"Aligning: keep the bright star in the main view and don't touch the scope "
-                    f"for {ALIGN_S:.0f} seconds.")]
+                    f"for {ALIGN_S:.0f} seconds.{box_only}")]
 
     def _align_step(self) -> list[dict]:
         cal = self._align
@@ -892,10 +893,15 @@ class Session:
             return [say("The star didn't drift enough to measure. Tap Align and wait the full "
                         f"{ALIGN_S:.0f} seconds without touching the scope.")]
         w, h = cal["finder_size"]
-        east, north = finder_offset_to_sky(fit.center[0] - w / 2, fit.center[1] - h / 2, cal["sol"], w)
-        self.centerer.offset = sky_offset_to_altaz(cal["sol"], east, north, self.site, self.clock())
         self.main_box = box_on_finder_view(fit, cal["main_size"], (w, h), ROTATE["finder"])
         self.main_in_finder = fit
+        if cal["sol"] is None:  # no solve: the box from the drift alone, Go to's aim unchanged
+            self._save_calibration()
+            return [say(f"Box moved: the main camera's view is on the finder view, turned "
+                        f"{fit.rotation_deg:.0f} degrees. Go to keeps its old aim until an Align "
+                        "with the finder seeing clear sky.")]
+        east, north = finder_offset_to_sky(fit.center[0] - w / 2, fit.center[1] - h / 2, cal["sol"], w)
+        self.centerer.offset = sky_offset_to_altaz(cal["sol"], east, north, self.site, self.clock())
         self._save_calibration()
         return [say(f"Aligned. The main camera points {np.hypot(east, north) * 60:.0f} arcminutes "
                     f"from the finder's center, turned {fit.rotation_deg:.0f} degrees. Its box is "

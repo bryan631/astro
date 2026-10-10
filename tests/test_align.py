@@ -178,12 +178,20 @@ class FakeFinder:
         return 1, None
 
 
-def test_align_button_fits_the_main_camera_onto_the_finder(monkeypatch, tmp_path):
+class CloudedFinder(FakeFinder):
+    def sync(self, fresh=False):
+        return False, "I only see a star or two."
+
+
+@pytest.mark.parametrize("clear", [True, False])
+def test_align_button_fits_the_main_camera_onto_the_finder(monkeypatch, tmp_path, clear):
+    """Without a plate solve (clouds), Align still moves the box; Go to keeps its old aim."""
     monkeypatch.setattr(session_module, "ALIGN_S", 2.5)
     start = time.monotonic()
     finder_cam, main_cam = ThreadStream(DriftingSky(False, start)), ThreadStream(DriftingSky(True, start))
     s = Session(Site(26.6, -80.1), clock=lambda: datetime(2026, 10, 10, 2, 0, tzinfo=UTC),
-                finder=FakeFinder(finder_cam), main_camera=main_cam, main_sensor=(1000, 600),
+                finder=(FakeFinder if clear else CloudedFinder)(finder_cam), main_camera=main_cam,
+                main_sensor=(1000, 600),
                 data_dir=tmp_path)
     finder_cam.capture(), main_cam.capture()  # both streaming
     assert "Aligning" in s.action("align")[0]["text"]
@@ -191,10 +199,10 @@ def test_align_button_fits_the_main_camera_onto_the_finder(monkeypatch, tmp_path
     while not said and time.monotonic() - start < 10:
         said = [m["text"] for m in s.tick(0.0) if m["type"] == "say"]
         time.sleep(0.05)
-    assert said and said[0].startswith("Aligned"), said
+    assert said and said[0].startswith("Aligned" if clear else "Box moved"), said
     fit = s.main_in_finder
     assert np.allclose(fit.center, C, atol=1.5) and fit.rotation_deg == pytest.approx(10, abs=1.5)
     assert fit.scale == pytest.approx(20, rel=0.05)
-    assert s.main_box and s.centerer.offset.observations == 1
+    assert s.main_box and s.centerer.offset.observations == (1 if clear else 0)
     assert s.calibration()["main_in_finder"]["center"] == pytest.approx(list(fit.center))
     finder_cam.close(), main_cam.close()
