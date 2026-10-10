@@ -346,7 +346,9 @@ async function pollView() {
         document.getElementById("camimg").src = url;
         if (camUrl) URL.revokeObjectURL(camUrl);
         camUrl = url;
-        if (!videoOn) document.getElementById("camcap").textContent = `${what}: frame ${r.headers.get("X-Frame-Age")} s old`;
+        const age = Number(r.headers.get("X-Frame-Age"));  // a stopped video says so, not just freezes
+        document.getElementById("camcap").textContent = videoOn && age < 3 ? `${what}: live video`
+          : `${what}: frame ${age.toFixed(0)} s old${videoOn ? " (video stopped: tap the camera again)" : ""}`;
       } else if (!r.ok) {
         const why = (await r.json().catch(() => ({}))).detail || "no frame yet";
         document.getElementById("camcap").textContent = `${what}: ${why}`;
