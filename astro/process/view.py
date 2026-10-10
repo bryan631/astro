@@ -3,13 +3,25 @@ import io
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+from scipy import ndimage
 
 from astro.capture.focus import laplacian_variance
 from astro.process.planet import superpixel_rgb
 
 MAX_WIDTH = 960
 DAY_MEDIAN = 50  # 8-bit: a typical pixel this bright is no night sky
+HOT_SIGMA = 4  # this far above all its neighbors (in noise units) is a hot pixel, not a star
 MIN_RANGE = 40  # 8-bit counts: a dark frame stays dark instead of stretching its noise to full scale
+
+
+def remove_hot_pixels(rgb: np.ndarray) -> np.ndarray:
+    """Hot pixels look like stars that never move. A star spreads over several pixels; a hot
+    pixel is one bright pixel with dark neighbors, so it gets its brightest neighbor's value."""
+    ring = np.ones((3, 3, 1), bool)
+    ring[1, 1, 0] = False
+    neighbors = ndimage.maximum_filter(rgb, footprint=ring)
+    noise = np.std(rgb[::8, ::8]) + 1e-6  # a sample is plenty
+    return np.where(rgb - neighbors > HOT_SIGMA * noise, neighbors, rgb)
 
 
 def jpeg(raw: np.ndarray, bayer: str, zoom: int = 1) -> bytes:
@@ -18,7 +30,7 @@ def jpeg(raw: np.ndarray, bayer: str, zoom: int = 1) -> bytes:
     h, w = raw.shape[0] // 2 * 2, raw.shape[1] // 2 * 2
     ch, cw = h // zoom // 2 * 2, w // zoom // 2 * 2
     y, x = (h - ch) // 4 * 2, (w - cw) // 4 * 2  # even offsets keep the Bayer pattern
-    rgb = superpixel_rgb(raw[y:y + ch, x:x + cw], bayer)
+    rgb = remove_hot_pixels(superpixel_rgb(raw[y:y + ch, x:x + cw], bayer).astype(float))
     sharpness = laplacian_variance(rgb.mean(axis=2))
     lo = np.percentile(rgb, 50)  # the sky background is the typical pixel
     if lo > DAY_MEDIAN:  # day mode (a room or daylight): show it as it is, no sky stretch
