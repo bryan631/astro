@@ -173,10 +173,18 @@ document.getElementById("typed").onsubmit = e => {
 };
 // Stop: ends whatever is going on (focus, guidance, a picture, video), same as saying "stop".
 document.getElementById("bigstop").onclick = () => { stopAudio(); send("stop"); };
+// Tapping a picture shows it big in the live-stack viewer, with its buttons. (Opening it in a
+// new window crashed the installed app.)
+document.getElementById("gallery").onclick = e => {
+  if (e.target.tagName !== "IMG") return;
+  document.getElementById("live").src = e.target.src;
+  document.getElementById("livebox").hidden = false;
+  document.getElementById("livebox").scrollIntoView({behavior: "smooth"});
+};
 async function showPictures() {
   const box = document.getElementById("gallery");
   const urls = demo ? DEMO_PICTURES : (await (await fetch("/gallery")).json()).map(f => `/pictures/${f}`);
-  box.innerHTML = urls.length ? urls.map(u => `<a href="${u}" target="_blank"><img src="${u}" alt="${u}"></a>`).join("")
+  box.innerHTML = urls.length ? urls.map(u => `<img src="${u}" alt="${u}">`).join("")
                                : "<p>No pictures yet.</p>";
   box.hidden = false;
 }
