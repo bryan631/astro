@@ -58,6 +58,7 @@
   #live { width: 100%; display: block; transform-origin: center; }
   #livectl { text-align: center; margin-top: 6px; }
   #gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; width: 100%; max-width: 900px; }
+  #gallery button { padding: 0; border: 0; background: none; }
   #gallery img { width: 100%; border: 2px solid var(--dim); border-radius: 12px; }
   body.on-target:not(.day) #arrow { color: var(--fg); }
 </style>
@@ -176,15 +177,16 @@ document.getElementById("bigstop").onclick = () => { stopAudio(); send("stop"); 
 // Tapping a picture shows it big in the live-stack viewer, with its buttons. (Opening it in a
 // new window crashed the installed app.)
 document.getElementById("gallery").onclick = e => {
-  if (e.target.tagName !== "IMG") return;
-  document.getElementById("live").src = e.target.src;
+  const img = e.target.closest("button")?.querySelector("img");
+  if (!img) return;
+  document.getElementById("live").src = img.src;
   document.getElementById("livebox").hidden = false;
   document.getElementById("livebox").scrollIntoView({behavior: "smooth"});
 };
 async function showPictures() {
   const box = document.getElementById("gallery");
   const urls = demo ? DEMO_PICTURES : (await (await fetch("/gallery")).json()).map(f => `/pictures/${f}`);
-  box.innerHTML = urls.length ? urls.map(u => `<img src="${u}" alt="${u}">`).join("")
+  box.innerHTML = urls.length ? urls.map(u => `<button><img src="${u}" alt="${u}"></button>`).join("")
                                : "<p>No pictures yet.</p>";
   box.hidden = false;
 }
