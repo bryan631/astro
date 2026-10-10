@@ -20,6 +20,7 @@ from astropy.coordinates import SkyCoord, get_body
 from astro import calibration_store
 from astro.capture.collimation import CENTERED as COLLIMATED
 from astro.capture.collimation import CollimationCoach, Donut, analyze
+from astro.capture.exposure import next_settings
 from astro.capture.live_stacker import LiveStacker
 from astro.capture.recorder import CaptureRefused, Recorder, prune
 from astro.capture.roi import brightest_blob, roi_around
@@ -67,6 +68,11 @@ ENCODER_STALE_S = 1.0  # encoder positions older than this mean the board or cab
 # Guidance "on target" tolerance. 4' kept the user nudging in the field (encoder steps are 2.3');
 # 8' still lands the target well inside the main camera's 32' x 18' view.
 ALIGN_S = 10.0  # Align watches the bright star drift this long in both cameras
+# By day the finder's view auto-exposes; the main camera gets fixed daylight settings (every
+# exposure change reopens it in the SDK, which froze its view in the field). At night both go
+# back to the settings their streams started with (the finder's are the plate solver's).
+MAIN_DAY = (0.004, 0)  # measured on a sunny tree
+DAY_EXPOSURE_EVERY_S = 1.0
 TOLERANCE_ARCMIN = 8.0
 TOLERANCE_BARLOW_ARCMIN = 4.0  # half that with the 2x Barlow (half the field)
 MOON_FEATURES = {f.name: f for f in FEATURES}  # pointing at one means pointing at the Moon
@@ -165,6 +171,11 @@ class Session:
         self._progress_at, self._capture_at = -1e9, 0.0  # capture progress messages
         self._capture_radec = (0.0, 0.0)  # where a capture began (Recenter's target if unnamed)
         self._recentering = False  # a paused capture: guidance leads back to its target
+        self._light: bool | None = None  # daytime when the camera settings were last switched
+        self._night = {name: (cam.exposure_s, cam.gain) for name, cam in
+                       (("finder", getattr(finder, "camera", None)), ("main", main_camera))
+                       if hasattr(cam, "latest")}  # streamed cameras: the page's views
+        self._day_exposure_at, self._finder_seen = -1e9, None
         # G3: which way "right" turns the scope, learned from the first left/right push.
         self.right_is_plus_az = True
         self._direction_learner = DirectionLearner()
@@ -633,6 +644,7 @@ class Session:
         return kept
 
     def _tick(self, t: float) -> list[dict]:
+        self._daylight_settings(t)
         if self._align is not None:
             return self._align_step()
         rec = self.recorder.current if self.recorder else None
@@ -695,6 +707,33 @@ class Session:
                 self.centerer.restart(self.altaz_of(self.target))  # true, uncorrected target
                 self._center_limiter = CueLimiter()
         return out
+
+    def _daylight_settings(self, t: float) -> None:
+        """Day or night camera settings, and the finder's daylight auto-exposure (streamed
+        cameras only: those are the views the page shows)."""
+        if t - self._day_exposure_at < DAY_EXPOSURE_EVERY_S:
+            return
+        self._day_exposure_at = t
+        cams = {n: c for n in ("finder", "main") if hasattr(c := self.camera(n), "latest")}
+        if not cams:
+            return
+        day = self.daytime()
+        if day != self._light:
+            self._light = day
+            for name, cam in cams.items():
+                if name == "main" and self._camera_busy():
+                    continue  # a capture set its own; the next switch catches up
+                exposure, gain = MAIN_DAY if day and name == "main" else self._night[name]
+                cam.set_exposure(exposure)
+                cam.set_gain(gain)
+        finder = cams.get("finder")
+        if day and finder is not None and self._align is None:
+            frame, seq, _ = finder.latest()
+            if frame is not None and seq != self._finder_seen:
+                self._finder_seen = seq
+                if (new := next_settings(frame, finder.exposure_s, finder.gain)) is not None:
+                    finder.set_exposure(new[0])
+                    finder.set_gain(new[1])
 
     def _hold_for_fix(self) -> list[dict] | None:
         """Plate solving only: while the fix is stale (the scope is moving), don't steer by it.
