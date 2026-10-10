@@ -309,11 +309,15 @@ $("more").onclick = async () => {
 };
 const formatDebug = info => Object.entries(info).map(([section, vals]) => section.toUpperCase() + "\n" +
   Object.entries(vals).map(([k, v]) => `  ${k}: ${JSON.stringify(v)}`).join("\n")).join("\n\n");
-$("mode").onclick = e => {
-  e.target.textContent = document.body.classList.toggle("day") ? "Night mode" : "Day mode";
-  for (const [name, v] of Object.entries(views))  // keep each view's own brightness
-    v.el.querySelector("img.cam").style.setProperty("--b", (document.body.classList.contains("day") ? 1 : .6) * v.b);
-};
+function setDay(day) {  // remembered on this tablet, so a reload keeps it
+  document.body.classList.toggle("day", day);
+  $("mode").textContent = day ? "Night mode" : "Day mode";
+  for (const v of Object.values(views))  // keep each view's own brightness
+    v.el.querySelector("img.cam").style.setProperty("--b", (day ? 1 : .6) * v.b);
+  try { localStorage.setItem("day", day ? "1" : ""); } catch {}
+}
+$("mode").onclick = () => setDay(!document.body.classList.contains("day"));
+try { if (localStorage.getItem("day")) setDay(true); } catch {}
 
 // --- pictures: a grid; tapping one opens it in the viewer (a new window crashed the installed app).
 const demo = new URLSearchParams(location.search).get("demo");
