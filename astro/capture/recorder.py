@@ -26,7 +26,7 @@ def safe_name(name: str) -> str:
 
 ROI_PX = 512  # the smallest planet ROI, sensor pixels (room for the seeing and the drift)
 MOON_REACH_PX = 1400  # moons this far from the planet join the ROI (Callisto: ~10' at 0.5"/px)
-MAX_ROI_PIXELS = 2048 * 512  # the farthest moons drop out past this (disk space, frame rate)
+MAX_ROI_PIXELS = 2048 * 640  # the farthest moons drop out past this (disk space, frame rate)
 RECENTER_EVERY = 50  # frames between drift checks
 RECENTER_FRACTION = 0.25  # re-center when the planet drifts this far from the ROI center
 EDGE_EVERY = 10  # frames between planet positions for the edge clock (a blob search is cheap)
@@ -129,18 +129,22 @@ class Recorder:
         return roi
 
     def _roi_with_moons(self, planet, moons: list) -> Roi:
-        """The smallest ROI_PX box around the planet, grown to take in its moons (brightest
-        first, while it stays under MAX_ROI_PIXELS); remembers where the planet sits in it."""
+        """The ROI_PX box around the planet, grown to take in its moons (brightest first, while
+        it stays under MAX_ROI_PIXELS), with ROI_PX / 2 to spare around the planet and each
+        moon: the planet drifts up to the recenter threshold before the ROI follows it.
+        Remembers where the planet sits in it."""
+        def box(pts):
+            xs, ys = zip(*pts, strict=True)
+            return (max(max(xs) - min(xs) + ROI_PX, ROI_PX), max(max(ys) - min(ys) + ROI_PX, ROI_PX),
+                    (max(xs) + min(xs)) / 2, (max(ys) + min(ys)) / 2)
         pts = [planet]
         for moon in moons:
-            xs, ys = zip(*pts, moon, strict=True)
-            if (max(xs) - min(xs) + ROI_PX / 2) * (max(ys) - min(ys) + ROI_PX / 2) > MAX_ROI_PIXELS:
+            w, h, _, _ = box([*pts, moon])
+            if w * h > MAX_ROI_PIXELS:
                 break
             pts.append(moon)
-        xs, ys = zip(*pts, strict=True)
-        w = max(max(xs) - min(xs) + ROI_PX / 2, ROI_PX)  # ROI_PX / 4 to spare on each side
-        h = max(max(ys) - min(ys) + ROI_PX / 2, ROI_PX)
-        roi = roi_around(((max(xs) + min(xs)) / 2, (max(ys) + min(ys)) / 2), int(w), self.sensor, int(h))
+        w, h, cx, cy = box(pts)
+        roi = roi_around((cx, cy), int(w), self.sensor, int(h))
         self._planet_in_roi = (planet[0] - roi.x, planet[1] - roi.y)
         return roi
 

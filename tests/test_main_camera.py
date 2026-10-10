@@ -75,6 +75,17 @@ def test_capture_asks_which_one_when_it_sees_more_than_one(tmp_path):
     s.recorder.current.done.wait(5)
 
 
+def test_what_to_capture_names_the_disk_and_keeps_a_moon_feature(tmp_path):
+    s, _ = make_session(tmp_path)
+    disk = np.zeros((1080, 1920), np.uint8)
+    disk[400:600, 800:1000] = 255
+    s.camera_frame = lambda name: (disk, "GRBG", 0.1)
+    assert s._what_to_capture() == ["Saturn"]  # the pointing names the disk
+    s._planet_in_view = lambda: "Moon"
+    s.target = "Tycho"
+    assert s._what_to_capture() == ["Tycho"]  # Go to Tycho, then Capture: still Tycho
+
+
 def test_view_shows_the_whole_field_while_a_planet_records_its_roi(tmp_path):
     s, _ = make_session(tmp_path)
     s.recorder.background = np.zeros((1080, 1920), np.uint8)

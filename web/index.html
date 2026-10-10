@@ -309,7 +309,7 @@ function showCapture(m) {
   if (xy) {  // the live stack sits in the corner away from the target, and jumps as it drifts
     const left = xy[0] > .5, top = xy[1] > .5;
     Object.assign($("inset").style, {left: left ? "8px" : "auto", right: left ? "auto" : "8px",
-                                     top: top ? "50px" : "auto", bottom: top ? "auto" : "50px"});
+                                     top: top ? "50px" : "auto", bottom: top ? "auto" : "90px"});  // clear of the capture line
   }
 }
 

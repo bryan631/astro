@@ -25,12 +25,12 @@ def brightest_blob(frame: np.ndarray) -> tuple[float, float] | None:
 def roi_around(center: tuple[float, float], size: int, sensor: tuple[int, int],
                height: int | None = None) -> Roi:
     """ROI centered on `center` (square unless `height`), clamped to the sensor (w, h), on even
-    pixels for Bayer."""
+    pixels for Bayer, width a multiple of 8 (the SVBony SDK refuses others)."""
     w, h = sensor
     if height is None:
-        rw = rh = min(size, w, h) & ~1  # a small sensor gets a smaller ROI, never one past its edge
+        rw = rh = min(size, w, h) & ~7  # a small sensor gets a smaller ROI, never one past its edge
     else:
-        rw, rh = min(size, w) & ~1, min(height, h) & ~1
+        rw, rh = min(size, w) & ~7, min(height, h) & ~1
     x = int(min(max(center[0] - rw / 2, 0), w - rw)) & ~1
     y = int(min(max(center[1] - rh / 2, 0), h - rh)) & ~1
     return Roi(x, y, rw, rh)
@@ -39,7 +39,7 @@ def roi_around(center: tuple[float, float], size: int, sensor: tuple[int, int],
 def companions(frame: np.ndarray, planet: tuple[float, float], reach: float) -> list[tuple[float, float]]:
     """Point sources within `reach` px of a planet, brightest first: Jupiter's moons, Titan.
     Small blobs well above the sky, not the planet's own blob."""
-    img = ndimage.uniform_filter(frame.astype(np.float32), 3)
+    img = ndimage.uniform_filter(ndimage.median_filter(frame, 3).astype(np.float32), 3)  # no hot pixels
     bg = float(np.median(img[::4, ::4]))
     noise = max(1.4826 * float(np.median(np.abs(img[::4, ::4] - bg))), 0.5)
     labels, n = ndimage.label(img > bg + COMPANION_SIGMA * noise)

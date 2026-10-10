@@ -308,8 +308,8 @@ class Session:
             if do == "goto":
                 name = match_name(target or "", self.names())
                 return self.goto(name) if name else [say(f"I don't know {target}.")]
-            if do == "capture" and target and not self._camera_busy():  # picked from "which one?"
-                return self.capture(target)
+            if do == "capture" and target:  # picked from "which one?": never a stop
+                return self.capture(target) if not self._camera_busy() else [notice("Already capturing.")]
             handler = {"capture": self._toggle_capture, "stop": self._stop, "sync": self.sync,
                        "focus": self.focus_hint, "recenter": self._recenter,
                        "align": self.align}.get(do)
@@ -499,6 +499,8 @@ class Session:
                       if separation_deg(alt, az, a, z) < FIELD_RADIUS_DEG]
         if UNNAMED_PLANET in found and len(found) > 1 and any(f in EXTENDED_TARGETS for f in found):
             found.remove(UNNAMED_PLANET)  # the disk is the planet named by the pointing
+        if self.target in MOON_FEATURES and "Moon" in found:  # Go to Tycho, then Capture: Tycho
+            found[found.index("Moon")] = self.target
         return list(dict.fromkeys(found))
 
     def _planet_in_view(self) -> str | None:
@@ -616,15 +618,15 @@ class Session:
         pasted into the full live view from just before, so the whole field stays on screen."""
         frame = self.camera_frame(name)
         rec = self.recorder if name == "main" else None
-        if frame is None or rec is None or rec.background is None or rec.roi is None:
+        bg, roi = (rec.background, rec.roi) if rec else (None, None)  # once: the recorder clears them
+        if frame is None or bg is None or roi is None:
             return frame
         raw, bayer, age = frame
-        roi = rec.roi
-        bh, bw = rec.background.shape
+        bh, bw = bg.shape
         if raw.shape != (roi.height, roi.width) or raw.shape == (bh, bw) or roi.x + roi.width > bw \
                 or roi.y + roi.height > bh:
             return frame  # paused (whole field), a frame from before the ROI changed, or no fit
-        full = rec.background.copy()
+        full = bg.copy()
         full[roi.y:roi.y + roi.height, roi.x:roi.x + roi.width] = raw
         return full, bayer, age
 
