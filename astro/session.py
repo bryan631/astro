@@ -48,6 +48,7 @@ from astro.pointing.align import (
 from astro.pointing.coords import Site, altaz_to_radec, body_altaz, radec_to_altaz
 from astro.pointing.finder_sync import FinderSync
 from astro.pointing.geometry import separation_deg
+from astro.pointing.labels import altaz_now, load_stars, place, tube_map
 from astro.pointing.main_offset import MainOffset
 from astro.pointing.platesolve import finder_gray
 from astro.process.planet import MIN_FRAMES, StackResult, process_ser
@@ -68,6 +69,7 @@ ENCODER_STALE_S = 1.0  # encoder positions older than this mean the board or cab
 # Guidance "on target" tolerance. 4' kept the user nudging in the field (encoder steps are 2.3');
 # 8' still lands the target well inside the main camera's 32' x 18' view.
 ALIGN_S = 10.0  # Align watches the bright star drift this long in both cameras
+LABELS_REFRESH_S = 5.0  # the sky turns ~0.02 degrees in 5 s: under 2 finder pixels
 # By day the finder's view auto-exposes; the main camera gets fixed daylight settings (every
 # exposure change reopens it in the SDK, which froze its view in the field). At night both go
 # back to the settings their streams started with (the finder's are the plate solver's).
@@ -144,6 +146,8 @@ class Session:
         self._resolved_at = -1e9
         self._last_said, self._last_said_at = "", -1e9  # tick speech, for _no_repeats
         self._collimation: CollimationCoach | None = None
+        self._labels: dict | None = None  # finder_labels' cache: the solve's map, objects' alt-az
+        self._label_catalog: tuple | None = None
         self._collimation_at = -1e9
         self.main_camera, self.main_sensor = main_camera, main_sensor
         self.zoom = {"finder": 1, "main": 1}  # the page's digital zoom per camera view
@@ -537,6 +541,42 @@ class Session:
         if cam is None or getattr(cam, "last", None) is None:
             return None
         return cam.last, cam.bayer, time.monotonic() - cam.last_at
+
+    def finder_labels(self) -> list[list]:
+        """Names on the finder view, [[name, kind, x, y], ...] with x, y as fractions from the
+        view's center (kind: star, target or planet), from the last plate solve's map and where
+        the finder points now (astro/pointing/labels.py). Empty until the first solve."""
+        sol = getattr(self.finder, "last_solution", None)
+        frame = self.camera_frame("finder")
+        if sol is None or frame is None:
+            return []
+        h, w = frame[0].shape
+        c, now = self._labels, time.monotonic()
+        if c is None or c["sol"] is not sol or now - c["at"] > LABELS_REFRESH_S:
+            when = self.clock()
+            m = c["m"] if c and c["sol"] is sol else tube_map(sol, w, self.site, when)  # at its solve
+            names, kinds, ra, dec = self._label_objects()
+            alt, az = altaz_now(ra, dec, self.site, when)
+            bodies = [*PLANETS, "moon"]
+            body = np.array([body_altaz(b, self.site, when) for b in bodies])
+            c = self._labels = {"sol": sol, "m": m, "at": now,
+                                "names": names + [b.capitalize() for b in bodies],
+                                "kinds": kinds + ["planet"] * len(bodies),
+                                "alt": np.r_[alt, body[:, 0]], "az": np.r_[az, body[:, 1]]}
+        x, y, on = place(c["alt"], c["az"], self.finder.position(), c["m"], (w, h))
+        sign = -1 if ROTATE["finder"] == 180 else 1  # the view is turned like the picture
+        return [[c["names"][i], c["kinds"][i], round(sign * (x[i] / w - 0.5), 4),
+                 round(sign * (y[i] / h - 0.5), 4)] for i in np.flatnonzero(on & (c["alt"] > 0))]
+
+    def _label_objects(self) -> tuple[list[str], list[str], np.ndarray, np.ndarray]:
+        """The fixed objects to name: stars, then Go to targets (by catalog id)."""
+        if self._label_catalog is None:
+            stars, ra, dec = load_stars()
+            targets = list({t.id: t for t in self.catalog.values()}.values())
+            self._label_catalog = (stars + [t.id for t in targets],
+                                   ["star"] * len(stars) + ["target"] * len(targets),
+                                   np.r_[ra, [t.ra for t in targets]], np.r_[dec, [t.dec for t in targets]])
+        return self._label_catalog
 
     def adjust_camera(self, name: str, zoom: int | None = None) -> None:
         """The page's digital zoom for a camera view (brightness is the page's own)."""

@@ -50,6 +50,10 @@
   body.focusing .focus b { font-size: 64px; }
   .ctl { position: absolute; right: 6px; bottom: 6px; display: flex; gap: 6px; }
   .ctl button { padding: 4px 10px; font-size: 16px; border-radius: 8px; }
+  .names { position: absolute; inset: 0; }  /* star names beside the stars (Names button) */
+  .names span { position: absolute; transform: translate(7px, -50%); font-size: 13px; white-space: nowrap;
+                opacity: .8; text-shadow: 0 0 3px #000, 0 0 3px #000; }
+  .names .target, .names .planet { color: var(--hi); font-weight: bold; opacity: 1; }
   #arrow { position: absolute; font-size: 140px; line-height: 1; opacity: .85; pointer-events: none;
            transition: transform .2s; text-shadow: 0 0 8px #000; }
   #dist { position: absolute; bottom: 40px; font-size: 32px; text-shadow: 0 0 6px #000; }
@@ -94,11 +98,11 @@
   <div id="views">
     <div class="view" id="v-finder">
       <img class="cam" alt="finder camera">
-      <div class="frame"><svg viewBox="-0.5 -0.5 1 1" preserveAspectRatio="none"><polygon id="mainbox"/></svg></div>
+      <div class="frame"><div class="names"></div><svg viewBox="-0.5 -0.5 1 1" preserveAspectRatio="none"><polygon id="mainbox"/></svg></div>
       <div class="label">Finder<span class="swap"> ⇄</span></div><div class="focus"><b></b><small></small><canvas width="160" height="40"></canvas></div>
       <div id="arrow" hidden></div><div id="dist"></div>
       <div class="cap"></div>
-      <div class="ctl"><button data-b="-">−</button><button data-b="+">+</button><button data-z>1x</button></div>
+      <div class="ctl"><button id="names">Names</button><button data-b="-">−</button><button data-b="+">+</button><button data-z>1x</button></div>
     </div>
     <div class="view" id="v-main">
       <img class="cam" alt="main camera">
@@ -184,7 +188,8 @@ async function viewLoop(name) {
   let seq = 0;
   for (;;) {
     try {
-      const r = await fetch(`/api/camera/${name}.jpg?after=${seq}`, {cache: "no-store"});
+      const labels = name === "finder" && namesOn ? "&labels=1" : "";
+      const r = await fetch(`/api/camera/${name}.jpg?after=${seq}${labels}`, {cache: "no-store"});
       const age = Number(r.headers.get("X-Frame-Age"));
       if (r.status === 200) {
         seq = Number(r.headers.get("X-Seq")) || seq;
@@ -192,6 +197,7 @@ async function viewLoop(name) {
         img.onload = () => { fit(name); URL.revokeObjectURL(url); };
         img.src = url;
         showFocus(name, r.headers.get("X-Focus"), r.headers.get("X-Stars"), r.headers.get("X-Focus-Mode"));
+        if (name === "finder") drawNames(JSON.parse(r.headers.get("X-Labels") || "[]"));
         cap.textContent = age > 3 ? `frame ${age.toFixed(0)} s old` : "";
       } else if (r.status === 204) {
         cap.textContent = `no new frame for ${age.toFixed(0)} s`;
@@ -236,6 +242,24 @@ document.querySelectorAll(".view").forEach(el => {
                             wsSend(JSON.stringify({type: "camera", camera: name, zoom: v.zoom})); drawMainBox(); }
   });
 });
+
+// Star, planet and target names on the finder view, from the last plate solve and the encoders
+// (Session.finder_labels): [name, kind, x, y], x and y fractions from the view's center.
+let namesOn = false;
+const esc = t => t.replace(/[&<>]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;"})[c]);
+function drawNames(labels) {
+  const z = views.finder.zoom;
+  views.finder.el.querySelector(".names").innerHTML = labels
+    .map(([n, kind, x, y]) => [n, kind, x * z, y * z]).filter(([, , x, y]) => Math.abs(x) < .5 && Math.abs(y) < .5)
+    .map(([n, kind, x, y]) => `<span class="${kind}" style="left:${(x + .5) * 100}%;top:${(y + .5) * 100}%">${esc(n)}</span>`).join("");
+}
+function setNames(on) {  // remembered on this tablet
+  namesOn = on; $("names").classList.toggle("on", on);
+  if (!on) drawNames([]);
+  try { localStorage.setItem("names", on ? "1" : ""); } catch {}
+}
+$("names").onclick = () => setNames(!namesOn);
+try { if (localStorage.getItem("names")) setNames(true); } catch {}
 
 // The main camera's field on the finder view (Align measures it), scaled with the finder's zoom.
 let mainBox = null;
