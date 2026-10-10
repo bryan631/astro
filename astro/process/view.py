@@ -40,9 +40,8 @@ def render(raw: np.ndarray, bayer: str, zoom: int = 1, rotate: int = 180) -> tup
     rgb = remove_hot_pixels(superpixel_rgb(raw[y:y + ch, x:x + cw], bayer).astype(np.float32))
     lum = rgb.mean(axis=2)
     lo = float(np.percentile(lum, 50))  # the sky background is the typical pixel
-    focus = measure_focus(lum) if lo <= DAY_MEDIAN else None  # a night-sky number
-    metrics = {"focus": focus.score if focus else None, "stars": focus.stars if focus else 0,
-               "focus_mode": focus.mode if focus else "none"}
+    focus = measure_focus(lum)  # also through bright cloud glow (it measures from the sky level)
+    metrics = {"focus": focus.score, "stars": focus.stars, "focus_mode": focus.mode}
     while rgb.shape[1] > 2 * MAX_WIDTH:  # display needs no more than this
         rgb = _bin2(rgb)
     if lo > DAY_MEDIAN:  # day mode (a room or daylight): show it as it is, no sky stretch
