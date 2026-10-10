@@ -5,6 +5,7 @@ import numpy as np
 from PIL import Image
 from scipy import ndimage
 
+from astro.capture.focus import measure_focus
 from astro.process.planet import superpixel_rgb
 
 MAX_WIDTH = 960
@@ -14,18 +15,6 @@ ROTATE = {"finder": 180, "main": 0}
 DAY_MEDIAN = 50  # 8-bit: a typical pixel this bright is no night sky
 HOT_SIGMA = 4  # this far above all its neighbors (in noise units) is a hot pixel, not a star
 MIN_RANGE = 40  # 8-bit counts: a dark frame stays dark instead of stretching its noise to full scale
-
-
-def focus_score(lum: np.ndarray) -> float:
-    """Percent of the brightest object's light within 2 px of its peak (of a 15 px box): higher
-    is sharper, whatever the brightness or exposure. For stars and planets alike."""
-    smooth = ndimage.uniform_filter(lum, 3)
-    y, x = np.unravel_index(np.argmax(smooth), smooth.shape)
-    box = lum[max(y - 7, 0):y + 8, max(x - 7, 0):x + 8]
-    box = box - np.median(lum)  # sky background off
-    core = lum[max(y - 2, 0):y + 3, max(x - 2, 0):x + 3] - np.median(lum)
-    total = box.clip(0).sum()
-    return 100 * core.clip(0).sum() / total if total > 0 else 0.0
 
 
 def remove_hot_pixels(rgb: np.ndarray) -> np.ndarray:
@@ -39,7 +28,8 @@ def remove_hot_pixels(rgb: np.ndarray) -> np.ndarray:
 
 
 def render(raw: np.ndarray, bayer: str, zoom: int = 1, rotate: int = 180) -> tuple[bytes, dict]:
-    """A raw frame as a JPEG for a camera view, and its numbers: {"focus": higher is sharper}.
+    """A raw frame as a JPEG for a camera view, and its numbers: focus (higher is sharper, see
+    astro/capture/focus.py measure_focus), stars measured, focus_mode (stars, planet, none).
 
     Turned by `rotate` degrees (ROTATE: each camera as mounted) so the page shows it upright;
     `zoom` crops the center. The page draws its own labels over the picture. Big frames are
@@ -50,7 +40,9 @@ def render(raw: np.ndarray, bayer: str, zoom: int = 1, rotate: int = 180) -> tup
     rgb = remove_hot_pixels(superpixel_rgb(raw[y:y + ch, x:x + cw], bayer).astype(np.float32))
     lum = rgb.mean(axis=2)
     lo = float(np.percentile(lum, 50))  # the sky background is the typical pixel
-    metrics = {"focus": None if lo > DAY_MEDIAN else focus_score(lum)}  # stars only at night
+    focus = measure_focus(lum) if lo <= DAY_MEDIAN else None  # a night-sky number
+    metrics = {"focus": focus.score if focus else None, "stars": focus.stars if focus else 0,
+               "focus_mode": focus.mode if focus else "none"}
     while rgb.shape[1] > 2 * MAX_WIDTH:  # display needs no more than this
         rgb = _bin2(rgb)
     if lo > DAY_MEDIAN:  # day mode (a room or daylight): show it as it is, no sky stretch

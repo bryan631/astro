@@ -38,7 +38,8 @@
   .cap { position: absolute; left: 8px; bottom: 6px; font-size: 15px; opacity: .85; text-shadow: 0 0 4px #000; }
   .focus { position: absolute; right: 10px; top: 6px; text-align: right; text-shadow: 0 0 4px #000; }
   .focus b { font-size: 34px; } .focus canvas { display: block; margin-left: auto; }
-  body:not(.focusing) .focus canvas, body:not(.focusing) .focus small { display: none; }
+  .focus small { display: block; font-size: 15px; }
+  body:not(.focusing) .focus canvas { display: none; }
   body.focusing .focus b { font-size: 64px; }
   .ctl { position: absolute; right: 6px; bottom: 6px; display: flex; gap: 6px; }
   .ctl button { padding: 4px 10px; font-size: 16px; border-radius: 8px; }
@@ -162,7 +163,7 @@ async function viewLoop(name) {
         const url = URL.createObjectURL(await r.blob());
         img.onload = () => { fit(name); URL.revokeObjectURL(url); };
         img.src = url;
-        showFocus(name, r.headers.get("X-Focus"));
+        showFocus(name, r.headers.get("X-Focus"), r.headers.get("X-Stars"), r.headers.get("X-Focus-Mode"));
         cap.textContent = age > 3 ? `frame ${age.toFixed(0)} s old` : "";
       } else if (r.status === 204) {
         cap.textContent = `no new frame for ${age.toFixed(0)} s`;
@@ -179,14 +180,14 @@ function fit(name) {  // the overlay frame covers the picture exactly, wherever 
                           width: `${img.offsetWidth}px`, height: `${img.offsetHeight}px`});
 }
 addEventListener("resize", () => { fit("finder"); fit("main"); });
-function showFocus(name, value) {  // higher is sharper: turn the focuser to maximize it
+function showFocus(name, value, stars, mode) {  // higher is sharper: turn the focuser to maximize it
   const v = views[name], box = v.el.querySelector(".focus");
-  if (value === null) { box.querySelector("b").textContent = ""; return; }
+  if (value === null) { box.querySelector("b").textContent = ""; box.querySelector("small").textContent = ""; return; }
   const x = Number(value);
   v.focus.push(x); if (v.focus.length > 60) v.focus.shift();
   const best = Math.max(...v.focus);
   box.querySelector("b").textContent = `focus ${x.toFixed(0)}`;
-  box.querySelector("small").textContent = ` best ${best.toFixed(0)}`;
+  box.querySelector("small").textContent = `${mode === "planet" ? "edge" : `${stars} stars`} · best ${best.toFixed(0)}`;
   const c = box.querySelector("canvas"), g = c.getContext("2d"), lo = Math.min(...v.focus);
   g.clearRect(0, 0, c.width, c.height); g.strokeStyle = getComputedStyle(document.body).color; g.beginPath();
   v.focus.forEach((f, i) => { const px = i * c.width / 59, py = c.height - 2 - (f - lo) / Math.max(best - lo, 1e-6) * (c.height - 4);

@@ -495,7 +495,7 @@ async def api_camera(name: str, after: int = 0) -> Response:
     """The camera's newest frame as a JPEG. `after`: the frame number the page already shows;
     the request waits (up to FRAME_WAIT_S) for a newer one, so each view is a simple loop of
     requests that never re-downloads a frame. Headers: X-Seq (frame number), X-Frame-Age (s),
-    X-Focus (focus number, higher is sharper)."""
+    X-Focus (focus number, higher is sharper), X-Stars, X-Focus-Mode (stars or planet)."""
     if name not in ("finder", "main"):
         raise HTTPException(404)
     session = running_hub().session
@@ -520,7 +520,8 @@ async def api_camera(name: str, after: int = 0) -> Response:
     _, data, metrics = cached
     headers = {"X-Seq": str(key[0]), "X-Frame-Age": f"{age:.1f}"}
     if metrics.get("focus") is not None:
-        headers["X-Focus"] = f"{metrics['focus']:.1f}"
+        headers |= {"X-Focus": f"{metrics['focus']:.1f}", "X-Stars": str(metrics["stars"]),
+                    "X-Focus-Mode": metrics["focus_mode"]}
     return Response(data, media_type="image/jpeg", headers=headers)
 
 
