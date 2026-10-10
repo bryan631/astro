@@ -171,6 +171,7 @@ class Session:
         self.centerer = Centerer((main_sensor[0], main_sensor[1]))  # learns finder->main offset
         self._centering = False
         self._center_at = -1e9
+        self._center_gave_up: str | None = None  # main camera lost this target: finder only
         # G3: which way "right" turns the scope, learned from the first left/right push.
         self.right_is_plus_az = True
         self._direction_learner = DirectionLearner()
@@ -467,6 +468,7 @@ class Session:
                           right_is_plus_az=self.right_is_plus_az)
         self._centering = False
         self.target, self.guide, self._focus_coach = name, guide, None
+        self._center_gave_up = None  # a new "go to" tries the main camera again
         return [*pre, say(f"Let's find {name}.")]
 
     def clouds(self, site: Site | None = None) -> float | None:
@@ -872,7 +874,7 @@ class Session:
 
     def _should_center(self) -> bool:
         return (self.main_camera is not None and self.target in EXTENDED_TARGETS
-                and not self._camera_busy())
+                and not self._camera_busy() and self.target != self._center_gave_up)
 
     def _center_step(self, t: float) -> list[dict]:
         if t - self._center_at < CENTER_STEP_S:
@@ -889,6 +891,7 @@ class Session:
         step = self.centerer.update(self.position(), brightest_blob(frame))
         if step.lost:  # back to finder guidance, as the words promise
             self._centering = False
+            self._center_gave_up = self.target  # don't bounce straight back (looped 2x/s outside)
             alt, az = self.altaz_of(self.target)
             self.guide = Guide(*self._aim(alt, az), tolerance_arcmin=self._tolerance_arcmin(),
                           right_is_plus_az=self.right_is_plus_az)
