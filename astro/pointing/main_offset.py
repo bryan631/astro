@@ -92,3 +92,24 @@ class MainOffset:
         """Where to point (through the finder model) so the target lands in the main camera."""
         cos_alt = max(np.cos(np.radians(target_alt)), 1e-6)
         return target_alt - self.d_alt_deg, target_az - self.d_az_sky_deg / cos_alt
+
+
+MIN_SPREAD_DEG = 0.015  # RMS spread (about 100 px) needed in both axes to fit orientation
+
+
+def fit_axes_and_offset(sky: np.ndarray, px: np.ndarray) -> tuple[np.ndarray, MainOffset] | None:
+    """Camera axes and finder->main offset in one fit, from timestamped samples.
+
+    sky: each frame's target offset from where the finder model pointed (d_az_sky, d_alt), at the
+    frame's time; px: the target's pixel offset from the main image center in that frame. The
+    target's offset from the camera aim is sky - offset, so px = A (sky - offset) = A sky + b, and
+    offset = -A^-1 b. None until the samples span both axes."""
+    if len(sky) < 4:
+        return None
+    sv = np.linalg.svd(sky - sky.mean(axis=0), compute_uv=False) / np.sqrt(len(sky))
+    if sv[-1] < MIN_SPREAD_DEG:
+        return None
+    coef = np.linalg.lstsq(np.c_[sky, np.ones(len(sky))], px, rcond=None)[0]  # rows: A^T, b
+    a, b = coef[:2].T, coef[2]
+    off = -np.linalg.solve(a, b)
+    return a, MainOffset(float(off[0]), float(off[1]), len(sky))

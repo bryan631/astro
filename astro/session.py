@@ -7,6 +7,7 @@ messages for the tablet: {"type": "say", "text": ...} and {"type": "state", ...}
 import os
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict, replace
@@ -41,7 +42,7 @@ from astro.planner.tonight import PLANET_NOTES, PLANETS, next_dark, plan
 from astro.pointing.coords import Site, body_altaz, radec_to_altaz
 from astro.pointing.finder_sync import FinderSync, check_focus
 from astro.pointing.geometry import separation_deg
-from astro.pointing.main_offset import MainOffset, local_delta
+from astro.pointing.main_offset import MainOffset, fit_axes_and_offset, local_delta
 from astro.pointing.platesolve import finder_gray
 from astro.process.planet import MIN_FRAMES, StackResult, process_ser
 from astro.safety import DAYTIME_SUN_ALT_DEG, SafetyResult, check_target
@@ -74,6 +75,7 @@ ENCODER_STALE_S = 1.0  # encoder positions older than this mean the board or cab
 MIN_HFR_PX = 0.5  # floor so a perfectly sharp (tiny) star can't blow up the focus score
 # Guidance "on target" tolerance. 4' kept the user nudging in the field (encoder steps are 2.3');
 # 8' still lands the target well inside the main camera's 32' x 18' view.
+OFFSET_CAL_S, OFFSET_CAL_MIN = 90.0, 10  # "X is centered": give up after; frames needed
 TOLERANCE_ARCMIN = 8.0
 TOLERANCE_BARLOW_ARCMIN = 4.0  # half that with the 2x Barlow (half the field)
 MOON_FEATURES = {f.name: f for f in FEATURES}  # pointing at one means pointing at the Moon
@@ -172,6 +174,8 @@ class Session:
         self._centering = False
         self._center_at = -1e9
         self._center_gave_up: str | None = None  # main camera lost this target: finder only
+        self._positions: deque = deque(maxlen=60)  # (monotonic time, alt, az): ~6 s of pointing
+        self._offset_cal: dict | None = None  # "Saturn is centered": samples being collected
         # G3: which way "right" turns the scope, learned from the first left/right push.
         self.right_is_plus_az = True
         self._direction_learner = DirectionLearner()
@@ -360,6 +364,7 @@ class Session:
         if self._video is not None:  # nothing else is going on (guidance ends the video)
             return self._video_stop()
         self.target, self.guide, self._centering = None, None, False
+        self._offset_cal = None
         return [say("Stopped.")]
 
     def _set_barlow(self, inserted: bool) -> list[dict]:
@@ -685,6 +690,10 @@ class Session:
         return kept
 
     def _tick(self, t: float) -> list[dict]:
+        if self.finder is not None and self.finder.synced:
+            self._positions.append((time.monotonic(), *self.position()))
+        if self._offset_cal is not None:
+            return self._offset_cal_step(t)
         if self._video is not None and not self._video[1].running:  # it ended by itself (camera unplugged)
             reason = self._video[1].stopped_because or "the camera stopped"
             tell = say if self._video_announce else notice
@@ -849,23 +858,52 @@ class Session:
             self._direction_probe = (word, az, t)
 
     def mark_centered(self, spoken: str) -> list[dict]:
-        """The named object is centered in the main camera: plate-solve the finder now and keep
-        the difference as the finder-to-main offset (instead of lining up the bracket)."""
+        """The named object is in the main camera: while the user moves the scope a little, pair
+        each main frame (where the object is in it) with the encoders at that frame's moment,
+        and fit the camera's orientation and its offset from the finder."""
         name = match_name(spoken, self.names())
         if name is None:
             return [say(f"I don't know {spoken}. Say, for example, 'Saturn is centered'.")]
-        if self.finder is None:
-            return [say("There's no finder camera connected.")]
-        ok, msg = self.finder.sync(fresh=True)  # a solve from before the last push would be wrong
-        if not ok:
-            return [say(msg)]
-        alt, az = self.position()  # the finder model, before any offset
-        t_alt, t_az = self.altaz_of(name)
-        d_az, d_alt = local_delta(alt, az, t_alt, t_az)
-        self.centerer.offset = MainOffset(float(d_az), float(d_alt), 1)
+        if self.finder is None or not self.finder.synced:
+            return [say("I need to know where the telescope points first. Say 'sync', then try again.")]
+        if self.main_camera is None:
+            return [say("There's no main camera connected.")]
+        out = [] if self._video and self._video[0] == "main" else self.start_video("main", announce=False)
+        self._offset_cal = {"name": name, "sky": [], "px": [], "seen": self.main_camera.last_at,
+                            "until": time.monotonic() + OFFSET_CAL_S}
+        return [*out, say(f"Now move the scope slowly so {name} wanders around the main camera's "
+                          "picture, up, down and sideways. I'll tell you when I have it.")]
+
+    def _offset_cal_step(self, t: float) -> list[dict]:
+        cal, cam = self._offset_cal, self.main_camera
+        if time.monotonic() > cal["until"]:
+            self._offset_cal = None
+            return [say(f"I couldn't follow {cal['name']} well enough. Try again, moving a bit more.")]
+        if cam.last_at == cal["seen"] or len(self._positions) < 2:
+            return []
+        cal["seen"] = cam.last_at
+        when = cam.last_at - cam.exposure_s / 2  # middle of the exposure
+        times, alts, azs = np.array(self._positions).T
+        if not times[0] <= when <= times[-1]:
+            return []
+        alt = float(np.interp(when, times, alts))
+        az = float(np.interp(when, times, np.degrees(np.unwrap(np.radians(azs))))) % 360
+        blob = brightest_blob(cam.last)
+        if blob is None:
+            return []
+        h, w = cam.last.shape[:2]
+        t_alt, t_az = self.altaz_of(cal["name"])
+        cal["sky"].append(local_delta(alt, az, t_alt, t_az))
+        cal["px"].append((blob[0] - w / 2, blob[1] - h / 2))
+        fit = fit_axes_and_offset(np.array(cal["sky"]), np.array(cal["px"])) if len(cal["sky"]) >= OFFSET_CAL_MIN else None
+        if fit is None:
+            return []
+        self.centerer.axes.matrix, self.centerer.offset = fit
+        self._offset_cal = None
         self._save_calibration()
-        return [say(f"Got it. The main camera points {np.hypot(d_az, d_alt):.1f} degrees from the "
-                    "finder, and I'll allow for that from now on.")]
+        o = self.centerer.offset
+        return [say(f"Got it. The main camera points {np.hypot(o.d_az_sky_deg, o.d_alt_deg):.2f} degrees "
+                    "from the finder, and I'll allow for that from now on.")]
 
     def _aim(self, alt: float, az: float) -> tuple[float, float]:
         """Where the finder model should point so the target lands in the main camera."""
@@ -1010,6 +1048,7 @@ class Session:
                 return [say(f"Before the horizon walk, I need to see the stars. {msg}")]
         self._horizon = []
         self.target, self.guide, self._centering = None, None, False
+        self._offset_cal = None
         self._focus_coach = None  # one mode at a time: focus prompts would talk over the walk
         return [say("Let's record the treeline. Point the telescope just above the trees and "
                     "say 'mark'. Then move along the treeline and mark again. "
@@ -1053,6 +1092,7 @@ class Session:
                                       self.finder.alignment, self.start_horizon,
                                       self.cancel_location)
             self.target, self.guide, self._centering, self._focus_coach = None, None, False, None
+            self._offset_cal = None
             return self.wizard.start()
         return self.wizard.ready() if name == "ready" else self.wizard.skip()
 
@@ -1126,6 +1166,7 @@ class Session:
             if self.finder is not None:
                 self.finder.reset(new)
             self.target, self.guide, self._centering, self._focus_coach = None, None, False, None
+            self._offset_cal = None
             self._horizon, self._suggestions = None, []
             self.horizon = HorizonMask()
             if self.spot:
