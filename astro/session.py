@@ -175,6 +175,7 @@ class Session:
         self._center_at = -1e9
         self._center_gave_up: str | None = None  # main camera lost this target: finder only
         self._positions: deque = deque(maxlen=60)  # (monotonic time, alt, az): ~6 s of pointing
+        self.main_box: list | None = None  # main field on the finder view (drift_offset.py)
         self._offset_cal: dict | None = None
         self._side: LiveView | None = None  # side_finder: finder frames alongside main video  # "Saturn is centered": samples being collected
         # G3: which way "right" turns the scope, learned from the first left/right push.
@@ -814,6 +815,7 @@ class Session:
                              "observations": offset.observations}
                             if offset.observations else None),
             "mount": None,
+            "main_box": self.main_box,
         }
         model = getattr(self.finder, "model", None)
         if model is not None and self.finder.synced:
@@ -830,6 +832,7 @@ class Session:
             self.right_is_plus_az, self._direction_known = data["right_is_plus_az"], True
         if data.get("camera_axes") is not None:
             self.centerer.axes.matrix = np.array(data["camera_axes"])
+        self.main_box = data.get("main_box")  # main field corners on the finder view
         if data.get("main_offset"):
             o = data["main_offset"]
             self.centerer.offset = MainOffset(o["d_az_sky_deg"], o["d_alt_deg"], o["observations"])
