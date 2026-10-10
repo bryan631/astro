@@ -187,6 +187,7 @@ class CloudedFinder(FakeFinder):
 def test_align_button_fits_the_main_camera_onto_the_finder(monkeypatch, tmp_path, clear):
     """Without a plate solve (clouds), Align still moves the box; Go to keeps its old aim."""
     monkeypatch.setattr(session_module, "ALIGN_S", 2.5)
+    monkeypatch.setattr(session_module, "ALIGN_SCALE", (10.0, 40.0))  # the fakes' scale is 20
     start = time.monotonic()
     finder_cam, main_cam = ThreadStream(DriftingSky(False, start)), ThreadStream(DriftingSky(True, start))
     s = Session(Site(26.6, -80.1), clock=lambda: datetime(2026, 10, 10, 2, 0, tzinfo=UTC),

@@ -491,11 +491,12 @@ _rendered: dict[str, tuple[tuple, bytes, dict]] = {}  # per camera: (frame seq, 
 
 
 @app.get("/api/camera/{name}.jpg")
-async def api_camera(name: str, after: int = 0) -> Response:
+async def api_camera(name: str, after: int = 0, labels: bool = False) -> Response:
     """The camera's newest frame as a JPEG. `after`: the frame number the page already shows;
     the request waits (up to FRAME_WAIT_S) for a newer one, so each view is a simple loop of
     requests that never re-downloads a frame. Headers: X-Seq (frame number), X-Frame-Age (s),
-    X-Focus (focus number, higher is sharper), X-Stars, X-Focus-Mode (stars or planet)."""
+    X-Focus (focus number, higher is sharper), X-Stars, X-Focus-Mode (stars or planet), and with
+    `labels` (finder) X-Labels: the names on the view (Session.finder_labels)."""
     if name not in ("finder", "main"):
         raise HTTPException(404)
     session = running_hub().session
@@ -516,10 +517,12 @@ async def api_camera(name: str, after: int = 0) -> Response:
     cached = _rendered.get(name)
     if cached is None or cached[0] != key:
         data, metrics = await asyncio.to_thread(render, raw, bayer, session.zoom[name], ROTATE[name],
-                                             not session.daytime())
+                                             session.dark())
         cached = _rendered[name] = (key, data, metrics)
     _, data, metrics = cached
     headers = {"X-Seq": str(key[0]), "X-Frame-Age": f"{age:.1f}"}
+    if name == "finder" and labels:  # names beside the stars (the page's Names button)
+        headers["X-Labels"] = json.dumps(await asyncio.to_thread(session.finder_labels), separators=(",", ":"))
     if metrics.get("focus") is not None:
         headers |= {"X-Focus": f"{metrics['focus']:.1f}", "X-Stars": str(metrics["stars"]),
                     "X-Focus-Mode": metrics["focus_mode"]}

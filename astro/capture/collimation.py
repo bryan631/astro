@@ -38,7 +38,7 @@ def analyze(gray: np.ndarray) -> Donut | str:
     lit = smooth > bg + 0.4 * (smooth.max() - bg)
     labels, n = ndimage.label(lit)
     if n == 0:
-        return "I don't see a star in the main camera."
+        return "I don't see a star in the telescope view."
     biggest = labels == 1 + int(np.argmax(np.bincount(labels.ravel())[1:]))
     disk = ndimage.binary_fill_holes(biggest)
     radius = float(np.sqrt(disk.sum() / np.pi))

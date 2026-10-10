@@ -207,11 +207,20 @@ a few buttons do the few jobs well, and both cameras are live at all times.
 Order: cameras (daytime test on the Mele) → screen and buttons → focus number → capture with
 recenter → Align. Each step tested indoors with the simulators before the next night.
 
+**Done after the first Phase 3b night (2026-10-10, see git log):** star names on the finder
+view (HYG, Names button, placed by the solve's map and the encoders, kept across restarts);
+background plate solves (every 5 s, back to back while not synced); planet mode for any clipped
+disk, with the exposure metered on the disk; dawn auto-exposure for both cameras; the night view
+takes the sky's glow off; encoder board no longer resets on an app restart; "Telescope" for the
+main camera; the box orange in day mode.
+
 **To do**
-- Star names on the finder view: small labels beside the brighter stars, from the last plate
-  solve, with an on/off button.
+- Clear night: Align on a bright star with a clear finder (scale ~58, Go to's aim updates);
+  focus numbers with many stars; a metered Jupiter or Saturn video; check that the names stay
+  on their stars while the scope moves.
+- Check the encoders on the sky: counts follow the scope, and the model holds after a restart.
 - Buttons for the setup wizard, horizon walk and collimation (still worded for voice).
-- Clear night: a bright-star Align, and focus sweep and wiggle recordings for test data.
+- Recordings for test data: a focus sweep and a wiggle.
 
 ## Known risks / open questions
 - SV705C Linux SDK stability (fallback: ZWO ASI585MC).

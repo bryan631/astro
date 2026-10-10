@@ -313,11 +313,16 @@ class ProcessStream(CameraStream):
         return self._proc.is_alive()
 
     def close(self) -> None:
+        if self._slot.buf is None:  # closed already (two owners may both close it)
+            return
         self._stop.set()
         self._proc.join(timeout=5)
         if self._proc.is_alive():
             self._proc.kill()
         self._slot.buf = None
         self._shm.close()
-        self._shm.unlink()
+        try:
+            self._shm.unlink()
+        except FileNotFoundError:  # the resource tracker removed it when the child exited
+            pass
         self._manager_info.shutdown()

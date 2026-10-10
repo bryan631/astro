@@ -14,7 +14,7 @@ from astro.pointing.main_offset import MIN_MOTION_DEG, CameraAxes, MainOffset, l
 
 CENTERED_FRACTION = 0.05  # within 5% of the image width of center counts as centered
 REASK_AFTER = 4  # updates without enough motion before asking again
-LOST = "I can't see it in the main camera. Let's find it again with the finder."
+LOST = "I can't see it in the telescope view. Let's find it again with the finder."
 CENTERED = "stop, it's centered"
 CALIBRATED = "thanks, now I can center it"
 

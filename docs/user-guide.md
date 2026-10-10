@@ -1,7 +1,7 @@
 # Using your telescope helper
 
 Everything works with the sound off. Both cameras are live all the time: the **finder** (wide
-view) and the **main camera** (what the telescope sees). Hold the tablet upright to see both, one
+view) and the **telescope** (what the telescope's camera sees). Hold the tablet upright to see both, one
 above the other; turn it sideways to see one large, and swipe or tap its name for the other.
 Messages appear in the line under the pictures (tap it to see the earlier ones), with anything
 that's wrong, like **Finder ✗**, at its right.
@@ -31,8 +31,8 @@ way around. Tap **Save**.
    or below the horizon right now).
 2. Push the telescope the way the big arrow on the finder picture points. The number under it
    is how far there is to go. A dot means you're on it.
-3. The **dashed box** on the finder picture is what the main camera sees. Anything inside it is
-   in the main camera.
+3. The **dashed box** on the finder picture is what the telescope sees. Anything inside it is
+   in the telescope view.
 
 **Focus**
 
@@ -42,9 +42,9 @@ best number so far; the little graph shows it going up and down as you turn.
 
 **Take a picture**
 
-1. With the target in the main camera, tap **Capture**. Planets and the Moon record a short
-   video; everything else builds up on the main picture (the small picture in its corner).
-2. The main picture says how many frames so far and **edge in … s**: how long until the target
+1. With the target in the telescope view, tap **Capture**. Planets and the Moon record a short
+   video; everything else builds up on the telescope picture (the small picture in its corner).
+2. The telescope picture says how many frames so far and **edge in … s**: how long until the target
    drifts out of view (the telescope doesn't follow the sky).
 3. When the edge time gets short, either tap **Stop capture**, or tap **Recenter**: the capture
    pauses, an arrow on the finder picture leads back to the target, and **Resume** carries on
@@ -54,9 +54,9 @@ best number so far; the little graph shows it going up and down as you turn.
 
 **Align (only if the dashed box looks wrong)**
 
-Put a bright star, one you can easily see by eye, in the middle of the main picture. Tap
+Put a bright star, one you can easily see by eye, in the middle of the telescope picture. Tap
 **Align** and don't touch the telescope for 10 seconds. The box on the finder picture moves to
-where the main camera really points, and **Go to** uses it from then on. If it asks for a
+where the telescope really points, and **Go to** uses it from then on. If it asks for a
 brighter star, pick a brighter one.
 
 **Good to know**

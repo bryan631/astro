@@ -88,6 +88,12 @@ class MainOffset:
         self.d_alt_deg = (self.d_alt_deg * n + c_alt) / (n + 1)
         self.observations = n + 1
 
+    def main_center(self, finder_alt: float, finder_az: float) -> tuple[float, float]:
+        """Where the main camera points when the finder model points at (alt, az): the inverse
+        of correct."""
+        cos_alt = max(np.cos(np.radians(finder_alt)), 1e-6)
+        return finder_alt + self.d_alt_deg, finder_az + self.d_az_sky_deg / cos_alt
+
     def correct(self, target_alt: float, target_az: float) -> tuple[float, float]:
         """Where to point (through the finder model) so the target lands in the main camera."""
         cos_alt = max(np.cos(np.radians(target_alt)), 1e-6)

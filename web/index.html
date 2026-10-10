@@ -9,8 +9,8 @@
   /* One screen, both cameras always live, buttons along the bottom. Portrait: finder above main.
      Landscape: one camera fills the screen; swipe (or tap its name) for the other.
      Everything works with the volume off (Phase 3b): every message is text on the screen. */
-  :root { --bg: #000; --fg: #ff3b30; --dim: #7a1c17; --hi: #ff6a5f; }
-  body.day { --bg: #111; --fg: #f2f2f2; --dim: #555; --hi: #7cff7c; }
+  :root { --bg: #000; --fg: #ff3b30; --dim: #7a1c17; --hi: #ff6a5f; --box: #ff6a5f; }
+  body.day { --bg: #111; --fg: #f2f2f2; --dim: #555; --hi: #7cff7c; --box: #ff9500; }  /* box: orange, not green */
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }  /* else a hidden sheet's own display covers the buttons */
   html, body { height: 100%; }
@@ -31,13 +31,13 @@
   .view > img.cam { max-width: 100%; max-height: 100%; display: block; }
   body:not(.day) img.cam, body:not(.day) #inset, body:not(.day) #viewer img, body:not(.day) #pictures img {
     filter: grayscale(1) sepia(1) saturate(5) hue-rotate(-50deg) brightness(var(--b, .6)); }
-  body.day img.cam { filter: brightness(var(--b, 1)); }
+  body.day img.cam, body.day #viewer img { filter: brightness(var(--b, 1)); }
   .frame { position: absolute; pointer-events: none; }  /* covers the picture exactly (see fit()) */
   .frame::before, .frame::after { content: ""; position: absolute; background: var(--fg); opacity: .6; }
   .frame::before { left: 0; right: 0; top: 50%; height: 1px; }
   .frame::after { top: 0; bottom: 0; left: 50%; width: 1px; }
   .frame svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-  .frame polygon { fill: none; stroke: var(--hi); stroke-width: 2px; stroke-dasharray: 6 4;
+  .frame polygon { fill: none; stroke: var(--box); stroke-width: 2px; stroke-dasharray: 6 4;
                    vector-effect: non-scaling-stroke; }
   .label { position: absolute; left: 0; top: 0; padding: 6px 14px 10px 8px; font-size: 16px; text-shadow: 0 0 4px #000; }
   .cap { position: absolute; left: 8px; bottom: 6px; font-size: 15px; opacity: .85; text-shadow: 0 0 4px #000; }
@@ -50,6 +50,10 @@
   body.focusing .focus b { font-size: 64px; }
   .ctl { position: absolute; right: 6px; bottom: 6px; display: flex; gap: 6px; }
   .ctl button { padding: 4px 10px; font-size: 16px; border-radius: 8px; }
+  .names { position: absolute; inset: 0; }  /* star names beside the stars (Names button) */
+  .names span { position: absolute; transform: translate(7px, -50%); font-size: 13px; white-space: nowrap;
+                opacity: .8; text-shadow: 0 0 3px #000, 0 0 3px #000; }
+  .names .target, .names .planet { color: var(--hi); font-weight: bold; opacity: 1; }
   #arrow { position: absolute; font-size: 140px; line-height: 1; opacity: .85; pointer-events: none;
            transition: transform .2s; text-shadow: 0 0 8px #000; }
   #dist { position: absolute; bottom: 40px; font-size: 32px; text-shadow: 0 0 6px #000; }
@@ -94,16 +98,16 @@
   <div id="views">
     <div class="view" id="v-finder">
       <img class="cam" alt="finder camera">
-      <div class="frame"><svg viewBox="-0.5 -0.5 1 1" preserveAspectRatio="none"><polygon id="mainbox"/></svg></div>
+      <div class="frame"><div class="names"></div><svg viewBox="-0.5 -0.5 1 1" preserveAspectRatio="none"><polygon id="mainbox"/></svg></div>
       <div class="label">Finder<span class="swap"> ⇄</span></div><div class="focus"><b></b><small></small><canvas width="160" height="40"></canvas></div>
       <div id="arrow" hidden></div><div id="dist"></div>
       <div class="cap"></div>
-      <div class="ctl"><button data-b="-">−</button><button data-b="+">+</button><button data-z>1x</button></div>
+      <div class="ctl"><button id="names">Names</button><button data-b="-">−</button><button data-b="+">+</button><button data-z>1x</button></div>
     </div>
     <div class="view" id="v-main">
-      <img class="cam" alt="main camera">
+      <img class="cam" alt="telescope camera">
       <div class="frame"><div id="field" hidden></div></div>
-      <div class="label">Main camera<span class="swap"> ⇄</span></div><div class="focus"><b></b><small></small><canvas width="160" height="40"></canvas></div>
+      <div class="label">Telescope<span class="swap"> ⇄</span></div><div class="focus"><b></b><small></small><canvas width="160" height="40"></canvas></div>
       <div id="capinfo"></div><img id="inset" hidden alt="live stack">
       <div class="cap"></div>
       <div class="ctl"><button data-b="-">−</button><button data-b="+">+</button><button data-z>1x</button></div>
@@ -184,7 +188,8 @@ async function viewLoop(name) {
   let seq = 0;
   for (;;) {
     try {
-      const r = await fetch(`/api/camera/${name}.jpg?after=${seq}`, {cache: "no-store"});
+      const labels = name === "finder" && namesOn ? "&labels=1" : "";
+      const r = await fetch(`/api/camera/${name}.jpg?after=${seq}${labels}`, {cache: "no-store"});
       const age = Number(r.headers.get("X-Frame-Age"));
       if (r.status === 200) {
         seq = Number(r.headers.get("X-Seq")) || seq;
@@ -192,6 +197,7 @@ async function viewLoop(name) {
         img.onload = () => { fit(name); URL.revokeObjectURL(url); };
         img.src = url;
         showFocus(name, r.headers.get("X-Focus"), r.headers.get("X-Stars"), r.headers.get("X-Focus-Mode"));
+        if (name === "finder") drawNames(JSON.parse(r.headers.get("X-Labels") || "[]"));
         cap.textContent = age > 3 ? `frame ${age.toFixed(0)} s old` : "";
       } else if (r.status === 204) {
         cap.textContent = `no new frame for ${age.toFixed(0)} s`;
@@ -236,6 +242,24 @@ document.querySelectorAll(".view").forEach(el => {
                             wsSend(JSON.stringify({type: "camera", camera: name, zoom: v.zoom})); drawMainBox(); }
   });
 });
+
+// Star, planet and target names on the finder view, from the last plate solve and the encoders
+// (Session.finder_labels): [name, kind, x, y], x and y fractions from the view's center.
+let namesOn = false;
+const esc = t => t.replace(/[&<>]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;"})[c]);
+function drawNames(labels) {
+  const z = views.finder.zoom;
+  views.finder.el.querySelector(".names").innerHTML = labels
+    .map(([n, kind, x, y]) => [n, kind, x * z, y * z]).filter(([, , x, y]) => Math.abs(x) < .5 && Math.abs(y) < .5)
+    .map(([n, kind, x, y]) => `<span class="${kind}" style="left:${(x + .5) * 100}%;top:${(y + .5) * 100}%">${esc(n)}</span>`).join("");
+}
+function setNames(on) {  // remembered on this tablet
+  namesOn = on; $("names").classList.toggle("on", on);
+  if (!on) drawNames([]);
+  try { localStorage.setItem("names", on ? "1" : ""); } catch {}
+}
+$("names").onclick = () => setNames(!namesOn);
+try { if (localStorage.getItem("names")) setNames(true); } catch {}
 
 // The main camera's field on the finder view (Align measures it), scaled with the finder's zoom.
 let mainBox = null;
@@ -288,7 +312,8 @@ $("stop").onclick = () => action("stop");
 $("align").onclick = () => action("align");
 $("recenter").onclick = () => { action("recenter"); showView("finder"); };
 $("focus").onclick = () => { const on = document.body.classList.toggle("focusing");
-  $("focus").classList.toggle("on", on); if (on) action("focus"); };
+  $("focus").classList.toggle("on", on);
+  if (on) { for (const v of Object.values(views)) v.focus = []; action("focus"); } };  // a fresh best and graph
 $("sync").onclick = () => action("sync");
 document.querySelectorAll("[data-text]").forEach(b => b.onclick = () => sendText(b.dataset.text));
 const open = id => { $(id).hidden = false; }, close = el => { el.closest(".sheet").hidden = true; };
@@ -335,7 +360,7 @@ inset.onclick = () => openViewer(inset.src);
 function openViewer(src) { const img = $("viewer").querySelector("img"); img.src = src; img.style.transform = ""; open("viewer"); }
 document.querySelectorAll("[data-vb]").forEach(b => b.onclick = () => {
   viewerB = Math.min(4, Math.max(0.25, viewerB * (b.dataset.vb === "+" ? 1.4 : 1 / 1.4)));
-  $("viewer").querySelector("img").style.setProperty("--b", .6 * viewerB);
+  $("viewer").querySelector("img").style.setProperty("--b", (document.body.classList.contains("day") ? 1 : .6) * viewerB);
 });
 document.querySelectorAll("[data-vz]").forEach(b => b.onclick = () => { $("viewer").querySelector("img").style.transform = `scale(${b.dataset.vz})`; });
 
@@ -360,7 +385,7 @@ async function pollStatus() {
   if (s.build) { if (build && s.build !== build) { location.reload(); return; } build = s.build; }
   mainBox = s.main_box || mainBox; drawMainBox();
   $("status").innerHTML = [item("Tablet link", link, link ? "" : "reconnecting"), item("Finder", s.finder),
-    item("Main camera", s.main), item("Encoders", s.encoders), item("Internet", s.internet),
+    item("Telescope", s.main), item("Encoders", s.encoders), item("Internet", s.internet),
     s.claude ? item("Claude", s.claude === "ok", s.claude === "ok" ? "" : `(${s.claude})`) : ""].filter(Boolean).join("");
   $("checks").hidden = !s.daytime; $("checksoff").checked = !!s.checks_off;
 }
@@ -370,7 +395,10 @@ setInterval(pollStatus, 5000); setTimeout(pollStatus, 1000);
 connect();
 viewLoop("finder"); viewLoop("main");
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").then(r => r.update());  // installable (V1)
-if (navigator.wakeLock) navigator.wakeLock.request("screen").catch(() => {});  // keep the tablet awake
+// Keep the tablet awake; the lock is dropped whenever the page is hidden, so take it again on return.
+const keepAwake = () => navigator.wakeLock && navigator.wakeLock.request("screen").catch(() => {});
+keepAwake();
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") keepAwake(); });
 
 // GUI design demo (scripts/dev/sim_pictures.py): ?demo=m42 (or m31, m45) plays a made-up live
 // stack in the main view, then Pictures shows the made-up pictures.

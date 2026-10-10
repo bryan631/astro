@@ -5,6 +5,7 @@ silent solve failure (pre-flight focus gate, docs/plan.md Phase 1 step 3).
 """
 
 import logging
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -16,6 +17,7 @@ from scipy.stats import norm
 from astro.capture.focus import flatten_sky, half_flux_radius
 from astro.devices.base import Camera
 from astro.pointing.coords import Site, radec_to_altaz
+from astro.pointing.geometry import separation_deg
 from astro.pointing.mount_model import MountModel, Sync
 from astro.pointing.platesolve import FinderSolver, Solution, finder_gray
 
@@ -137,6 +139,7 @@ class FinderSync:
         # Seconds since the encoders last reported (None if not tracked, e.g. simulators).
         self.encoder_age: Callable[[], float] | None = None
         self.raw_counts: Callable[[], tuple[int, int]] | None = None  # (az, alt), debug view only
+        self._model_lock = threading.Lock()  # background solves refit while guidance reads
 
     def alignment(self) -> tuple[int, float | None]:
         """(number of syncs, model RMS in arcmin or None) for the setup wizard."""
@@ -144,41 +147,49 @@ class FinderSync:
 
     def reset(self, site: Site) -> None:
         """New site: the old mount model's alt/az frame no longer applies; re-sync from scratch."""
-        self.site, self.model, self.synced = site, MountModel(), False
+        with self._model_lock:
+            self.site, self.model, self.synced = site, MountModel(), False
         if self.on_change:
             self.on_change()
 
     def position(self) -> tuple[float, float]:
         """Current true (alt, az) through the mount model."""
-        return self.model.to_sky(*self.encoders())
+        enc = self.encoders()
+        with self._model_lock:
+            return self.model.to_sky(*enc)
 
     def focus_report(self) -> FocusReport:
         return check_focus(finder_gray(self.camera.capture()))  # callers handle a dead camera
 
-    def sync(self, fresh: bool = True) -> tuple[bool, str]:
+    def sync(self, fresh: bool = True, replace_near_deg: float | None = None) -> tuple[bool, str]:
         """Solve the current finder view and refine the mount model. Returns (ok, message).
-        Always a new solve (`fresh` is for the same interface as SolveTracker)."""
+        Always a new solve (`fresh` is for the same interface as SolveTracker). With
+        `replace_near_deg` (background solves) it replaces older syncs that close, so a scope
+        parked on one target keeps the model's spread over the sky."""
         enc = self.encoders()  # read encoders and clock at exposure time, not after the solve
         try:
             gray, when = finder_gray(self.camera.capture()), self.clock()
         except (RuntimeError, OSError):
             return False, "The finder camera isn't responding. Is it unplugged?"
-        focus = check_focus(gray)
-        if not focus.ok:
-            return False, focus.reason
-        sol = self.solver.solve(gray, bayer=False, binned=2)
+        focus = check_focus(gray)  # a solve can still work when this doubts it: it only explains
+        sol = self.solver.solve(gray, bayer=False, binned=2) if focus.stars else None
         if sol is None:
-            return False, ("I can see stars but couldn't recognize the pattern. "
-                           "Something may be blocking part of the view.")
+            return False, focus.reason if not focus.ok else (
+                "I can see stars but couldn't recognize the pattern. "
+                "Something may be blocking part of the view.")
         self.last_solution = sol
         log_solution(sol)
         alt, az = radec_to_altaz(sol.ra_deg, sol.dec_deg, self.site, when)
-        rms = self.model.add_sync(Sync(enc[0], enc[1], alt, az))
-        self.last_rms = rms
-        self.synced = True
+        with self._model_lock:  # the solve ran unlocked; only the refit is serialized
+            if replace_near_deg is not None:
+                self.model.syncs = [s for s in self.model.syncs if separation_deg(
+                    s.true_alt_deg, s.true_az_deg, alt, az) > replace_near_deg]
+            rms = self.model.add_sync(Sync(enc[0], enc[1], alt, az))
+            self.last_rms, self.synced = rms, True
+            syncs = len(self.model.syncs)
         if self.on_change:
             self.on_change()
         msg = "Got it, I know where we're pointing."
-        if len(self.model.syncs) >= LOOSE_SYNC_SYNCS and rms > LOOSE_SYNC_ARCMIN:
+        if syncs >= LOOSE_SYNC_SYNCS and rms > LOOSE_SYNC_ARCMIN:
             msg += " The alignment is still rough; another sync in a different part of the sky helps."
         return True, msg

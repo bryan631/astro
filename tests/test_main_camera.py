@@ -54,6 +54,18 @@ def test_capture_records_right_away(tmp_path):
     assert meta["frames"] > 3 and frames.shape[1:] == (512, 512) and frames.max() > 100
 
 
+def test_capture_on_an_unpicked_planet_records_it(tmp_path):
+    """2026-10-10: Jupiter captured without Go to was stacked as a star field and blown out.
+    A clipped disk in the main view, with a planet where the scope points, means planet mode."""
+    s, _ = make_session(tmp_path)
+    s.target = None
+    disk = np.zeros((1080, 1920), np.uint8)
+    disk[400:600, 800:1000] = 255  # 40000 clipped pixels
+    s.camera_frame = lambda name: (disk, "GRBG", 0.1)
+    assert texts(s.capture())[0].startswith("Recording.") and s.target == "Saturn"
+    s.recorder.current.done.wait(5)
+
+
 def test_barlow_change_requires_refocus(tmp_path):
     s, _ = make_session(tmp_path)
     s.main_focus_ok = True
@@ -184,7 +196,7 @@ def test_capture_start_failure_is_spoken(tmp_path):
     s, _ = make_session(tmp_path)
     s.recorder.camera = DeadCamera()
     s.main_focus_ok = True
-    assert texts(s.handle("take a picture"))[0].startswith("The main camera isn't responding")
+    assert texts(s.handle("take a picture"))[0].startswith("The telescope camera isn't responding")
 
 
 def test_stop_recording_after_it_finished(tmp_path):
@@ -377,3 +389,32 @@ def test_recenter_leads_back_to_an_unnamed_field(tmp_path):
 def test_recenter_needs_a_capture(tmp_path):
     s, _ = make_session(tmp_path)
     assert "Start one first" in texts(s.action("recenter"))[0]
+
+
+class MeteredDisk:
+    """A disk whose brightness follows the exposure (8-bit, clipped): for Recorder._meter."""
+
+    def __init__(self, counts_per_s):
+        self.rate, self.exposure_s = counts_per_s, rec_module.PLANET_EXPOSURE_S
+
+    def set_exposure(self, s):
+        self.exposure_s = s
+
+    def capture(self):
+        frame = np.zeros((512, 512), np.uint8)
+        frame[200:300, 200:300] = min(255, self.rate * self.exposure_s)
+        return frame
+
+
+@pytest.mark.parametrize("rate", [50_000, 5_000])  # clipped at 20 ms (Jupiter), and dim
+def test_metering_brings_the_disk_into_range(tmp_path, rate):
+    cam = MeteredDisk(rate)
+    Recorder(cam, (512, 512), tmp_path)._meter()
+    lo, hi = rec_module.PLANET_PEAK
+    assert lo <= rate * cam.exposure_s <= hi
+
+
+def test_metering_stops_at_the_shortest_exposure(tmp_path):
+    cam = MeteredDisk(1e9)  # clipped at any exposure
+    Recorder(cam, (512, 512), tmp_path)._meter()
+    assert cam.exposure_s == rec_module.MIN_PLANET_EXPOSURE_S
