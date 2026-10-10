@@ -76,6 +76,7 @@
       <button class="small" data-zoom="1">1x</button> <button class="small" data-zoom="2">2x</button> <button class="small" data-zoom="4">4x</button></div></div>
   <button id="talk">Tap to talk</button>
   <button id="bigstop">STOP</button>
+  <div><button class="small" id="shoot">Take picture</button> <button class="small" id="focusdone">Focus done</button></div>
   <button id="hands" class="small">Hands-free: off</button>
   <div id="vstate" hidden></div>
   <div id="heard"></div>
@@ -176,6 +177,8 @@ document.getElementById("typed").onsubmit = e => {
 };
 // Stop: ends whatever is going on (focus, guidance, a picture, video), same as saying "stop".
 document.getElementById("bigstop").onclick = () => { stopAudio(); send("stop"); };
+document.getElementById("shoot").onclick = () => send("take a picture");
+document.getElementById("focusdone").onclick = () => send("done");
 // Tapping a picture shows it big in the live-stack viewer, with its buttons. (Opening it in a
 // new window crashed the installed app.)
 document.getElementById("gallery").onclick = e => {
