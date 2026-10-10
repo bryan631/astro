@@ -58,6 +58,7 @@
   #live { width: 100%; display: block; transform-origin: center; }
   #livectl { text-align: center; margin-top: 6px; }
   #gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; width: 100%; max-width: 900px; }
+  #gallery button { padding: 0; border: 0; background: none; }
   #gallery img { width: 100%; border: 2px solid var(--dim); border-radius: 12px; }
   body.on-target:not(.day) #arrow { color: var(--fg); }
 </style>
@@ -173,10 +174,19 @@ document.getElementById("typed").onsubmit = e => {
 };
 // Stop: ends whatever is going on (focus, guidance, a picture, video), same as saying "stop".
 document.getElementById("bigstop").onclick = () => { stopAudio(); send("stop"); };
+// Tapping a picture shows it big in the live-stack viewer, with its buttons. (Opening it in a
+// new window crashed the installed app.)
+document.getElementById("gallery").onclick = e => {
+  const img = e.target.closest("button")?.querySelector("img");
+  if (!img) return;
+  document.getElementById("live").src = img.src;
+  document.getElementById("livebox").hidden = false;
+  document.getElementById("livebox").scrollIntoView({behavior: "smooth"});
+};
 async function showPictures() {
   const box = document.getElementById("gallery");
-  const files = await (await fetch("/gallery")).json();
-  box.innerHTML = files.length ? files.map(f => `<a href="/pictures/${f}" target="_blank"><img src="/pictures/${f}" alt="${f}"></a>`).join("")
+  const urls = demo ? DEMO_PICTURES : (await (await fetch("/gallery")).json()).map(f => `/pictures/${f}`);
+  box.innerHTML = urls.length ? urls.map(u => `<button><img src="${u}" alt="${u}"></button>`).join("")
                                : "<p>No pictures yet.</p>";
   box.hidden = false;
 }
@@ -434,16 +444,18 @@ document.querySelectorAll("#livectl button").forEach(b => b.onclick = () => {
   else document.getElementById("live").style.transform = `scale(${b.dataset.zoom})`;
   document.getElementById("liveframe").style.filter = `brightness(${liveGain})`;
 });
-// GUI design demo (scripts/dev/sim_pictures.py): ?demo=m42 plays a made-up live stack.
+// GUI design demo (scripts/dev/sim_pictures.py): ?demo=m42 (or m31, m45) plays a made-up
+// live stack, then shows the made-up pictures in place of the gallery.
 const demo = new URLSearchParams(location.search).get("demo");
+const DEMO_PICTURES = ["m42", "m31", "m45", "jupiter", "saturn", "moon"].map(n => `/demo/${n}.jpg`);
 if (demo) (async () => {
-  for (let n = 1; n <= 15; n++) {
-    handle({type: "live", url: `/live/sim_${demo}_${String(n).padStart(2, "0")}.png`, frames: n * 4});
-    handle({type: "notice", text: `Stacking ${demo.toUpperCase()}: ${n * 4} frames`});
+  for (let n = 1; n <= 10; n++) {
+    handle({type: "live", url: `/demo/${demo}_${String(n).padStart(2, "0")}.jpg`, frames: n * 6});
+    handle({type: "notice", text: `Stacking ${demo.toUpperCase()}: ${n * 6} frames`});
     await new Promise(r => setTimeout(r, 1500));
   }
-  handle({type: "picture", file: `sim_${demo}.png`});
-  handle({type: "say", text: "Done. It's in Pictures."});
+  handle({type: "picture"});
+  handle({type: "notice", text: "Done. Here are the demo pictures."});
   showPictures();
 })();
 </script>

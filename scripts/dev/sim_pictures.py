@@ -4,8 +4,8 @@ Synthetic targets go through the app's real processing (stretch for live preview
 the gallery), so they look the way a real night would. Run, then open the GUI:
     .venv/bin/python scripts/dev/sim_pictures.py
     ASTRO_SIM=1 .venv/bin/uvicorn astro.server:app --port 8000
-    http://localhost:8000/?demo=m42   (plays a live stack, then the picture lands in Pictures)
-Files are named sim_*, so `rm data/gallery/sim_* data/live/sim_*` removes them.
+    http://localhost:8000/?demo=m42   (plays a live stack, then shows the demo pictures)
+Output goes to web/demo/ (not the real gallery), so any server can show it.
 """
 
 from pathlib import Path
@@ -19,9 +19,9 @@ from astro.process.finish import finish
 from astro.process.livestack import stretch
 
 ROOT = Path(__file__).resolve().parents[2]
-GALLERY, LIVE = ROOT / "data" / "gallery", ROOT / "data" / "live"
+OUT = ROOT / "web" / "demo"  # committed, so ?demo works on any server (the Mele too)
 H, W = 540, 720  # main camera after 2x2 superpixel debayer, roughly
-FRAMES, PREVIEW_EVERY = 60, 4  # 0.2 s subs; a preview every few frames, like every 3 s
+FRAMES, PREVIEW_EVERY = 60, 6  # 0.2 s subs; a preview every few frames, like every 3 s
 rng = np.random.default_rng(1)
 yy, xx = np.mgrid[0:H, 0:W].astype(float)
 
@@ -78,8 +78,8 @@ def live_stack(name, truth, sky=0.05, read_noise=0.06):
         frame += np.linspace(0, 0.02, W)[None, :, None]  # light-pollution gradient
         total += frame
         if n % PREVIEW_EVERY == 0:
-            Image.fromarray(stretch(total / n)).save(LIVE / f"sim_{name}_{n // PREVIEW_EVERY:02d}.png")
-    Image.fromarray(finish(total / FRAMES)).save(GALLERY / f"sim_{name}.png")
+            Image.fromarray(stretch(total / n)).save(OUT / f"{name}_{n // PREVIEW_EVERY:02d}.jpg", quality=80)
+    Image.fromarray(finish(total / FRAMES)).save(OUT / f"{name}.jpg", quality=90)
 
 
 def disk(cx, cy, r):
@@ -123,12 +123,11 @@ def planet_picture(name, truth, frames=40):
     for _ in range(frames):
         f = ndimage.shift(ndimage.gaussian_filter(truth, (2.5, 2.5, 0)), (*rng.normal(0, 3, 2), 0), order=1)
         stack += f + rng.normal(0, 0.05, truth.shape)
-    Image.fromarray(planet.finish(stack / frames)).save(GALLERY / f"sim_{name}.png")
+    Image.fromarray(planet.finish(stack / frames)).save(OUT / f"{name}.jpg", quality=90)
 
 
 if __name__ == "__main__":
-    GALLERY.mkdir(parents=True, exist_ok=True)
-    LIVE.mkdir(parents=True, exist_ok=True)
+    OUT.mkdir(parents=True, exist_ok=True)
     for name, make in [("m42", m42), ("m31", m31), ("m45", m45)]:
         live_stack(name, make())
         print("live stack + picture:", name)
