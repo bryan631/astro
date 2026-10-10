@@ -189,3 +189,62 @@ def test_stale_fix_holds_centering_too():
                                position=lambda: (pos["alt"], pos["az"]))
     s._center_step = lambda t: pytest.fail("centered from a stale fix")
     assert texts(s.tick(0.1)) == ["Hold still for a second so I can see where we are."]
+
+
+def test_describe_planets_and_the_moon_and_time_a_star():
+    s, _ = make()
+    assert texts(s.describe("Jupiter"))[0].startswith("Jupiter is a planet.")
+    assert texts(s.describe("Moon"))[0].startswith("Moon is our Moon.")
+    assert "Albireo" in texts(s.timing("Albireo"))[0]
+    assert texts(s.timing("pizza")) == ["I don't know pizza."]
+
+
+class BlindFinder:
+    """Encoders and a camera, but no plate solve (clouds)."""
+    synced, last_solution, on_change, camera = False, None, None, None
+
+    def __init__(self, age=0.1):
+        self.encoder_age = lambda: age
+
+    def sync(self, fresh=False):
+        return False, "I can't see any stars."
+
+    def position(self):
+        return 45.0, 180.0
+
+    def alignment(self):
+        return 0, None
+
+    def raw_counts(self):
+        raise OSError("port gone")
+
+
+def test_commands_that_need_the_pointing_say_why_they_cant():
+    s = Session(WPB, finder=BlindFinder(), clock=lambda: EVENING)
+    assert texts(s.goto("Albireo")) == ["Before we go, I need to see the stars. I can't see any stars."]
+    assert texts(s.where()) == ["I don't know where we're pointing yet. I can't see any stars."]
+    assert texts(s.start_horizon()) == ["Before the horizon walk, I need to see the stars. I can't see any stars."]
+    s.recorder = SimpleNamespace(busy=True, current=SimpleNamespace(paused=SimpleNamespace(is_set=lambda: False)))
+    assert texts(s._recenter()) == ["I can't guide back yet: I can't see any stars."]
+
+
+@pytest.mark.parametrize("age,ok", [(0.1, True), (5.0, False)])
+def test_connections_report_frozen_encoders(age, ok):
+    s = Session(WPB, finder=BlindFinder(age), clock=lambda: EVENING)
+    assert s.connections() == {"finder": None, "main": None, "encoders": ok}
+
+
+def test_debug_info_survives_a_dead_serial_port():
+    info = Session(WPB, finder=BlindFinder(), clock=lambda: EVENING).debug_info()
+    assert info["encoders"] == {"error": "port gone"} and info["pointing"]["synced"] is False
+    assert info["main_camera"] == {"connected": False}
+
+
+def test_a_crashing_background_solve_is_logged_and_the_next_one_runs(caplog):
+    class Broken(BlindFinder):
+        def sync(self, fresh=False):
+            raise ZeroDivisionError
+
+    s = Session(WPB, finder=Broken(), clock=lambda: EVENING)
+    s._auto_solve(was_synced=False)
+    assert not s._solving and "auto solve failed" in caplog.text

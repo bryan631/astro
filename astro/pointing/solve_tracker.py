@@ -1,6 +1,6 @@
 """Pointing from the finder alone: plate-solve continuously, no encoders.
 
-A drop-in for FinderSync (same position/sync/focus_report/reset), for the Phase 2 tripod
+A drop-in for FinderSync (same position/sync/reset), for the Phase 2 tripod
 test before the Arduino arrives, and as a fallback if the encoders fail. A solve takes about
 one finder exposure (~0.8 s), so guidance cues update about once a second instead of 10x.
 """
@@ -12,7 +12,7 @@ from datetime import datetime
 
 from astro.devices.base import Camera
 from astro.pointing.coords import Site, radec_to_altaz
-from astro.pointing.finder_sync import FocusReport, check_focus
+from astro.pointing.finder_sync import check_focus
 from astro.pointing.platesolve import FinderSolver, finder_gray
 
 RETRY_S = 1.0  # pause after a failed solve (clouds, slewing) before trying again
@@ -28,7 +28,7 @@ class SolveTracker:
         self.last_solution = None  # not logged: this solves about once a second
         self._solved_at = -1e9
         self._last_reason = "I haven't looked at the sky yet."
-        self._camera_lock = threading.Lock()  # one capture at a time (tracker vs focus coach)
+        self._camera_lock = threading.Lock()  # one capture at a time (the loop vs a Sync)
         self._stop = threading.Event()
         self.paused = threading.Event()  # live video owns the camera: don't solve meanwhile
         self._thread = threading.Thread(target=self._loop, daemon=True)
@@ -64,16 +64,8 @@ class SolveTracker:
         ok, reason = self._solve_once()
         return (True, "Got it, I know where we're pointing.") if ok else (False, reason)
 
-    def focus_report(self) -> FocusReport:
-        with self._camera_lock:
-            return check_focus(finder_gray(self.camera.capture()))
-
     def reset(self, site: Site) -> None:
         self.site, self.synced = site, False
-
-    @property
-    def camera_lock(self) -> threading.Lock:
-        return self._camera_lock
 
     def _solve_once(self) -> tuple[bool, str]:
         with self._camera_lock:

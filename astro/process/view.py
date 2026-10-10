@@ -66,12 +66,6 @@ def render(raw: np.ndarray, bayer: str, zoom: int = 1, rotate: int = 180,
     return out.getvalue(), metrics
 
 
-def jpeg(raw: np.ndarray, bayer: str, zoom: int = 1, rotate: int = 180,
-         night: bool | None = None) -> bytes:
-    """The JPEG alone (see render)."""
-    return render(raw, bayer, zoom, rotate, night)[0]
-
-
 def _bin2(rgb: np.ndarray) -> np.ndarray:
     h, w = rgb.shape[0] // 2 * 2, rgb.shape[1] // 2 * 2
     return rgb[:h, :w].reshape(h // 2, 2, w // 2, 2, 3).mean(axis=(1, 3))

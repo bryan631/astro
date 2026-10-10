@@ -1,4 +1,5 @@
-"""Host driver for the Nano Every: encoder counts, environment, dew heaters, heartbeat.
+"""Host driver for the encoder board (classic Nano or Nano Every): encoder counts, environment,
+dew heaters, heartbeat.
 
 Implements `MountEncoders`. A reader thread parses lines; every ENV reading drives the dew
 heaters; a PING every couple of seconds keeps the firmware's failsafe from cutting them.
@@ -154,15 +155,19 @@ class Mcu:
 
     def _read_loop(self) -> None:
         while not self._stop.is_set():
+            line = b""
             try:
                 line = self._ser.readline()
                 if line and (msg := proto.parse(line)) is not None:
                     self.handle(msg)  # may write (heaters): same recovery as a failed read
-            except (serial.SerialException, OSError):
+            except (serial.SerialException, OSError) as e:
                 if self._stop.is_set():
                     return
+                log.warning("encoder board lost: reopening", extra={"data": {"error": str(e)}})
                 self._reopen()  # unplugged: the old handle is dead, and the device may come
                 continue  # back under another name (ttyACM1)
+            except Exception:  # a bug handling one line must not freeze the counts until restart
+                log.exception("encoder board: failed to handle a line", extra={"data": {"line": repr(line)}})
 
     def _reopen(self) -> None:
         with self._lock:
@@ -173,6 +178,7 @@ class Mcu:
             while not self._stop.is_set():
                 try:
                     self._ser = self._open()
+                    log.info("encoder board reopened")
                     return
                 except (serial.SerialException, OSError):
                     self._stop.wait(REOPEN_EVERY_S)
@@ -185,3 +191,5 @@ class Mcu:
                 self._send(proto.frame("PING"))
             except (serial.SerialException, OSError):
                 pass
+            except Exception:  # keep pinging: without it the firmware cuts the heaters
+                log.exception("encoder board: ping failed")

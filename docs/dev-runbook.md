@@ -37,16 +37,17 @@ Voice is not wired in; `astro/voice/`, `wake.py` and `intents.py` stay as librar
 
 | Path | What |
 |---|---|
-| `astro/pointing/` | coordinates, encoders, mount model, geometry |
+| `astro/pointing/` | coordinates, encoders, mount model, plate solving, Align, star names on the finder |
 | `astro/guidance/` | push-to cue engine |
-| `astro/planner/` | tonight's targets, horizon mask, weather |
-| `astro/capture/` | SER writer, planet ROI, focus metrics, recorder, live stacker |
+| `astro/planner/` | tonight's targets, horizon mask, weather; `sky.py`: the session's target answers |
+| `astro/capture/` | SER writer, planet ROI, focus metrics, view exposure, recorder, live stacker, collimation |
 | `astro/process/` | planet lucky-imaging stack, deep-sky live stack |
 | `astro/devices/` | device interfaces, SVBony driver; `sim/` fakes (finder sky, main camera) |
 | `astro/site_store.py` | observing site: tablet GPS overrides `config/site.toml` |
 | `scripts/hwcheck/` | hardware tools: `viewer.py` (browser), `viewer_plot.py`, `solve_sky.py`, checklist |
 | `data/` | per-install, git-ignored: `site.toml`, `captures/*.ser`, `gallery/*.png` |
 | `astro/session.py` | ties it together; `agent.py` adds Claude; `server.py` serves the PWA |
+| `data/logs/` | one JSON-lines log per server run (newest 20): events, errors with tracebacks, crashed threads |
 | `astro/wizard.py` | first-time setup steps (GPS, syncs, horizon walk) |
 | `astro/voice/` | offline speech: whisper.cpp (in) and Piper (out); not wired in (Phase 3b) |
 | `astro/devices/stream.py` | always-on cameras: a capture process (SVBony) or thread (sim) each |

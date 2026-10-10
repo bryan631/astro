@@ -1,7 +1,10 @@
-"""One observing session: ties planner, safety, mount position and guidance together.
+"""One observing session: ties planner, safety, pointing, guidance and the cameras together.
 
-`handle(text)` answers offline intents; `tick()` runs guidance at ~10 Hz. Both return
-messages for the tablet: {"type": "say", "text": ...} and {"type": "state", ...}.
+`action()` runs the page's buttons, `handle(text)` typed or spoken commands (offline intents),
+and `tick()` the guidance, captures and background solves at ~10 Hz. All return messages for
+the tablet, e.g. {"type": "say", "text": ...} and {"type": "state", ...}. Pieces with their own
+state live next door: Sky (targets and plans), FinderLabels (names), ViewSettings (day and night
+exposure), AlignRun, Recorder and LiveStacker.
 """
 
 import logging
@@ -11,48 +14,40 @@ import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict, replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
-import astropy.units as u
 import numpy as np
-from astropy.coordinates import SkyCoord, get_body
-from scipy import ndimage
 
 from astro import calibration_store
-from astro.capture.collimation import CENTERED as COLLIMATED
-from astro.capture.collimation import CollimationCoach, Donut, analyze
-from astro.capture.exposure import FINDER_DAY_RANGE, next_settings
+from astro.capture.collimation import CollimationCoach
+from astro.capture.exposure import SATURATED_RAW, ViewSettings
 from astro.capture.live_stacker import LiveStacker
 from astro.capture.recorder import CaptureRefused, Recorder, prune
-from astro.capture.roi import brightest_blob, roi_around
+from astro.capture.roi import brightest_blob, has_disk
 from astro.devices.base import Camera
-from astro.devices.tap import tap
+from astro.devices.tap import frame_with_time, tap
 from astro.guidance.centering import CALIBRATED, Centerer
 from astro.guidance.engine import CueLimiter, DirectionLearner, Guide, wrap180
 from astro.intents import Intent, match_name, parse
 from astro.messages import notice, say
 from astro.optics import MAIN_SENSOR_PX
-from astro.planner.almanac import compass as _compass
-from astro.planner.almanac import target_text
-from astro.planner.catalog import load_targets
 from astro.planner.horizon import HorizonMask
-from astro.planner.moon_features import FEATURES
-from astro.planner.tonight import PLANET_NOTES, PLANETS, next_dark, plan
+from astro.planner.sky import MOON_FEATURES, Sky, by_category_text, tonight_text
+from astro.planner.tonight import PLANETS
 from astro.pointing.align import (
+    ALIGN_S,
+    AlignRun,
     MainInFinder,
     box_on_finder_view,
     finder_offset_to_sky,
-    fit_main_in_finder,
-    pick_star,
     sky_offset_to_altaz,
 )
 from astro.pointing.coords import Site, altaz_to_radec, body_altaz, radec_to_altaz
 from astro.pointing.finder_sync import FinderSync
 from astro.pointing.geometry import separation_deg
-from astro.pointing.labels import altaz_now, load_stars, place, tube_map
+from astro.pointing.labels import FinderLabels
 from astro.pointing.main_offset import MainOffset
-from astro.pointing.platesolve import finder_gray
 from astro.process.planet import MIN_FRAMES, StackResult, process_ser
 from astro.process.view import ROTATE
 from astro.safety import DAYTIME_SUN_ALT_DEG, SafetyResult, check_target
@@ -70,28 +65,17 @@ CENTER_STEP_S = 0.5  # main-camera centering cue rate
 DIRECTION_PROBE_S = 1.5  # after a left/right cue, look this long for the azimuth to move
 FIX_STALE_S = 2.0  # a plate-solve fix older than this is too old to steer by
 ENCODER_STALE_S = 1.0  # encoder positions older than this mean the board or cable is gone
-# Guidance "on target" tolerance. 4' kept the user nudging in the field (encoder steps are 2.3');
-# 8' still lands the target well inside the main camera's 32' x 18' view.
-ALIGN_S = 10.0  # Align watches the bright star drift this long in both cameras
-SATURATED_RAW = 250  # 8-bit raw: clipped
 PLANET_DISK_PX = 2000  # one clipped blob this big (raw px) is a disk: Jupiter ~30000, Sirius ~700
 UNNAMED_PLANET = "the planet"  # a disk in the picture when the pointing can't name it
 FIELD_RADIUS_DEG = 0.3  # the telescope's 32' x 18' view, center to corner
 PLANET_NEAR_DEG = 3.0  # ... and it's the planet within this of where the scope points
-ALIGN_SCALE = (25.0, 130.0)  # main pixels per finder pixel: ~58 for this pair (14.6" vs 0.25")
 AUTO_SOLVE_EVERY_S = 5.0  # background plate solves at night (back to back while not synced)
 AUTO_SOLVE_NEAR_DEG = 5.0  # a background solve replaces model syncs this close (keeps the spread)
-LABELS_REFRESH_S = 5.0  # the sky turns ~0.02 degrees in 5 s: under 2 finder pixels
-# By day the finder's view auto-exposes; the main camera gets fixed daylight settings (every
-# exposure change reopens it in the SDK, which froze its view in the field). At night both go
-# back to the settings their streams started with (the finder's are the plate solver's).
 DARK_SUN_ALT_DEG = -10.0  # Sun lower than this: the views get the night stretch (twilight: as is)
-MAIN_TWILIGHT_RANGE = (0.0005, 0.25)  # seconds: the main view auto-exposes once dawn clips it
-MAIN_DAY = (0.004, 0)  # measured on a sunny tree
-DAY_EXPOSURE_EVERY_S = 1.0
+# Guidance "on target" tolerance. 4' kept the user nudging in the field (encoder steps are 2.3');
+# 8' still lands the target well inside the main camera's 32' x 18' view.
 TOLERANCE_ARCMIN = 8.0
 TOLERANCE_BARLOW_ARCMIN = 4.0  # half that with the 2x Barlow (half the field)
-MOON_FEATURES = {f.name: f for f in FEATURES}  # pointing at one means pointing at the Moon
 EXTENDED_TARGETS = {p.capitalize() for p in PLANETS} | {"Moon", *MOON_FEATURES}  # SER video
 # Captures run until the page's Stop capture (the user sees the target near the frame edge);
 # these are only safety limits.
@@ -100,13 +84,9 @@ STACK_SECONDS = 300  # deep-sky live stack
 PROGRESS_S = 1.0  # capture progress to the page this often
 COLLIMATION_STEP_S = 2.0  # time to turn a screw and let the image settle between checks
 COLLIMATING = "We're checking collimation. Tap STOP to finish that first."
-COLLIMATION_CROP_PX = 512  # around the defocused star (the donut is ~100-300 px across)
 MIN_HORIZON_MARKS = 3
 MIN_HORIZON_COVERAGE_DEG = 270  # less: a big unmarked gap gets a straight-line guess
 SITE_MOVE_KM = 1.0  # moving farther than this from the model's site invalidates the mount model
-CLOUD_CACHE_S = 15 * 60  # Open-Meteo is hourly; don't ask on every request
-LATER_MIN = 30  # "tonight" more than this far ahead: say when it gets dark
-CLOUDY_PCT = 50  # at or above this cloud cover, tonight's suggestions mention the clouds
 EARTH_RADIUS_KM = 6371.0
 
 
@@ -142,27 +122,19 @@ class Session:
         self.wizard: SetupWizard | None = None  # first-time setup at a location
         self._location_request = 0  # id of the GPS request whose answer we'd accept
         self._model_site = site  # site the current mount model was built for
-        self.weather = weather  # (lat, lon, when) -> cloud % or None offline; None = no forecast
-        self._clouds: float | None = None
-        self._clouds_at = -1e9
-        self._clouds_lock = threading.Lock()
-        self._clouds_site: tuple[float, float] | None = None
+        self.sky = Sky(weather)  # targets, plans and the cloud forecast
         self.position = finder.position if finder else position
         if finder is not None and hasattr(finder, "start"):  # background plate solver
             finder.start()
         self.override = developer_override
-        self.catalog = {t.name: t for t in load_targets()}
-        for t in list(self.catalog.values()):
-            self.catalog.setdefault(t.id, t)
+        self.catalog = self.sky.catalog
         self.target: str | None = None
         self.guide: Guide | None = None
         self._suggestions: list[str] = []
         self._resolved_at = -1e9
         self._last_said, self._last_said_at = "", -1e9  # tick speech, for _no_repeats
         self._collimation: CollimationCoach | None = None
-        self._labels: dict | None = None  # finder_labels' cache: the solve's map, objects' alt-az
-        self._label_catalog: tuple | None = None
-        self.finder_map: np.ndarray | None = None  # alt-az -> finder pixels, from a solve (labels)
+        self.labels = FinderLabels(self.sky.targets())  # names on the finder view
         self._solved_try_at, self._solving = -1e9, False
         self._dark = (True, -1e9)  # dark(): (answer, when)
         self._said_later: list[dict] = []  # from background work, said on the next tick
@@ -188,16 +160,12 @@ class Session:
         self._center_at = -1e9
         self._center_gave_up: str | None = None  # main camera lost this target: finder only
         self.main_box: list | None = None  # main field on the finder view (Align)
-        self._align: dict | None = None  # Align in progress: samples from both cameras
+        self._align: AlignRun | None = None  # Align in progress
         self.main_in_finder: MainInFinder | None = None  # the last Align's fit
         self._progress_at, self._capture_at = -1e9, 0.0  # capture progress messages
         self._capture_radec = (0.0, 0.0)  # where a capture began (Recenter's target if unnamed)
         self._recentering = False  # a paused capture: guidance leads back to its target
-        self._light: dict[str, bool] = {}  # per camera: daytime when its settings were last switched
-        self._night = {name: (cam.exposure_s, cam.gain) for name, cam in
-                       (("finder", getattr(finder, "camera", None)), ("main", main_camera))
-                       if hasattr(cam, "latest")}  # streamed cameras: the page's views
-        self._day_exposure_at, self._seen_for_exposure = -1e9, {}
+        self.views = ViewSettings({"finder": getattr(finder, "camera", None), "main": main_camera})
         # G3: which way "right" turns the scope, learned from the first left/right push.
         self.right_is_plus_az = True
         self._direction_learner = DirectionLearner()
@@ -216,24 +184,7 @@ class Session:
     # --- target resolution -------------------------------------------------------------
     def describe(self, spoken: str) -> list[dict]:
         """What a target is and where it is right now (agent tool and "tell me about ...")."""
-        name = match_name(spoken, self.names())
-        if name is None:
-            return [say(f"I don't know {spoken}.")]
-        if name.lower() in PLANETS:
-            kind, note = "a planet", PLANET_NOTES[name.lower()]
-        elif name == "Moon":
-            kind, note = "our Moon", "Craters and mountains show best along the shadow line."
-        elif name in MOON_FEATURES:
-            kind, note = "a feature on the Moon", MOON_FEATURES[name].note
-        else:
-            target = self.catalog[name]
-            kind, note = f"a {target.category} ({target.id})", target.note
-        alt, az = self.altaz_of(name)
-        where = (f"Right now it's about {alt:.0f} degrees up, toward the {_compass(az)}."
-                 if alt > 0 else "It's below the horizon right now.")
-        if 0 < alt < float(self.horizon.min_alt(az)):
-            where += " That's behind the trees from here."
-        return [say(f"{name} is {kind}. {note} {where}")]
+        return [say(self.sky.describe(spoken, self.site, self.clock(), self.horizon))]
 
     # --- spots ---------------------------------------------------------------------------
     def use_spot(self, spoken: str) -> list[dict]:
@@ -267,30 +218,13 @@ class Session:
 
     def timing(self, spoken: str) -> list[dict]:
         """When a target rises, clears the trees, is highest and sets (agent tool)."""
-        name = match_name(spoken, self.names())
-        if name is None:
-            return [say(f"I don't know {spoken}.")]
-        body = "moon" if name in MOON_FEATURES or name == "Moon" else name.lower()
-        if body in PLANETS or body == "moon":
-            def coord_at(t, loc):
-                return get_body(body, t, loc)
-        else:
-            target = self.catalog[name]
-
-            def coord_at(t, loc):
-                return SkyCoord(ra=target.ra * u.deg, dec=target.dec * u.deg)
-        return [say(target_text(self.site, self.clock(), name, coord_at, self.horizon))]
+        return [say(self.sky.timing(spoken, self.site, self.clock(), self.horizon))]
 
     def names(self) -> list[str]:
-        return [p.capitalize() for p in PLANETS] + ["Moon", *MOON_FEATURES, *self.catalog]
+        return self.sky.names()
 
     def altaz_of(self, name: str) -> tuple[float, float]:
-        if name in MOON_FEATURES:  # the Moon fills the main camera: aim at its center
-            name = "Moon"
-        if name.lower() in PLANETS or name == "Moon":
-            return body_altaz(name.lower(), self.site, self.clock())
-        t = self.catalog[name]
-        return radec_to_altaz(t.ra, t.dec, self.site, self.clock())
+        return self.sky.altaz_of(name, self.site, self.clock())
 
     # --- commands ------------------------------------------------------------------------
     def handle(self, text: str) -> list[dict]:
@@ -306,8 +240,7 @@ class Session:
             return self.tonight()  # planning is slow and read-only: keep it off the lock
         with self._lock:
             if do == "goto":
-                name = match_name(target or "", self.names())
-                return self.goto(name) if name else [say(f"I don't know {target}.")]
+                return self._goto_named(target or "")
             if do == "capture" and target:  # picked from "which one?": never a stop
                 return self.capture(target) if not self._camera_busy() else [notice("Already capturing.")]
             handler = {"capture": self._toggle_capture, "stop": self._stop, "sync": self.sync,
@@ -333,8 +266,7 @@ class Session:
             job.pause()
             self._recentering = True
             alt, az = self._capture_altaz()
-            self.guide = Guide(*self._aim(alt, az), tolerance_arcmin=self._tolerance_arcmin(),
-                               right_is_plus_az=self.right_is_plus_az)
+            self.guide = self._guide_to(alt, az)
             return [say("Paused. Follow the arrow on the finder view, then tap Resume."),
                     self._capture_state(job.current, "paused")]
         job.resume()
@@ -348,26 +280,15 @@ class Session:
         return radec_to_altaz(*self._capture_radec, self.site, self.clock())
 
     def target_list(self, limit: int = 20) -> list[dict]:
-        """The Go to list: tonight's best first, each with where it is now and whether it's up
-        (above the treeline)."""
+        """The Go to list (Sky.target_list), planned outside the lock."""
         with self._lock:
             site, horizon = self.site, self.horizon
-        now = self.clock()
-        start = next_dark(site, now.astimezone(site.timezone)) or now
-        choices = plan(site, start, mask=horizon, cloud_cover=self.clouds(site), per_category=6)
-        out = []
-        for c in sorted((c for cs in choices.values() for c in cs), key=lambda c: -c.score)[:limit]:
-            alt, az = self.altaz_of(c.name)
-            out.append({"name": c.name, "category": c.category, "note": c.note,
-                        "alt": round(alt, 1), "az": round(az, 1),
-                        "up": bool(alt > float(horizon.min_alt(az)))})
-        return sorted(out, key=lambda t: not t["up"])  # what can be seen now first, best first
+        return self.sky.target_list(site, horizon, self.clock(), limit)
 
     def goto_spoken(self, target: str) -> list[dict]:
         """Go to a target named in free text (agent tool): matched by name, never re-parsed."""
         with self._lock:
-            name = match_name(target, self.names())
-            return self.goto(name) if name else [say(f"I don't know {target}.")]
+            return self._goto_named(target)
 
     def _handle(self, text: str) -> list[dict]:
         intent = parse(text)
@@ -379,8 +300,7 @@ class Session:
         if intent is None:
             return [say(NOT_UNDERSTOOD)]
         if intent.name == "goto":
-            name = match_name(intent.target or "", self.names())
-            return self.goto(name) if name else [say(f"I don't know {intent.target}.")]
+            return self._goto_named(intent.target or "")
         if intent.name == "describe":
             return self.describe(intent.target or "")
         if intent.name in ("barlow_on", "barlow_off"):
@@ -409,9 +329,12 @@ class Session:
             return [say("OK, collimation check stopped. Remember to refocus.")]
         if self._camera_busy():  # "stop" while taking a picture ends the picture
             return self._stop_capture()
-        self.target, self.guide, self._centering = None, None, False
-        self._align = None
+        self._clear_guidance()
         return [say("Stopped.")]
+
+    def _clear_guidance(self) -> None:
+        """Forget the target and stop guiding, centering and any Align."""
+        self.target, self.guide, self._centering, self._align = None, None, False, None
 
     def _set_barlow(self, inserted: bool) -> list[dict]:
         self.barlow = inserted
@@ -463,21 +386,21 @@ class Session:
             # nothing recognized: the Go to target (pointing unknown) or the field
             choice = found[0] if found else (self.target or "the field")
         target = choice if choice in self.names() else None  # the session's, once it starts
-        name = choice
+        video = target in EXTENDED_TARGETS or choice == UNNAMED_PLANET  # planets, Moon
         try:
-            if target in EXTENDED_TARGETS or name == UNNAMED_PLANET:  # planets, Moon: video
-                self.recorder.start(name, self.record_seconds)
-                self.target = target
-                self._picture_started()
-                self._announced_done = False
-                return [say("Recording. Tap Stop capture when it nears the edge of the picture.")]
-            self.stacker.start(name, self.stack_seconds)  # deep-sky: live stack short subs
+            if video:
+                self.recorder.start(choice, self.record_seconds)
+            else:
+                self.stacker.start(choice, self.stack_seconds)  # deep-sky: live stack short subs
         except CaptureRefused as e:
             return [say(str(e))]  # nothing started: guidance carries on as before
         self.target = target
         self._picture_started()
+        if video:
+            self._announced_done = False
+            return [say("Recording. Tap Stop capture when it nears the edge of the picture.")]
         self._stack_done_announced, self._preview_seen = False, 0
-        return [say(f"Stacking short pictures of {name}. Watch it build up on the screen. "
+        return [say(f"Stacking short pictures of {choice}. Watch it build up on the screen. "
                     "Try not to touch the telescope.")]
 
     def _what_to_capture(self) -> list[str]:
@@ -489,14 +412,7 @@ class Session:
             found.append(UNNAMED_PLANET if disk == "planet" else disk)
         if getattr(self.finder, "synced", False):
             alt, az = self.centerer.offset.main_center(*self.position())
-            when = self.clock()
-            for body in (*PLANETS, "moon"):
-                if separation_deg(alt, az, *body_altaz(body, self.site, when)) < FIELD_RADIUS_DEG:
-                    found.append(body.capitalize())
-            targets = list({t.id: t for t in self.catalog.values()}.values())
-            t_alt, t_az = altaz_now([t.ra for t in targets], [t.dec for t in targets], self.site, when)
-            found += [t.name for t, a, z in zip(targets, t_alt, t_az, strict=True)
-                      if separation_deg(alt, az, a, z) < FIELD_RADIUS_DEG]
+            found += self.sky.in_field(alt, az, FIELD_RADIUS_DEG, self.site, self.clock())
         if UNNAMED_PLANET in found and len(found) > 1 and any(f in EXTENDED_TARGETS for f in found):
             found.remove(UNNAMED_PLANET)  # the disk is the planet named by the pointing
         if self.target in MOON_FEATURES and "Moon" in found:  # Go to Tycho, then Capture: Tycho
@@ -508,15 +424,10 @@ class Session:
         planet or Moon nearest where the scope points, or "planet" when none is near (the
         pointing may be off: a disk is still a disk)."""
         frame = self.camera_frame("main")
-        if frame is None:
+        if frame is None or not has_disk(frame[0], PLANET_DISK_PX, SATURATED_RAW):
             return None
-        labels, n = ndimage.label(frame[0][::2, ::2] >= SATURATED_RAW)
-        if n == 0 or np.bincount(labels.ravel())[1:].max() * 4 < PLANET_DISK_PX:
-            return None
-        alt, az = self.position()
-        near = [(separation_deg(alt, az, *body_altaz(b, self.site, self.clock())), b) for b in (*PLANETS, "moon")]
-        sep, body = min(near)
-        return body.capitalize() if sep < PLANET_NEAR_DEG else "planet"
+        sep, body = self.sky.nearest_body(*self.position(), self.site, self.clock())
+        return body if sep < PLANET_NEAR_DEG else "planet"
 
     def _picture_started(self) -> None:
         """The picture has the camera: guidance goes quiet (no "right a little" while the user
@@ -529,6 +440,10 @@ class Session:
 
     def _camera_busy(self) -> bool:
         return any(job is not None and job.busy for job in (self.recorder, self.stacker))
+
+    def _goto_named(self, spoken: str) -> list[dict]:
+        name = match_name(spoken, self.names())
+        return self.goto(name) if name else [say(f"I don't know {spoken}.")]
 
     def goto(self, name: str) -> list[dict]:
         if self._camera_busy():
@@ -543,63 +458,27 @@ class Session:
         safe = self.target_safety(alt, az)
         if not safe.ok:
             return [say(f"I can't go to {name}: it's {safe.reason}.")]
-        guide = Guide(*self._aim(alt, az), tolerance_arcmin=self._tolerance_arcmin(),
-                          right_is_plus_az=self.right_is_plus_az)
         self._centering = False
-        self.target, self.guide = name, guide
+        self.target, self.guide = name, self._guide_to(alt, az)
         self._center_gave_up = None  # a new "go to" tries the main camera again
         return [*pre, say(f"Let's find {name}.")]
 
-    def clouds(self, site: Site | None = None) -> float | None:
-        """Cloud cover now (%) at `site`, from Open-Meteo; None offline. Cached per place; its
-        own lock (not the session's) so a slow fetch never stalls guidance."""
-        site = site or self.site
-        here = (site.lat_deg, site.lon_deg)
-        with self._clouds_lock:
-            stale = time.monotonic() - self._clouds_at > CLOUD_CACHE_S or here != self._clouds_site
-            if self.weather is not None and stale:  # a GPS move refetches
-                self._clouds = self.weather(*here, self.clock())
-                self._clouds_at, self._clouds_site = time.monotonic(), here
-            return self._clouds
-
     def _plan(self) -> tuple[dict, datetime | None, float | None]:
-        """Tonight's choices from the next dark time, in local time (asked at 4 PM, this plans
-        the coming night). Runs outside the session lock: planning takes ~0.5 s of astropy."""
-        with self._lock:  # one consistent snapshot; the slow work below runs unlocked
+        """Tonight's plan (Sky.plan) for a consistent snapshot, planned outside the lock."""
+        with self._lock:
             site, horizon = self.site, self.horizon
-        now = self.clock().astimezone(site.timezone)
-        start = next_dark(site, now)
-        clouds = self.clouds(site)
-        if start is None:
-            return {}, None, clouds
-        return plan(site, start, mask=horizon, cloud_cover=clouds), start, clouds
+        return self.sky.plan(site, horizon, self.clock())
 
     def tonight(self) -> list[dict]:
-        choices, start, clouds = self._plan()
-        flat = sorted((c for cs in choices.values() for c in cs), key=lambda c: -c.score)
-        if not flat:
-            return [say("Nothing good is up right now.")]
-        with self._lock:
-            self._suggestions = [c.name for c in flat[1:6]]
-        best = flat[0]
-        others = ", ".join(c.name for c in flat[1:3])
-        when = ""
-        if start is not None and start - self.clock() > timedelta(minutes=LATER_MIN):
-            when = f"It's still light out. Once it's dark, around {_clock(start)}: "
-        sky = ""
-        if clouds is not None and clouds >= CLOUDY_PCT:
-            sky = f"It looks about {clouds:.0f} percent cloudy, so it may come and go. "
-        return [say(f"{when}{sky}{best.name} is the best. {best.note} "
-                    f"Other good ones: {others}.")]
+        text, suggestions = tonight_text(*self._plan(), self.clock())
+        if suggestions is not None:
+            with self._lock:
+                self._suggestions = suggestions
+        return [say(text)]
 
     def tonight_by_category(self) -> str:
-        """Compact text for the agent: best target per category, local times."""
         choices, _, clouds = self._plan()
-        lines = [f"{cat}: {cs[0].name} (best around {_clock(cs[0].best_time)}). {cs[0].note}"
-                 for cat, cs in choices.items()]
-        if clouds is not None:
-            lines.append(f"cloud cover: about {clouds:.0f}%")
-        return "\n".join(lines) or "Nothing good is up right now."
+        return by_category_text(choices, clouds)
 
     # --- what the tablet can look at ------------------------------------------------------
     def camera(self, name: str):
@@ -637,41 +516,17 @@ class Session:
         after a restart without a new solve; empty until the first solve ever."""
         sol = getattr(self.finder, "last_solution", None)
         frame = self.camera_frame("finder")
-        if sol is None and self.finder_map is None:  # never solved: solve now, in the background
+        if sol is None and self.labels.map is None:  # never solved: solve now, in the background
             self._solve_soon()
             return []
         if frame is None:
             return []
         h, w = frame[0].shape
-        c, now = self._labels, time.monotonic()
-        if c is None or c["sol"] is not sol or now - c["at"] > LABELS_REFRESH_S:
-            when = self.clock()
-            if sol is not None and (c is None or c["sol"] is not sol):  # a new solve: its map, now
-                self.finder_map = tube_map(sol, w, self.site, when)
-                self._save_calibration()  # fixed to the tube: it holds after a restart
-            m = self.finder_map
-            names, kinds, ra, dec = self._label_objects()
-            alt, az = altaz_now(ra, dec, self.site, when)
-            bodies = [*PLANETS, "moon"]
-            body = np.array([body_altaz(b, self.site, when) for b in bodies])
-            c = self._labels = {"sol": sol, "m": m, "at": now,
-                                "names": names + [b.capitalize() for b in bodies],
-                                "kinds": kinds + ["planet"] * len(bodies),
-                                "alt": np.r_[alt, body[:, 0]], "az": np.r_[az, body[:, 1]]}
-        x, y, on = place(c["alt"], c["az"], self.finder.position(), c["m"], (w, h))
-        sign = -1 if ROTATE["finder"] == 180 else 1  # the view is turned like the picture
-        return [[c["names"][i], c["kinds"][i], round(sign * (x[i] / w - 0.5), 4),
-                 round(sign * (y[i] / h - 0.5), 4)] for i in np.flatnonzero(on & (c["alt"] > 0))]
-
-    def _label_objects(self) -> tuple[list[str], list[str], np.ndarray, np.ndarray]:
-        """The fixed objects to name: stars, then Go to targets (by catalog id)."""
-        if self._label_catalog is None:
-            stars, ra, dec = load_stars()
-            targets = list({t.id: t for t in self.catalog.values()}.values())
-            self._label_catalog = (stars + [t.id for t in targets],
-                                   ["star"] * len(stars) + ["target"] * len(targets),
-                                   np.r_[ra, [t.ra for t in targets]], np.r_[dec, [t.dec for t in targets]])
-        return self._label_catalog
+        found, new_map = self.labels.labels(sol, (w, h), self.finder.position(), self.site,
+                                            self.clock(), time.monotonic(), ROTATE["finder"])
+        if new_map:
+            self._save_calibration()
+        return found
 
     def adjust_camera(self, name: str, zoom: int | None = None) -> None:
         """The page's digital zoom for a camera view (brightness is the page's own)."""
@@ -794,6 +649,9 @@ class Session:
         try:
             extra = {"replace_near_deg": AUTO_SOLVE_NEAR_DEG} if isinstance(self.finder, FinderSync) else {}
             ok, why = self.finder.sync(fresh=True, **extra)
+        except Exception:  # a bug in one solve must not stop the next ones
+            log.exception("auto solve failed")
+            return
         finally:
             self._solving = False
         log.info("auto solve", extra={"data": {"ok": ok, "why": why}})
@@ -802,7 +660,7 @@ class Session:
                 self._said_later.append(say("Found where the scope points (plate solve)."))
 
     def _tick(self, t: float) -> list[dict]:
-        self._daylight_settings(t)
+        self.views.update(t, self.daytime(), self._camera_busy(), hold=self._align is not None)
         if self.finder is not None and not self.daytime() and not self._camera_busy():
             self._solve_soon()  # every 5 s; back to back while the encoders mean nothing
         if self._align is not None:
@@ -868,40 +726,6 @@ class Session:
                 self._center_limiter = CueLimiter()
         return out
 
-    def _daylight_settings(self, t: float) -> None:
-        """Day or night camera settings, and the finder's daylight auto-exposure (streamed
-        cameras only: those are the views the page shows)."""
-        if t - self._day_exposure_at < DAY_EXPOSURE_EVERY_S:
-            return
-        self._day_exposure_at = t
-        cams = {n: c for n in ("finder", "main") if hasattr(c := self.camera(n), "latest")}
-        if not cams:
-            return
-        day = self.daytime()
-        for name, cam in cams.items():  # each camera on its day or night settings, once per switch
-            if self._light.get(name) == day or (name == "main" and self._camera_busy()):
-                continue  # a capture set its own: caught up once it ends
-            self._light[name] = day
-            exposure, gain = MAIN_DAY if day and name == "main" else self._night[name]
-            cam.set_exposure(exposure)
-            cam.set_gain(gain)
-        if self._align is not None:
-            return
-        for name, cam in cams.items():  # by day (finder), or once dawn clips the night settings
-            if name == "main" and (day or self._camera_busy()):  # (2026-10-10: all white at 6:50)
-                continue  # main by day: MAIN_DAY; a capture sets its own
-            frame, seq, _ = cam.latest()
-            if frame is None or seq == self._seen_for_exposure.get(name):
-                continue
-            self._seen_for_exposure[name] = seq
-            adjusting = (cam.exposure_s, cam.gain) != tuple(self._night[name])
-            if not ((day and name == "finder") or adjusting or np.median(frame[::8, ::8]) >= SATURATED_RAW):
-                continue
-            limits = FINDER_DAY_RANGE if name == "finder" else MAIN_TWILIGHT_RANGE
-            if (new := next_settings(frame, cam.exposure_s, cam.gain, limits, self._night[name][1])) is not None:
-                cam.set_exposure(new[0])
-                cam.set_gain(new[1])
-
     def _hold_for_fix(self) -> list[dict] | None:
         """Plate solving only: while the fix is stale (the scope is moving), don't steer by it.
         Returns the messages for this tick, or None when the fix is fresh."""
@@ -939,7 +763,7 @@ class Session:
                             if offset.observations else None),
             "mount": None,
             "main_box": self.main_box,
-            "finder_map": self.finder_map.tolist() if self.finder_map is not None else None,
+            "finder_map": self.labels.map.tolist() if self.labels.map is not None else None,
             "main_in_finder": ({"a": self.main_in_finder.a.tolist(),
                                 "center": self.main_in_finder.center.tolist(),
                                 "residual_px": self.main_in_finder.residual_px}
@@ -960,7 +784,7 @@ class Session:
             self.centerer.axes.matrix = np.array(data["camera_axes"])
         self.main_box = data.get("main_box")  # main field corners on the finder view
         if data.get("finder_map") is not None:
-            self.finder_map = np.array(data["finder_map"])
+            self.labels.map = np.array(data["finder_map"])
         if (mif := data.get("main_in_finder")) is not None:
             self.main_in_finder = MainInFinder(np.array(mif["a"]), np.array(mif["center"]),
                                                mif["residual_px"])
@@ -973,9 +797,7 @@ class Session:
             if boots is not None and boots() > 0:
                 return  # the encoder board booted: its counts are 0, the saved model is stale
             lat, lon = mount["site"]
-            km = np.radians(separation_deg(lat, lon, self.site.lat_deg, self.site.lon_deg)) \
-                * EARTH_RADIUS_KM
-            if km <= SITE_MOVE_KM:  # same place, same encoder counts: no re-sync needed
+            if _km_between(lat, lon, self.site) <= SITE_MOVE_KM:  # same place, same encoder counts: no re-sync needed
                 self.finder.model = calibration_store.model_from_dict(mount)
                 self.finder.synced = True
                 self._model_site = replace(self.site, lat_deg=lat, lon_deg=lon)  # its origin
@@ -1020,67 +842,40 @@ class Session:
         h, w = frame[0].shape if frame else (960, 1280)
         near = self.main_in_finder.center if self.main_in_finder else np.array([w / 2, h / 2])
         self.guide, self._centering = None, False
-        self._align = {"until": time.monotonic() + ALIGN_S, "near": near,
-                       "sol": self.finder.last_solution if solved else None,
-                       "finder": [], "main": [], "seen": {"finder": None, "main": None},
-                       "finder_size": (w, h), "main_size": None, "no_star": 0}
+        self._align = AlignRun(near, (w, h), self.finder.last_solution if solved else None)
         box_only = "" if solved else (" The finder can't plate-solve right now (clouds?), so this "
                                       "moves the box only; Go to keeps its old aim.")
         return [say(f"Aligning: keep the bright star in the telescope view and don't touch the scope "
                     f"for {ALIGN_S:.0f} seconds.{box_only}")]
 
     def _align_step(self) -> list[dict]:
-        cal = self._align
+        run = self._align
         for name in ("finder", "main"):
-            got = _frame_with_time(self.camera(name))
-            if got is None or got[1] == cal["seen"][name]:
-                continue
-            frame, cal["seen"][name], t_mid = got
-            if name == "finder":
-                star = pick_star(finder_gray(frame), tuple(cal["near"] / 2))  # binned 2x2
-                if star is None:
-                    cal["no_star"] += 1
-                else:
-                    cal["finder"].append((t_mid, star[0] * 2, star[1] * 2))
-            elif (blob := brightest_blob(frame)) is not None:
-                h, w = frame.shape
-                cal["main_size"] = (w, h)
-                cal["main"].append((t_mid, blob[0] - w / 2, blob[1] - h / 2))
-        if time.monotonic() < cal["until"]:
+            run.add(name, frame_with_time(self.camera(name)))
+        if time.monotonic() < run.until:
             return []
         self._align = None
-        if len(cal["main"]) < 5:
-            return [say("I don't see a bright star in the telescope view. Put one in the middle of "
-                        "it, then tap Align.")]
-        if len(cal["finder"]) < 2:
-            return [say("I couldn't tell which finder star is the one in the telescope view. Pick a "
-                        "brighter star, one you can see by eye, and tap Align.")]
-        f, m = np.array(cal["finder"]), np.array(cal["main"])
-        fit = fit_main_in_finder(f[:, 0], f[:, 1:], m[:, 0], m[:, 1:])
-        log.info("align tracks", extra={"data": {"finder": f.round(2).tolist(), "main": m.round(2).tolist(),
-                                                  "no_star": cal["no_star"], "scale": fit and fit.scale,
-                                                  "rotation": fit and fit.rotation_deg}})
-        if fit is not None and not ALIGN_SCALE[0] <= fit.scale <= ALIGN_SCALE[1]:
-            return [say(f"That didn't fit (the star moved {fit.scale:.1f} times as far in the "
-                        "telescope as in the finder; it should be about 58). The scope may have moved, "
-                        "or I followed the wrong star. Tap Align again; the box is unchanged.")]
-        if fit is None:
-            return [say("The star didn't drift enough to measure. Tap Align and wait the full "
-                        f"{ALIGN_S:.0f} seconds without touching the scope.")]
-        w, h = cal["finder_size"]
-        self.main_box = box_on_finder_view(fit, cal["main_size"], (w, h), ROTATE["finder"])
+        fit = run.result()
+        if isinstance(fit, str):
+            return [say(fit)]
+        w, h = run.finder_size
+        self.main_box = box_on_finder_view(fit, run.main_size, (w, h), ROTATE["finder"])
         self.main_in_finder = fit
-        if cal["sol"] is None:  # no solve: the box from the drift alone, Go to's aim unchanged
+        if run.sol is None:  # no solve: the box from the drift alone, Go to's aim unchanged
             self._save_calibration()
             return [say(f"Box moved: the telescope's view is on the finder view, turned "
                         f"{fit.rotation_deg:.0f} degrees. Go to keeps its old aim until an Align "
                         "with the finder seeing clear sky.")]
-        east, north = finder_offset_to_sky(fit.center[0] - w / 2, fit.center[1] - h / 2, cal["sol"], w)
-        self.centerer.offset = sky_offset_to_altaz(cal["sol"], east, north, self.site, self.clock())
+        east, north = finder_offset_to_sky(fit.center[0] - w / 2, fit.center[1] - h / 2, run.sol, w)
+        self.centerer.offset = sky_offset_to_altaz(run.sol, east, north, self.site, self.clock())
         self._save_calibration()
         return [say(f"Aligned. The telescope points {np.hypot(east, north) * 60:.0f} arcminutes "
                     f"from the finder's center, turned {fit.rotation_deg:.0f} degrees. Its box is "
                     "on the finder view.")]
+
+    def _guide_to(self, alt: float, az: float) -> Guide:
+        return Guide(*self._aim(alt, az), tolerance_arcmin=self._tolerance_arcmin(),
+                     right_is_plus_az=self.right_is_plus_az)
 
     def _aim(self, alt: float, az: float) -> tuple[float, float]:
         """Where the finder model should point so the target lands in the main camera."""
@@ -1109,8 +904,7 @@ class Session:
             self._centering = False
             self._center_gave_up = self.target  # don't bounce straight back (looped 2x/s outside)
             alt, az = self.altaz_of(self.target)
-            self.guide = Guide(*self._aim(alt, az), tolerance_arcmin=self._tolerance_arcmin(),
-                          right_is_plus_az=self.right_is_plus_az)
+            self.guide = self._guide_to(alt, az)
         elif step.done:
             self._centering = False
             self._save_calibration()  # camera axes and finder-to-main offset are learned now
@@ -1138,18 +932,9 @@ class Session:
         except (RuntimeError, OSError) as e:
             self._collimation = None
             return [say(f"The telescope camera stopped responding, so I stopped. ({e})")]
-        center = brightest_blob(frame)
-        if center is None:
-            return [say("I don't see a star in the telescope view.")]
-        h, w = frame.shape
-        r = roi_around(center, COLLIMATION_CROP_PX, (w, h))
-        donut = analyze(frame[r.y:r.y + r.height, r.x:r.x + r.width])
-        if not isinstance(donut, Donut):
-            return [say(donut)]
-        cue = self._collimation.update(donut)
-        if donut.off <= COLLIMATED:
-            self._collimation = None  # done: the user refocuses next
-            cue = f"{cue} Now turn the focus knob back until the star is a sharp point."
+        cue, done = self._collimation.check(frame)
+        if done:
+            self._collimation = None
         return [say(cue)] if cue else []
 
     def _announce_picture(self) -> list[dict]:
@@ -1157,6 +942,7 @@ class Session:
         try:
             result = job.result()
         except (ValueError, OSError) as e:
+            log.exception("picture failed", extra={"data": {"name": name}})
             return [say(f"I couldn't make the picture of {name}: {e}"), {"type": "capture", "state": "idle"}]
         if not self._jobs:  # nothing queued still needs its raw video
             prune(self.recorder.out_dir)  # keep only the newest raw videos
@@ -1180,8 +966,7 @@ class Session:
             if not ok:
                 return [say(f"Before the horizon walk, I need to see the stars. {msg}")]
         self._horizon = []
-        self.target, self.guide, self._centering = None, None, False
-        self._align = None
+        self._clear_guidance()
         return [say("Let's record the treeline. Point the telescope just above the trees and "
                     "say 'mark'. Then move along the treeline and mark again. "
                     "Eight to fifteen marks all the way around is ideal. Say 'done' to finish.")]
@@ -1223,8 +1008,7 @@ class Session:
             self.wizard = SetupWizard(self.request_location, self.finder.sync,
                                       self.finder.alignment, self.start_horizon,
                                       self.cancel_location)
-            self.target, self.guide, self._centering = None, None, False
-            self._align = None
+            self._clear_guidance()
             return self.wizard.start()
         return self.wizard.ready() if name == "ready" else self.wizard.skip()
 
@@ -1251,7 +1035,7 @@ class Session:
         facts.append(f"{len(pictures)} pictures in the gallery")
         facts.append("treeline recorded" if self.horizon.points != HorizonMask().points
                      else "treeline not recorded (default 20 degrees)")
-        clouds = self._clouds  # cached only: never fetch the forecast under the lock
+        clouds = self.sky.cached_clouds  # never fetch the forecast under the lock
         facts.append(f"cloud cover about {clouds:.0f}%" if clouds is not None
                      else "no weather forecast (offline)")
         return "; ".join(facts)
@@ -1288,15 +1072,12 @@ class Session:
         """Move to `new`. Far from where the mount model was built (great-circle distance, so a
         chain of small updates can't drift away), pointing, treeline and plans start over."""
         ref = self._model_site
-        moved_km = (np.radians(separation_deg(ref.lat_deg, ref.lon_deg, new.lat_deg, new.lon_deg))
-                    * EARTH_RADIUS_KM)
         self.site = new
-        if moved_km > SITE_MOVE_KM:
+        if _km_between(ref.lat_deg, ref.lon_deg, new) > SITE_MOVE_KM:
             self._model_site = new
             if self.finder is not None:
                 self.finder.reset(new)
-            self.target, self.guide, self._centering = None, None, False
-            self._align = None
+            self._clear_guidance()
             self._horizon, self._suggestions = None, []
             self.horizon = HorizonMask()
             if self.spot:
@@ -1346,19 +1127,6 @@ def _azimuth_coverage(azs: list[float]) -> float:
     return 360 - float(gaps.max())
 
 
-def _clock(t: datetime) -> str:
-    """Local wall-clock time as spoken: '9:15 PM'."""
-    return t.strftime("%I:%M %p").lstrip("0")
-
-
-def _frame_with_time(cam) -> tuple[np.ndarray, int, float] | None:
-    """(frame, frame number, mid-exposure Unix time) of a camera's newest frame, or None."""
-    if cam is None:
-        return None
-    if hasattr(cam, "latest"):  # a stream (astro/devices/stream.py)
-        frame, seq, t_mid = cam.latest()
-        return None if frame is None else (frame, seq, t_mid)
-    if getattr(cam, "last", None) is None:  # a plain tapped camera (tests)
-        return None
-    t_end = time.time() - (time.monotonic() - cam.last_at)
-    return cam.last, round(cam.last_at * 1e6), t_end - cam.exposure_s / 2
+def _km_between(lat: float, lon: float, site: Site) -> float:
+    """Great-circle distance from (lat, lon) to `site`."""
+    return float(np.radians(separation_deg(lat, lon, site.lat_deg, site.lon_deg)) * EARTH_RADIUS_KM)

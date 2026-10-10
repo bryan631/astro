@@ -77,7 +77,8 @@ def _capture_loop(camera, slot: _Slot, commands, stop, info) -> None:
         try:
             frame = camera.capture()
         except (RuntimeError, OSError) as e:  # unplugged or a timeout: keep trying
-            log.warning("capture failed: %r", e)
+            if slot.header[CONNECTED]:  # once per loss, not every RETRY_S
+                log.warning("capture failed: %r", e)
             slot.header[CONNECTED] = 0
             stop.wait(RETRY_S)
             continue

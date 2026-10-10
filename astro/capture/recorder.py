@@ -18,12 +18,6 @@ from astro.devices.base import Camera, Roi
 
 log = logging.getLogger(__name__)
 
-
-def safe_name(name: str) -> str:
-    """A target name as a file name part: "Barnard's Star" -> "Barnards_Star"."""
-    return re.sub(r"[^A-Za-z0-9_-]", "", name.replace(" ", "_")) or "target"
-
-
 ROI_PX = 512  # the smallest planet ROI, sensor pixels (room for the seeing and the drift)
 MOON_REACH_PX = 1400  # moons this far from the planet join the ROI (Callisto: ~10' at 0.5"/px)
 MAX_ROI_PIXELS = 2048 * 640  # the farthest moons drop out past this (disk space, frame rate)
@@ -33,16 +27,20 @@ EDGE_EVERY = 10  # frames between planet positions for the edge clock (a blob se
 PAUSED_WAIT_S = 0.1
 KEEP_RECORDINGS = 3  # raw SER videos kept after processing (names sort by time)
 MIN_FREE_BYTES = 2 * 1024**3  # a 60 s recording is ~1.5 GB
+PLANET_EXPOSURE_S, PLANET_GAIN = 0.02, 250
+PLANET_PEAK = (150, 230)  # 8-bit: the disk's brightest pixels land here (Jupiter clipped at 20 ms)
+MIN_PLANET_EXPOSURE_S = 0.0002
+
+
+def safe_name(name: str) -> str:
+    """A target name as a file name part: "Barnard's Star" -> "Barnards_Star"."""
+    return re.sub(r"[^A-Za-z0-9_-]", "", name.replace(" ", "_")) or "target"
+
 
 def prune(out_dir: Path, keep: int = KEEP_RECORDINGS) -> None:
     """Delete all but the newest `keep` recordings (each is ~1.5 GB; pictures are kept)."""
     for old in sorted(out_dir.glob("*.ser"))[:-keep or None]:
         old.unlink(missing_ok=True)
-
-
-PLANET_EXPOSURE_S, PLANET_GAIN = 0.02, 250
-PLANET_PEAK = (150, 230)  # 8-bit: the disk's brightest pixels land here (Jupiter clipped at 20 ms)
-MIN_PLANET_EXPOSURE_S = 0.0002
 
 
 class CaptureRefused(Exception):
@@ -92,7 +90,6 @@ class Recorder:
             self._restore_view()
             raise
         stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")  # microseconds: never reuse a name
-        self.out_dir.mkdir(parents=True, exist_ok=True)
         rec = Recording(self.out_dir / f"{stamp}_{safe_name(name)}.ser", name,
                         edge=EdgeClock(*self.sensor))
         self._stop.clear()
@@ -222,13 +219,17 @@ class Recorder:
                             rec.error = "The planet drifted out of view, so I stopped early."
                             break
         except (RuntimeError, OSError, ValueError) as e:  # SDK error, disk full, bad frame
+            log.exception("recording failed")
             rec.error = f"Recording failed: {e}"
         finally:
             try:
                 self._restore_view()
             except (RuntimeError, OSError) as e:  # e.g. camera unplugged: still report and finish
+                log.exception("recording: camera did not reset")
                 rec.error = rec.error or f"Recording stopped, and the camera did not reset: {e}"
             finally:
+                log.info("recording done", extra={"data": {"name": rec.name, "frames": rec.frames,
+                                                           "error": rec.error, "lost": rec.lost}})
                 rec.done.set()
 
     def _recenter(self, frame, roi: Roi, rec: Recording) -> Roi:

@@ -164,9 +164,6 @@ class FinderSync:
         with self._model_lock:
             return model_to_dict(self.model)
 
-    def focus_report(self) -> FocusReport:
-        return check_focus(finder_gray(self.camera.capture()))  # callers handle a dead camera
-
     def sync(self, fresh: bool = True, replace_near_deg: float | None = None) -> tuple[bool, str]:
         """Solve the current finder view and refine the mount model. Returns (ok, message).
         Always a new solve (`fresh` is for the same interface as SolveTracker). With

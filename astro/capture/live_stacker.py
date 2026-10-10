@@ -4,6 +4,7 @@ The scope doesn't track, so subs stay short (stars drift ~30 px/s at prime focus
 target slides out of the 32' field within about two minutes; stacking stops then.
 """
 
+import logging
 import os
 import threading
 import time
@@ -25,6 +26,7 @@ PREVIEW_EVERY_S = 3.0  # refresh the tablet's live view this often
 MAX_SKIPS_IN_A_ROW = 10  # target drifted away, or clouds
 PREVIEW_WIDTH = 960  # the page's live-stack picture: a small JPEG (the full PNG was 4.5 MB)
 PAUSED_WAIT_S = 0.1
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -73,6 +75,7 @@ class LiveStacker:
         live = LiveSession(name, self.preview_dir / f"{file}.jpg", self.out_dir / f"{file}.png")
         self._stop.clear()
         self.current = live
+        log.info("stacking", extra={"data": {"name": name, "seconds": seconds}})
         threading.Thread(target=self._run, args=(live, seconds), daemon=True).start()
         return live
 
@@ -117,19 +120,24 @@ class LiveStacker:
                     saved = time.monotonic()
                     self._save(stack, live)
         except (RuntimeError, OSError, ValueError) as e:
+            log.exception("stacking failed")
             live.error = f"Stacking failed: {e}"
         finally:
             try:
                 if stack.has_frames:
                     self._finish(stack, live)
             except (RuntimeError, OSError, ValueError) as e:
+                log.exception("stacking: saving the picture failed")
                 live.frames = 0  # no picture to announce
                 live.error = f"I couldn't save the stacked picture: {e}"
             try:
                 self._restore_mode()
             except (RuntimeError, OSError) as e:
+                log.exception("stacking: camera did not reset")
                 live.error = live.error or f"Stacking stopped, and the camera did not reset: {e}"
             finally:
+                log.info("stacking done", extra={"data": {"name": live.name, "frames": live.frames,
+                                                          "skipped": live.skipped, "error": live.error}})
                 live.done.set()
 
     def _restore_mode(self) -> None:

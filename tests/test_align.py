@@ -7,8 +7,8 @@ import numpy as np
 import pytest
 from scipy import ndimage
 
-from astro import session as session_module
 from astro.devices.stream import ThreadStream
+from astro.pointing import align
 from astro.pointing.align import (
     box_on_finder_view,
     finder_offset_to_sky,
@@ -186,8 +186,8 @@ class CloudedFinder(FakeFinder):
 @pytest.mark.parametrize("clear", [True, False])
 def test_align_button_fits_the_main_camera_onto_the_finder(monkeypatch, tmp_path, clear):
     """Without a plate solve (clouds), Align still moves the box; Go to keeps its old aim."""
-    monkeypatch.setattr(session_module, "ALIGN_S", 2.5)
-    monkeypatch.setattr(session_module, "ALIGN_SCALE", (10.0, 40.0))  # the fakes' scale is 20
+    monkeypatch.setattr(align, "ALIGN_S", 2.5)
+    monkeypatch.setattr(align, "ALIGN_SCALE", (10.0, 40.0))  # the fakes' scale is 20
     start = time.monotonic()
     finder_cam, main_cam = ThreadStream(DriftingSky(False, start)), ThreadStream(DriftingSky(True, start))
     s = Session(Site(26.6, -80.1), clock=lambda: datetime(2026, 10, 10, 2, 0, tzinfo=UTC),
@@ -206,4 +206,34 @@ def test_align_button_fits_the_main_camera_onto_the_finder(monkeypatch, tmp_path
     assert fit.scale == pytest.approx(20, rel=0.05)
     assert s.main_box and s.centerer.offset.observations == (1 if clear else 0)
     assert s.calibration()["main_in_finder"]["center"] == pytest.approx(list(fit.center))
+    finder_cam.close(), main_cam.close()
+
+
+class DarkMain(DriftingSky):
+    def capture(self):
+        w, h = self.sensor_size
+        return np.full((h, w), 20, np.uint8)  # no star in the telescope view
+
+
+@pytest.mark.parametrize("main_cls,scale,expected", [
+    (DriftingSky, (30.0, 40.0), "That didn't fit"),  # the fakes' scale is 20: rejected, box kept
+    (DarkMain, (10.0, 40.0), "I don't see a bright star"),
+])
+def test_align_failures_keep_the_old_box(monkeypatch, tmp_path, main_cls, scale, expected):
+    monkeypatch.setattr(align, "ALIGN_S", 1.5)
+    monkeypatch.setattr(align, "ALIGN_SCALE", scale)
+    start = time.monotonic()
+    finder_cam, main_cam = ThreadStream(DriftingSky(False, start)), ThreadStream(main_cls(True, start))
+    old_box = [[1, 2], [3, 4], [5, 6], [7, 8]]
+    s = Session(Site(26.6, -80.1), clock=lambda: datetime(2026, 10, 10, 2, 0, tzinfo=UTC),
+                finder=FakeFinder(finder_cam), main_camera=main_cam, main_sensor=(1000, 600),
+                data_dir=tmp_path, calibration={"main_box": old_box})
+    finder_cam.capture(), main_cam.capture()
+    s.action("align")
+    said = []
+    while not said and time.monotonic() - start < 10:
+        said = [m["text"] for m in s.tick(0.0) if m["type"] == "say"]
+        time.sleep(0.05)
+    assert said and said[0].startswith(expected), said
+    assert s.main_box == old_box and s.main_in_finder is None and s._align is None
     finder_cam.close(), main_cam.close()
