@@ -21,6 +21,7 @@ MIN_STARS = 3  # fewer: judge by the brightest object's edges instead
 MAX_STARS = 300
 MIN_HFR_PX = 0.5  # a perfectly sharp star can't make the number blow up
 PLANET_AREA_PX = 80  # a bright blob at least this big is a disk (Saturn: ~20 px across, binned)
+SKY_BLOCK_PX = 64  # the sky's own gradient (cloud glow, the horizon) is smooth over this
 
 
 @dataclass(frozen=True)
@@ -38,18 +39,35 @@ def _sky(img: np.ndarray) -> tuple[float, float]:
     return bg, max(noise, 0.5)
 
 
+def _flatten(img: np.ndarray) -> np.ndarray:
+    """The frame minus its smooth sky: a median per block, interpolated. Cloud glow brightens
+    one side of the finder ~2.5x; with one sky level for the frame, that hid every star."""
+    b = SKY_BLOCK_PX
+    h, w = img.shape[0] // b * b, img.shape[1] // b * b
+    if h == 0 or w == 0:
+        return img - np.median(img)
+    blocks = np.median(img[:h, :w].reshape(h // b, b, w // b, b).swapaxes(1, 2).reshape(h // b, w // b, -1), axis=2)
+    sky = ndimage.zoom(blocks, (img.shape[0] / blocks.shape[0], img.shape[1] / blocks.shape[1]),
+                       order=1, mode="nearest", grid_mode=True)
+    return img - sky
+
+
 def measure_focus(lum: np.ndarray) -> FocusMeasure:
     """The focus number for a frame (8-bit scale gray, hot pixels already removed)."""
-    img = lum.astype(np.float32)
+    raw = lum.astype(np.float32)
+    img = _flatten(raw)
     bg, noise = _sky(img)
     above = bg + DETECT_SIGMA * noise
     labels, n = ndimage.label(ndimage.gaussian_filter(img, 1.0) > above)
     if n == 0:
         return FocusMeasure(None, 0, None, "none")
     ids = np.arange(1, n + 1)
-    areas = ndimage.sum_labels(img > above, labels, ids)  # unsmoothed: a hot pixel stays 1 px
-    peaks = ndimage.maximum(img, labels, ids)
-    usable = ids[(areas >= MIN_AREA_PX) & (areas <= MAX_AREA_PX) & (peaks < SATURATED)
+    on = labels > 0  # the per-star sums below look only at star pixels (a full frame is slow)
+    lab = labels[on]
+    areas = ndimage.sum_labels(img[on] > above, lab, ids)  # unsmoothed: a hot pixel stays 1 px
+    peaks = ndimage.maximum(img[on], lab, ids)
+    clipped = ndimage.maximum(raw[on], lab, ids) >= SATURATED
+    usable = ids[(areas >= MIN_AREA_PX) & (areas <= MAX_AREA_PX) & ~clipped
                  & (peaks > bg + MEASURE_SIGMA * noise)]
     if len(usable) >= MIN_STARS:
         if len(usable) > MAX_STARS:  # an even spread over brightness, not just the brightest
