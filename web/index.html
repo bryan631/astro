@@ -175,8 +175,8 @@ document.getElementById("typed").onsubmit = e => {
 document.getElementById("bigstop").onclick = () => { stopAudio(); send("stop"); };
 async function showPictures() {
   const box = document.getElementById("gallery");
-  const files = await (await fetch("/gallery")).json();
-  box.innerHTML = files.length ? files.map(f => `<a href="/pictures/${f}" target="_blank"><img src="/pictures/${f}" alt="${f}"></a>`).join("")
+  const urls = demo ? DEMO_PICTURES : (await (await fetch("/gallery")).json()).map(f => `/pictures/${f}`);
+  box.innerHTML = urls.length ? urls.map(u => `<a href="${u}" target="_blank"><img src="${u}" alt="${u}"></a>`).join("")
                                : "<p>No pictures yet.</p>";
   box.hidden = false;
 }
@@ -434,16 +434,18 @@ document.querySelectorAll("#livectl button").forEach(b => b.onclick = () => {
   else document.getElementById("live").style.transform = `scale(${b.dataset.zoom})`;
   document.getElementById("liveframe").style.filter = `brightness(${liveGain})`;
 });
-// GUI design demo (scripts/dev/sim_pictures.py): ?demo=m42 plays a made-up live stack.
+// GUI design demo (scripts/dev/sim_pictures.py): ?demo=m42 (or m31, m45) plays a made-up
+// live stack, then shows the made-up pictures in place of the gallery.
 const demo = new URLSearchParams(location.search).get("demo");
+const DEMO_PICTURES = ["m42", "m31", "m45", "jupiter", "saturn", "moon"].map(n => `/demo/${n}.jpg`);
 if (demo) (async () => {
-  for (let n = 1; n <= 15; n++) {
-    handle({type: "live", url: `/live/sim_${demo}_${String(n).padStart(2, "0")}.png`, frames: n * 4});
-    handle({type: "notice", text: `Stacking ${demo.toUpperCase()}: ${n * 4} frames`});
+  for (let n = 1; n <= 10; n++) {
+    handle({type: "live", url: `/demo/${demo}_${String(n).padStart(2, "0")}.jpg`, frames: n * 6});
+    handle({type: "notice", text: `Stacking ${demo.toUpperCase()}: ${n * 6} frames`});
     await new Promise(r => setTimeout(r, 1500));
   }
-  handle({type: "picture", file: `sim_${demo}.png`});
-  handle({type: "say", text: "Done. It's in Pictures."});
+  handle({type: "picture"});
+  handle({type: "notice", text: "Done. Here are the demo pictures."});
   showPictures();
 })();
 </script>
