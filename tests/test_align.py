@@ -8,7 +8,7 @@ import pytest
 from scipy import ndimage
 
 from astro.devices.stream import ThreadStream
-from astro.pointing import align
+from astro.pointing import align, main_solve
 from astro.pointing.align import (
     AlignRun,
     box_on_finder_view,
@@ -18,8 +18,11 @@ from astro.pointing.align import (
     sky_offset_to_altaz,
 )
 from astro.pointing.coords import Site
+from astro.pointing.labels import gnomonic, sky_to_pixels
+from astro.pointing.main_solve import _untangent
 from astro.pointing.platesolve import FinderSolver, Solution, finder_gray
 from astro.session import Session
+from tests.test_main_solve import seen_by_main, sky_field
 
 FIXTURE = "tests/data/align/bright-star-2026-10-10.npz"  # both cameras, time-stamped
 
@@ -256,3 +259,61 @@ def test_align_run_saves_its_frames_and_tracks(tmp_path):
     run.save(tmp_path / "a.npz")
     got = np.load(tmp_path / "a.npz")
     assert got["finder"].shape == (4, 96, 128) and got["main"][:, 0, 0].tolist() == [0, 3]
+
+
+class StaticMain(DriftingSky):
+    """The main camera seeing a fixed synthetic star field (rendered once)."""
+
+    frame: np.ndarray
+
+    def __init__(self, frame):
+        super().__init__(True, 0.0)
+        self.frame, self.sensor_size = frame, frame.shape[::-1]
+
+    def capture(self):
+        return self.frame
+
+
+SKY_FINDER = Solution(150.0, 30.0, 25.0, 10.38, 20, 40, 1e-9, 300)
+
+
+class FakeSolver:
+    def solve(self, frame):
+        return SKY_FINDER
+
+
+class SolvingFinder(FakeFinder):
+    solver = FakeSolver()
+
+
+def test_align_from_two_plate_solves_skips_the_drift(monkeypatch, tmp_path):
+    """With the field's Gaia stars cached, one frame pair places the main camera: no waiting
+    for the drift, and no guessing which finder star is the one in the main camera."""
+    monkeypatch.setattr(align, "ALIGN_S", 30.0)
+    rng = np.random.default_rng(8)
+    catalog = sky_field(rng)
+    ra_c, dec_c = _untangent(complex(1.2 * 3600, 0.5 * 3600), SKY_FINDER.ra_deg, SKY_FINDER.dec_deg)
+    xy = seen_by_main(catalog, ra_c, dec_c, 60.0)  # brightest first
+    img = np.zeros((2180, 3856))
+    for (x, y), flux in zip(xy, np.geomspace(60000, 4000, len(xy)), strict=True):
+        img[int(y + 1090), int(x + 1928)] = flux
+    frame = np.clip(ndimage.gaussian_filter(img, 3.0) + 30 + rng.normal(0, 8, img.shape), 0, 255).astype(np.uint8)
+    (tmp_path / "gaia").mkdir()
+    np.save(main_solve._tile_path(SKY_FINDER.ra_deg, SKY_FINDER.dec_deg, tmp_path / "gaia"), catalog)
+    start = time.monotonic()
+    finder_cam, main_cam = ThreadStream(DriftingSky(False, start)), ThreadStream(StaticMain(frame))
+    s = Session(Site(26.6, -80.1), clock=lambda: datetime(2026, 10, 10, 2, 0, tzinfo=UTC),
+                finder=SolvingFinder(finder_cam), main_camera=main_cam, main_sensor=(3856, 2180),
+                data_dir=tmp_path)
+    finder_cam.capture(), main_cam.capture()
+    s.action("align")
+    said = []
+    while not said and time.monotonic() - start < 15:
+        said = [m["text"] for m in s.tick(0.0) if m["type"] == "say"]
+        time.sleep(0.05)
+    assert said and said[0].startswith("Aligned from the stars"), said
+    east, north = gnomonic(SKY_FINDER.ra_deg, SKY_FINDER.dec_deg, ra_c, dec_c)
+    expected = np.add(sky_to_pixels(east, north, SKY_FINDER, 1280), [640, 480])
+    assert np.allclose(s.main_in_finder.center, expected, atol=0.1)
+    assert s.main_box and s.centerer.offset.observations == 1
+    finder_cam.close(), main_cam.close()

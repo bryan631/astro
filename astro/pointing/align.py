@@ -11,9 +11,15 @@ the same moments give, by least squares,
 with A a scale-and-rotation (neither camera mirrors the sky: a refractor finder and a two-mirror
 Newtonian) and c the main camera's center on the finder's sensor. From that: the main camera's
 box on the finder view, and with one finder plate solve, its offset on the sky for "go to".
+
+Better, when the Gaia stars for the field are on disk: plate-solve one main frame and the finder
+frame taken with it (astro/pointing/main_solve.py). The main camera's stars, placed on the finder
+through the finder's solve, give the same fit with no guess at which finder star is which: a
+very bright finder star beat the dim one actually in the main view (2026-10-10).
 """
 
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -25,11 +31,13 @@ from scipy import ndimage
 from astro.capture.focus import flatten_sky
 from astro.capture.roi import brightest_blob
 from astro.pointing.coords import Site, radec_to_altaz
+from astro.pointing.labels import gnomonic, sky_to_pixels
 from astro.pointing.main_offset import MainOffset, local_delta
-from astro.pointing.platesolve import Solution, finder_gray
+from astro.pointing.main_solve import MainSolution, cached_catalog, detect_stars, solve_main
+from astro.pointing.platesolve import FinderSolver, Solution, finder_gray
 
 ALIGN_S = 10.0  # Align watches the bright star drift this long in both cameras
-ALIGN_SCALE = (25.0, 130.0)  # main pixels per finder pixel: ~58 for this pair (14.6" vs 0.25")
+ALIGN_SCALE = (25.0, 130.0)  # main pixels per finder pixel: ~58 for this pair (29.2" vs 0.50")
 log = logging.getLogger(__name__)
 
 MIN_DRIFT_PX = 50.0  # main-camera pixels the star must move for a rotation (~2 s of sidereal drift)
@@ -40,6 +48,7 @@ BRIGHTER_BY = 3.0  # the chosen finder star must outshine every other candidate 
 SEARCH_RADII_PX = (60, 120, 250)
 DETECT_SIGMA = 8.0
 KEEP_RUNS = 20  # saved Align runs (~20 MB each)
+PAIR_S = 1.0  # a main and a finder frame this close in time make a pair to plate-solve
 
 
 @dataclass(frozen=True)
@@ -75,8 +84,15 @@ def fit_main_in_finder(finder_t, finder_xy, main_t, main_xy) -> MainInFinder | N
     t0 = main_t[0]
     fx = np.polyval(np.polyfit(finder_t - t0, finder_xy[:, 0], 1), main_t - t0)
     fy = np.polyval(np.polyfit(finder_t - t0, finder_xy[:, 1], 1), main_t - t0)
+    return fit_similarity(np.c_[fx, fy], main_xy)
+
+
+def fit_similarity(finder_xy: np.ndarray, main_xy: np.ndarray) -> MainInFinder:
+    """Least squares main = A (finder - c), A a scale and rotation, from matched positions:
+    finder sensor px and main px from the main camera's center."""
+    fx, fy = finder_xy[:, 0], finder_xy[:, 1]
     # main = [[p, -q], [q, p]] finder + d  ->  linear in (p, q, dx, dy)
-    n = len(main_t)
+    n = len(fx)
     rows = np.zeros((2 * n, 4))
     rows[0::2] = np.c_[fx, -fy, np.ones(n), np.zeros(n)]
     rows[1::2] = np.c_[fy, fx, np.zeros(n), np.ones(n)]
@@ -114,6 +130,15 @@ def pick_star(gray: np.ndarray, near: tuple[float, float], radii: tuple = SEARCH
     return float(x), float(y)
 
 
+def fit_from_solves(sol: Solution, finder_size: tuple[int, int], main: MainSolution) -> MainInFinder:
+    """The fit from a finder solve and a main solve of frames taken together: the main camera's
+    matched stars, placed on the finder's sensor through the finder's solve."""
+    w, h = finder_size
+    east, north = gnomonic(sol.ra_deg, sol.dec_deg, main.star_radec[:, 0], main.star_radec[:, 1])
+    dx, dy = sky_to_pixels(east, north, sol, w)
+    return fit_similarity(np.c_[dx + w / 2, dy + h / 2], main.main_xy)
+
+
 def finder_offset_to_sky(dx: float, dy: float, sol: Solution, width_px: int) -> tuple[float, float]:
     """Finder sensor pixels from the image center -> (east, north) degrees on the sky, in the
     plate solver's convention (checked against catalog stars: tests/test_align.py)."""
@@ -128,8 +153,12 @@ def sky_offset_to_altaz(sol: Solution, east: float, north: float, site: Site,
     """An (east, north) offset from the finder's solved center, as the scope's own offset
     (d_az on the sky, d_alt): fixed to the tube, so it holds wherever the scope points."""
     d0 = np.radians(sol.dec_deg)
-    dec = sol.dec_deg + north
-    ra = sol.ra_deg + east / max(np.cos(d0), 1e-6)
+    return radec_offset_to_altaz(sol, sol.ra_deg + east / max(np.cos(d0), 1e-6), sol.dec_deg + north,
+                                 site, when)
+
+
+def radec_offset_to_altaz(sol: Solution, ra: float, dec: float, site: Site, when: datetime) -> MainOffset:
+    """Where (ra, dec) sits from the finder's solved center, as the scope's own offset."""
     alt0, az0 = radec_to_altaz(sol.ra_deg, sol.dec_deg, site, when)
     alt1, az1 = radec_to_altaz(ra, dec, site, when)
     d_az, d_alt = local_delta(alt0, az0, alt1, az1)
@@ -163,6 +192,8 @@ class AlignRun:
         self.seen: dict[str, int | None] = {"finder": None, "main": None}  # newest frame used
         self.no_star = 0  # finder frames without one clear star near `near`
         self.frames: dict[str, list] = {"finder": [], "main": []}  # (t, frame), for save()
+        self.solving: threading.Thread | None = None
+        self.solved: tuple[MainInFinder, Solution, MainSolution] | None = None  # plate-solve path
 
     def add(self, name: str, got: tuple[np.ndarray, int, float] | None) -> None:
         """A camera's newest (frame, frame number, mid-exposure time), once per frame."""
@@ -179,10 +210,37 @@ class AlignRun:
                 self.no_star += 1
             else:
                 self.finder.append((t_mid, star[0] * 2, star[1] * 2))
-        elif (blob := brightest_blob(frame)) is not None:
-            h, w = frame.shape
-            self.main_size = (w, h)
+            return
+        h, w = frame.shape
+        self.main_size = (w, h)
+        if (blob := brightest_blob(frame)) is not None:
             self.main.append((t_mid, blob[0] - w / 2, blob[1] - h / 2))
+
+    def start_solve(self, solver: FinderSolver, cache_dir: Path) -> None:
+        """Once the newest main and finder frames were taken together, plate-solve them in a
+        thread (~1 s); `solved` is set if both solve. The drift goes on meanwhile as the fallback."""
+        if self.solving is not None or not self.frames["main"] or not self.frames["finder"]:
+            return
+        (t_main, main), (t_finder, finder) = self.frames["main"][-1], self.frames["finder"][-1]
+        if abs(t_main - t_finder) > PAIR_S:
+            return
+        self.solving = threading.Thread(target=self._solve, args=(solver, cache_dir, finder, main),
+                                        daemon=True)
+        self.solving.start()
+
+    def _solve(self, solver: FinderSolver, cache_dir: Path, finder: np.ndarray, main: np.ndarray) -> None:
+        sol = solver.solve(finder)
+        stars = None if sol is None else cached_catalog(sol.ra_deg, sol.dec_deg, cache_dir)
+        msol = None if stars is None else solve_main(detect_stars(main)[0], stars, sol.ra_deg, sol.dec_deg)
+        fit = None if msol is None else fit_from_solves(sol, self.finder_size, msol)
+        log.info("align solved", extra={"data": {
+            "finder": sol and [sol.ra_deg, sol.dec_deg, sol.roll_deg], "catalog": stars is not None and len(stars),
+            "main": msol and [msol.ra_deg, msol.dec_deg, msol.roll_deg, msol.scale_arcsec_px, msol.matches,
+                              round(msol.rms_arcsec, 2), round(msol.ms)],
+            "center": fit and fit.center.round(1).tolist(), "scale": fit and fit.scale,
+            "rotation": fit and fit.rotation_deg, "residual": fit and fit.residual_px}})
+        if fit is not None and ALIGN_SCALE[0] <= fit.scale <= ALIGN_SCALE[1]:
+            self.solved = (fit, sol, msol)
 
     def save(self, path: Path) -> None:
         """The run's frames and tracks, to look at a failed Align later (np.load)."""

@@ -41,6 +41,7 @@ from astro.pointing.align import (
     MainInFinder,
     box_on_finder_view,
     finder_offset_to_sky,
+    radec_offset_to_altaz,
     sky_offset_to_altaz,
 )
 from astro.pointing.coords import Site, altaz_to_radec, body_altaz, radec_to_altaz
@@ -48,6 +49,7 @@ from astro.pointing.finder_sync import FinderSync
 from astro.pointing.geometry import separation_deg
 from astro.pointing.labels import FinderLabels
 from astro.pointing.main_offset import MainOffset
+from astro.pointing.main_solve import field_catalog
 from astro.process.planet import MIN_FRAMES, StackResult, process_ser
 from astro.process.view import ROTATE
 from astro.safety import DAYTIME_SUN_ALT_DEG, SafetyResult, check_target
@@ -848,6 +850,10 @@ class Session:
         near = self.main_in_finder.center if self.main_in_finder else np.array([w / 2, h / 2])
         self.guide, self._centering = None, False
         self._align = AlignRun(near, (w, h), self.finder.last_solution if solved else None)
+        if solved:  # the field's Gaia stars, for plate-solving the main camera (cached after once)
+            sol = self.finder.last_solution
+            threading.Thread(target=field_catalog, args=(sol.ra_deg, sol.dec_deg, self.data_dir / "gaia"),
+                             daemon=True).start()
         box_only = "" if solved else (" The finder can't plate-solve right now (clouds?), so this "
                                       "moves the box only; Go to keeps its old aim.")
         return [say(f"Aligning: keep the bright star in the telescope view and don't touch the scope "
@@ -857,16 +863,28 @@ class Session:
         run = self._align
         for name in ("finder", "main"):
             run.add(name, frame_with_time(self.camera(name)))
-        if time.monotonic() < run.until:
+        if (solver := getattr(self.finder, "solver", None)) is not None:
+            run.start_solve(solver, self.data_dir / "gaia")
+        if run.solved is None and time.monotonic() < run.until:
             return []
         self._align = None
-        fit = run.result()
         stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         threading.Thread(target=self._save_align, args=(run, self.data_dir / "align" / f"{stamp}.npz"),
                          daemon=True).start()
+        w, h = run.finder_size
+        if run.solved is not None:  # both cameras plate-solved: no 10 s drift needed
+            fit, sol, main = run.solved
+            self.main_box = box_on_finder_view(fit, run.main_size, (w, h), ROTATE["finder"])
+            self.main_in_finder = fit
+            self.centerer.offset = radec_offset_to_altaz(sol, main.ra_deg, main.dec_deg, self.site, self.clock())
+            self._save_calibration()
+            east, north = finder_offset_to_sky(fit.center[0] - w / 2, fit.center[1] - h / 2, sol, w)
+            return [say(f"Aligned from the stars in both cameras. The telescope points "
+                        f"{np.hypot(east, north) * 60:.0f} arcminutes from the finder's center, turned "
+                        f"{fit.rotation_deg:.0f} degrees. Its box is on the finder view.")]
+        fit = run.result()
         if isinstance(fit, str):
             return [say(fit)]
-        w, h = run.finder_size
         self.main_box = box_on_finder_view(fit, run.main_size, (w, h), ROTATE["finder"])
         self.main_in_finder = fit
         if run.sol is None:  # no solve: the box from the drift alone, Go to's aim unchanged
