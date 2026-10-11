@@ -30,6 +30,9 @@ STAR_SMOOTH_PX = 2.0  # stars are wider than this; pixel noise isn't
 HIGHPASS_PX = 10  # the sky's glow and gradients are smoother than this; stars much smaller
 MIN_PEAK_SIGMA = 16.0  # a real pair peaked at 23; noise and an unrelated field at 8-10 (2026-10-10)
 MIN_COVER = 0.5  # the finished picture keeps pixels at least this share of the frames reached
+# OpenCV names a Bayer pattern by its second row: an RGGB sensor is its BayerBG.
+DEMOSAIC = {"RGGB": cv2.COLOR_BayerBG2RGB, "GRBG": cv2.COLOR_BayerGB2RGB,
+            "GBRG": cv2.COLOR_BayerGR2RGB, "BGGR": cv2.COLOR_BayerRG2RGB}
 RING = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]], np.uint8)  # a pixel's eight neighbors
 log = logging.getLogger(__name__)
 
@@ -41,8 +44,10 @@ class StackStatus:
 
 
 class LiveStack:
-    def __init__(self, bayer: str):
-        self.bayer = bayer
+    def __init__(self, bayer: str, full_res: bool = False):
+        """`full_res`: debayer to every pixel (the finder's small sensor) instead of one pixel
+        per 2x2 cell (the main camera's, whose stars span several cells anyway)."""
+        self.bayer, self.full_res = bayer, full_res
         self._ref_lum: np.ndarray | None = None
         self._ref_spectrum: np.ndarray | None = None  # for the shift fallback, made once
         self._ref_stars: np.ndarray | None = None  # the reference's stars, found once
@@ -53,7 +58,7 @@ class LiveStack:
 
     def add(self, raw: np.ndarray) -> bool:
         """Register one raw Bayer frame to the reference and add it. False if it was skipped."""
-        rgb = superpixel_rgb(raw, self.bayer)
+        rgb = debayer(raw, self.bayer) if self.full_res else superpixel_rgb(raw, self.bayer)
         lum = rgb.mean(axis=-1)
         if self._ref_lum is None:  # first good frame defines the reference
             stars = check_focus(lum).stars  # only its star count: the focus limits are the finder's
@@ -124,6 +129,11 @@ class LiveStack:
         if len(rows) < 16 or len(cols) < 16:  # nothing sensible to keep: show it all
             return img
         return img[rows[0]:rows[-1] + 1, cols[0]:cols[-1] + 1]
+
+
+def debayer(raw: np.ndarray, bayer: str) -> np.ndarray:
+    """Full-resolution float RGB of a raw Bayer frame (OpenCV's edge-aware bilinear)."""
+    return cv2.cvtColor(raw, DEMOSAIC[bayer]).astype(np.float32)
 
 
 def stretch(img: np.ndarray, black_pct: float = 25, white_pct: float = 99.8,

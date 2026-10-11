@@ -5,9 +5,11 @@ import pytest
 from scipy import ndimage
 
 from astro.capture import live_stacker
+from astro.pointing.coords import Site
 from astro.process import livestack
 from astro.process.livestack import LiveStack, stretch
 from astro.process.planet import _LAYOUT
+from astro.session import Session
 
 SIZE = 256  # raw pixels; stacks are half that after superpixel debayer
 
@@ -193,3 +195,49 @@ def test_picture_drops_the_edges_few_frames_reached():
         assert stack.add(observe(scene, 0, (0, i * 6), rng))  # drifts 42 raw px: 21 stacked px
     full, cropped = stack.image(), stack.picture()
     assert full.shape[0] - cropped.shape[0] <= 2 and full.shape[1] - 21 <= cropped.shape[1] < full.shape[1] - 5
+
+
+@pytest.mark.parametrize("bayer", ["RGGB", "GRBG", "GBRG", "BGGR"])
+def test_debayer_puts_each_color_in_its_channel(bayer):
+    (ry, rx), *_ = _LAYOUT[bayer]
+    raw = np.zeros((16, 16), np.uint8)
+    raw[ry::2, rx::2] = 200  # only the red pixels lit
+    rgb = livestack.debayer(raw, bayer)[4:12, 4:12].mean(axis=(0, 1))
+    assert rgb[0] > 150 and rgb[1] < 20 and rgb[2] < 20
+
+
+class StarCam:
+    """A streamed camera's face for the stacker: drifting synthetic star frames."""
+
+    def __init__(self, bayer="GRBG", exposure_s=1.0, gain=200):
+        self.bayer, self.exposure_s, self.gain, self.sensor_size = bayer, exposure_s, gain, (SIZE, SIZE)
+        self.rng, self.scene, self.n = np.random.default_rng(9), None, 0
+
+    def capture(self):
+        self.scene = sky_scene(self.rng) if self.scene is None else self.scene
+        self.n += 1
+        return observe(self.scene, 0, (self.n * 0.5, 0), self.rng)
+
+    def set_roi(self, roi): pass
+    def set_exposure(self, s): self.exposure_s = s
+    def set_gain(self, g): self.gain = g
+
+
+def test_a_target_bigger_than_the_view_can_be_stacked_whole_with_the_finder(tmp_path):
+    """Andromeda is 3 x 1 degrees; the telescope sees 32' x 18'. Capture asks, and the whole
+    picture comes from the finder at its own settings (they go on feeding the plate solver)."""
+    finder_cam, main_cam = StarCam(), StarCam()
+    finder = SimpleNamespace(camera=finder_cam, synced=False, position=lambda: (45.0, 180.0))
+    s = Session(Site(26.6, -80.1), finder=finder,
+                main_camera=main_cam, main_sensor=(SIZE, SIZE), data_dir=tmp_path)
+    s._what_to_capture = lambda: ["Andromeda Galaxy"]
+    s.stack_seconds = 2.0
+    asked = s.capture()
+    assert "bigger than the telescope's view" in asked[0]["text"]
+    whole, close = asked[1]["options"]
+    assert "finder camera" in s.capture(whole)[0]["text"]
+    live = s.stacker.current
+    assert live.wide and s.stacker.camera is s.camera("finder") and live.done.wait(20)
+    assert live.frames > 2 and live.picture.exists() and (finder_cam.exposure_s, finder_cam.gain) == (1.0, 200)
+    assert "Stacking short pictures" in s.capture(close)[0]["text"] and s.stacker.camera is s.camera("main")
+    s.stacker.stop()

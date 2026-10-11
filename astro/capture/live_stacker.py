@@ -53,6 +53,7 @@ class LiveSession:
     gain: int = 0  # the metered gain
     missed: int = 0  # frames that came in while another was being stacked
     adrift: bool = False  # lost the field (drifted out, clouds): waiting for a nudge back
+    wide: bool = False  # through the finder camera (a target bigger than the telescope's view)
     edge: EdgeClock | None = None  # where the stack's field is in the frame; when it hits the edge
 
 
@@ -60,32 +61,39 @@ class LiveStacker:
     def __init__(self, camera: Camera, out_dir: Path,
                  preview_dir: Path | None = None):
         """`out_dir` gets finished pictures (the gallery); previews go to `preview_dir`."""
-        self.camera, self.out_dir = camera, out_dir
+        self.camera, self.main_camera, self.out_dir = camera, camera, out_dir
         self.preview_dir = preview_dir or out_dir.parent / "live"
         self._stop = threading.Event()
         self.current: LiveSession | None = None
-        self._restore: tuple[float, int] = (0.0, 0)  # camera mode to go back to after a stack
+        self._restore: tuple[float, int] | None = None  # camera mode to go back to after a stack
 
     @property
     def busy(self) -> bool:
         return self.current is not None and not self.current.done.is_set()
 
-    def start(self, name: str, seconds: float) -> LiveSession:
+    def start(self, name: str, seconds: float, wide_camera: Camera | None = None) -> LiveSession:
+        """Stack the telescope camera's short frames, or `wide_camera`'s (the finder, for a target
+        bigger than the telescope's view) at its own settings: they go on feeding the plate solver,
+        and at ~30"/px its stars drift under a pixel a second."""
         if self.busy:
             raise CaptureRefused("I'm already stacking.")
-        # Remember the camera's mode so planetary work afterwards isn't stuck at the stack's.
-        self._restore = (self.camera.exposure_s, self.camera.gain)
-        try:
-            self.camera.set_roi(None)
-            self.camera.set_exposure(SUB_EXPOSURE_S)
-            self.camera.set_gain(START_GAIN)
-        except (RuntimeError, OSError) as e:
-            raise CaptureRefused(f"The telescope camera isn't responding: {e}") from e
+        self.camera = wide_camera or self.main_camera
+        self._restore = None
+        if wide_camera is None:
+            # Remember the camera's mode so planetary work afterwards isn't stuck at the stack's.
+            self._restore = (self.camera.exposure_s, self.camera.gain)
+            try:
+                self.camera.set_roi(None)
+                self.camera.set_exposure(SUB_EXPOSURE_S)
+                self.camera.set_gain(START_GAIN)
+            except (RuntimeError, OSError) as e:
+                raise CaptureRefused(f"The telescope camera isn't responding: {e}") from e
         stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.preview_dir.mkdir(parents=True, exist_ok=True)
         file = f"{stamp}_{safe_name(name)}"
-        live = LiveSession(name, self.preview_dir / f"{file}.jpg", self.out_dir / f"{file}.png")
+        live = LiveSession(name, self.preview_dir / f"{file}.jpg", self.out_dir / f"{file}.png",
+                           wide=wide_camera is not None)
         self._stop.clear()
         self.current = live
         log.info("stacking", extra={"data": {"name": name, "seconds": seconds}})
@@ -106,14 +114,17 @@ class LiveStacker:
             self._skips_in_a_row = 0
 
     def _run(self, live: LiveSession, seconds: float) -> None:
-        stack = LiveStack(self.camera.bayer)
+        stack = LiveStack(self.camera.bayer, full_res=live.wide)
         end = time.monotonic() + seconds
         saved = -1e9  # save on the first frame
         self._skips_in_a_row = 0
         adrift_at = 0.0
         try:
-            live.gain, sky = meter_gain(self.camera, START_GAIN)
-            log.info("stacking gain", extra={"data": {"gain": live.gain, "sky": sky}})
+            if live.wide:
+                live.gain = self.camera.gain
+            else:
+                live.gain, sky = meter_gain(self.camera, START_GAIN)
+                log.info("stacking gain", extra={"data": {"gain": live.gain, "sky": sky}})
             seq = None
             while time.monotonic() < end and not self._stop.is_set():
                 if live.paused.is_set():
@@ -180,6 +191,8 @@ class LiveStacker:
         return None, None
 
     def _restore_mode(self) -> None:
+        if self._restore is None:  # a wide stack kept the finder's settings
+            return
         exposure, gain = self._restore
         self.camera.set_exposure(exposure)
         self.camera.set_gain(gain)

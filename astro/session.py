@@ -72,6 +72,10 @@ FIX_STALE_S = 2.0  # a plate-solve fix older than this is too old to steer by
 ENCODER_STALE_S = 1.0  # encoder positions older than this mean the board or cable is gone
 PLANET_DISK_PX = 2000  # one clipped blob this big (raw px) is a disk: Jupiter ~30000, Sirius ~700
 JUST_THIS_FRAME, STACK_ANYWAY = "Just this frame", "Stack anyway"  # Capture with nothing in view
+# A target bigger than this (arcmin) can be stacked whole with the finder camera (11 x 8 degrees)
+# instead of the telescope's 32' x 18': Capture asks which.
+WIDE_FIELD_ARCMIN = 40.0
+WHOLE, CLOSE_UP = " (whole, finder camera)", " (close-up, telescope)"
 UNNAMED_PLANET = "the planet"  # a disk in the picture when the pointing can't name it
 FIELD_RADIUS_DEG = 0.3  # the telescope's 32' x 18' view, center to corner
 PLANET_NEAR_DEG = 3.0  # ... and it's the planet within this of where the scope points
@@ -429,6 +433,12 @@ class Session:
             choice = found[0] if found else (self.target or "the field")  # pointing unknown: the Go to target
         if choice == JUST_THIS_FRAME:
             return self._save_frame()
+        wide, close = choice.endswith(WHOLE), choice.endswith(CLOSE_UP)  # the answer to the question below
+        choice = choice.removesuffix(WHOLE).removesuffix(CLOSE_UP)
+        if not (wide or close) and (size := self._wide_size(choice)):
+            return [say(f"{choice} is {size / 60:.1f} degrees across, bigger than the telescope's view. "
+                        "The whole of it with the finder camera, or a close-up?"),
+                    {"type": "choose", "options": [choice + WHOLE, choice + CLOSE_UP]}]
         stack = choice == STACK_ANYWAY
         if stack:  # the Go to target (pointing unknown) or the field
             choice = self.target or "the field"
@@ -438,7 +448,8 @@ class Session:
             if video:
                 self.recorder.start(choice, self.record_seconds)
             else:
-                self.stacker.start(choice, self.stack_seconds)  # deep-sky: live stack short subs
+                self.stacker.start(choice, self.stack_seconds,  # deep-sky: live stack short subs
+                                   self.camera("finder") if wide else None)
         except CaptureRefused as e:
             return [say(str(e))]  # nothing started: guidance carries on as before
         self.target = target
@@ -447,8 +458,19 @@ class Session:
             self._announced_done = False
             return [say("Recording. Tap Stop capture when it nears the edge of the picture.")]
         self._stack_done_announced, self._preview_seen, self._adrift_said = False, 0, False
+        if wide:
+            return [say(f"Stacking the finder camera's pictures of all of {choice}. Watch it build up "
+                        "on the screen. Try not to touch the telescope.")]
         return [say(f"Stacking short pictures of {choice}. Watch it build up on the screen. "
                     "Try not to touch the telescope.")]
+
+    def _wide_size(self, name: str) -> float | None:
+        """A Go to target's size (arcmin) when it's bigger than the telescope's view and the finder
+        camera can take all of it, else None."""
+        t = next((t for t in self.sky.targets() if name in (t.name, t.id)), None)
+        if t is None or t.size_arcmin[0] < WIDE_FIELD_ARCMIN or self.camera("finder") is None:
+            return None
+        return t.size_arcmin[0]
 
     def _main_sees_something(self) -> bool:
         """Any star or disk in the telescope view right now (no frame: assume so)."""
