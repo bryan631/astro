@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 from scipy import ndimage
 
 from astro.process import livestack
@@ -54,6 +55,23 @@ def test_cloudy_frame_is_skipped():
     cloud = (20 + rng.normal(0, 8, (SIZE, SIZE))).clip(0, 255).astype(np.uint8)
     assert not stack.add(cloud)
     assert stack.status.frames_skipped == 1 and stack.status.frames_added == 1
+
+
+def test_shift_fallback_stacks_frames_triangles_cannot_match(monkeypatch):
+    """2026-10-10: triangle matching dropped most 0.2 s frames of the Dumbbell; a drifting
+    field is nearly a pure shift, which phase correlation measures from the whole picture."""
+    def no_triangles(*a, **k):
+        raise ValueError("List of matching triangles exhausted")
+
+    monkeypatch.setattr(livestack.astroalign, "find_transform", no_triangles)
+    rng = np.random.default_rng(5)
+    scene = sky_scene(rng)
+    stack = LiveStack("GRBG")
+    for i in range(6):
+        assert stack.add(observe(scene, 0, (-2.0 * i, 3.0 * i), rng))  # rows, cols in raw px
+    assert stack.reference_center() == pytest.approx((64 + 1.5 * 5, 64 - 1.0 * 5), abs=0.3)
+    cloud = (20 + rng.normal(0, 8, (SIZE, SIZE))).clip(0, 255).astype(np.uint8)
+    assert not stack.add(cloud)  # noise has no real peak: still skipped
 
 
 def test_stretch_maps_to_8bit():
