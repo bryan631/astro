@@ -221,6 +221,9 @@ main camera; the box orange in day mode.
 - Check the encoders on the sky: counts follow the scope, and the model holds after a restart.
 - Buttons for the setup wizard, horizon walk and collimation (still worded for voice).
 - Recordings for test data: a focus sweep and a wiggle.
+- Names button: turning names on or off flickers twice, as if tapped extra times (2026-10-10).
+- From the 2026-10-10 night (raw frames in data/night-20261010/): check the night colors and
+  the focus number's steadiness on them; Align's star pick (it took a star 3.5 degrees out).
 
 ## Known risks / open questions
 - SV705C Linux SDK stability (fallback: ZWO ASI585MC).
