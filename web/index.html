@@ -72,6 +72,8 @@
   #capture.on { background: var(--dim); }
   .sheet { position: fixed; inset: 0; background: var(--bg); padding: 12px; overflow: auto; z-index: 5; }
   .sheet .top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  #gotext { width: 100%; font: inherit; padding: 10px; margin-bottom: 10px; background: var(--bg); color: var(--fg);
+            border: 2px solid var(--fg); border-radius: 8px; }
   #targets button, #choices button { display: block; width: 100%; text-align: left; margin-bottom: 8px; }
   #targets button.down { opacity: .5; }
   #targets small { display: block; font-size: 15px; opacity: .8; }
@@ -121,7 +123,9 @@
     <span class="grow"></span><button id="stop">STOP</button>
   </div>
 
-  <div class="sheet" id="s-goto" hidden><div class="top"><b>Go to</b><button data-close>Close</button></div><div id="targets">Loading…</div></div>
+  <div class="sheet" id="s-goto" hidden><div class="top"><b>Go to</b><button data-close>Close</button></div>
+    <input id="gotext" type="search" enterkeyhint="go" autocomplete="off" placeholder="Type a name (M27, Vega, Saturn)…">
+    <div id="targets">Loading…</div></div>
   <div class="sheet" id="s-pics" hidden><div class="top"><b>Pictures</b><button data-close>Close</button></div><div id="pictures"></div></div>
   <div class="sheet" id="viewer" hidden><div class="top"><span>
       <button data-vb="-">−</button> <button data-vb="+">+</button> <button data-vz="1">1x</button> <button data-vz="2">2x</button> <button data-vz="4">4x</button></span>
@@ -342,8 +346,19 @@ document.querySelectorAll("[data-text]").forEach(b => b.onclick = () => sendText
 const open = id => { $(id).hidden = false; }, close = el => { el.closest(".sheet").hidden = true; };
 document.querySelectorAll("[data-close]").forEach(b => b.onclick = () => close(b));
 msgEl.onclick = () => { $("log").textContent = logLines.slice().reverse().join("\n") || "No messages yet."; open("s-log"); };
+// Typing filters the list; Enter sends "go to <name>" (any name the server knows, or Claude
+// works it out). The keyboard's own mic key dictates into the box.
+$("gotext").oninput = () => {
+  const q = $("gotext").value.trim().toLowerCase();
+  $("targets").querySelectorAll("button").forEach(b => b.hidden = q && !b.textContent.toLowerCase().includes(q));
+};
+$("gotext").onkeydown = e => {
+  const name = $("gotext").value.trim();
+  if (e.key !== "Enter" || !name) return;
+  sendText(`go to ${name}`); $("s-goto").hidden = true; showView("finder");
+};
 $("goto").onclick = async () => {
-  open("s-goto"); $("targets").textContent = "Loading…";
+  open("s-goto"); $("targets").textContent = "Loading…"; $("gotext").value = "";
   try {
     const list = await (await fetch("/api/targets")).json();
     $("targets").innerHTML = list.map(t => `<button data-name="${t.name}" class="${t.up ? "" : "down"}">${t.name}

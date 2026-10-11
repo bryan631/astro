@@ -226,7 +226,7 @@ main camera; the box orange in day mode.
   - While recording, the planet's live ROI is pasted over the planet on the still full view; show it as an inset
     off to the side instead, so the planet shows twice (the still full view and the live recording).
   - Better planet stacking (the gallery PNGs are ~2 KB): look at it indoors after the session.
-- "Go to <object>" by voice and typed text, not only the Go to list (2026-10-10).
+- "Go to <object>" by voice in the app (typed box done; the keyboard mic dictates into it) (2026-10-10).
 - Remove Align's drift fit (pick_star, fit_main_in_finder, the tracks) now that Align is plate solves only (2026-10-10).
 - Planet stacker crops the simulator's Saturn to the whole frame (2645 x 1991, ~10 s); real Saturn crops to ~290 px. Check the moon search on sim frames (2026-10-10).
 - Finder zoom: center the zoomed finder view on the main camera's box, not the frame center (2026-10-10).
