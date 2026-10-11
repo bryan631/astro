@@ -37,6 +37,7 @@ from astro.planner.sky import MOON_FEATURES, Sky, by_category_text, tonight_text
 from astro.planner.tonight import PLANETS
 from astro.pointing.align import (
     ALIGN_S,
+    SOLVE_WAIT_S,
     AlignRun,
     MainInFinder,
     box_on_finder_view,
@@ -164,6 +165,7 @@ class Session:
         self._center_gave_up: str | None = None  # main camera lost this target: finder only
         self.main_box: list | None = None  # main field on the finder view (Align)
         self._align: AlignRun | None = None  # Align in progress
+        self.main_solved = False  # main_in_finder came from plate solves (only those replace it)
         self.main_in_finder: MainInFinder | None = None  # the last Align's fit
         self._progress_at, self._capture_at = -1e9, 0.0  # capture progress messages
         self._capture_radec = (0.0, 0.0)  # where a capture began (Recenter's target if unnamed)
@@ -773,6 +775,7 @@ class Session:
             "mount": None,
             "main_box": self.main_box,
             "finder_map": self.labels.map.tolist() if self.labels.map is not None else None,
+            "main_solved": self.main_solved,
             "main_in_finder": ({"a": self.main_in_finder.a.tolist(),
                                 "center": self.main_in_finder.center.tolist(),
                                 "residual_px": self.main_in_finder.residual_px}
@@ -797,6 +800,7 @@ class Session:
         if (mif := data.get("main_in_finder")) is not None:
             self.main_in_finder = MainInFinder(np.array(mif["a"]), np.array(mif["center"]),
                                                mif["residual_px"])
+            self.main_solved = bool(data.get("main_solved"))
         if data.get("main_offset"):
             o = data["main_offset"]
             self.centerer.offset = MainOffset(o["d_az_sky_deg"], o["d_alt_deg"], o["observations"])
@@ -871,8 +875,10 @@ class Session:
             run.add(name, frame_with_time(self.camera(name)))
         if (solver := getattr(self.finder, "solver", None)) is not None:
             run.start_solve(solver, self.data_dir / "gaia")
-        if run.solved is None and time.monotonic() < run.until:
-            return []
+        solving = run.solving is not None and run.solving.is_alive()
+        if run.solved is None and (time.monotonic() < run.until
+                                   or solving and time.monotonic() < run.until + SOLVE_WAIT_S):
+            return []  # a plate solve beats the drift: wait for one still running (a download)
         self._align = None
         stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         threading.Thread(target=self._save_align, args=(run, self.data_dir / "align" / f"{stamp}.npz"),
@@ -881,13 +887,18 @@ class Session:
         if run.solved is not None:  # both cameras plate-solved: no 10 s drift needed
             fit, sol, main = run.solved
             self.main_box = box_on_finder_view(fit, run.main_size, (w, h), ROTATE["finder"])
-            self.main_in_finder = fit
+            self.main_in_finder, self.main_solved = fit, True
             self.centerer.offset = radec_offset_to_altaz(sol, main.ra_deg, main.dec_deg, self.site, self.clock())
             self._save_calibration()
             east, north = finder_offset_to_sky(fit.center[0] - w / 2, fit.center[1] - h / 2, sol, w)
             return [say(f"Aligned from the stars in both cameras. The telescope points "
                         f"{np.hypot(east, north) * 60:.0f} arcminutes from the finder's center, turned "
                         f"{fit.rotation_deg:.0f} degrees. Its box is on the finder view.")]
+        if self.main_solved:  # the drift picked wrong stars 4 times in a row and replaced good
+            # plate-solved alignments (2026-10-10): only a new plate solve replaces one
+            return [say("I couldn't plate-solve the telescope view this time, so I kept the "
+                        "alignment from the stars. Put a few stars in the telescope view and tap "
+                        "Align again.")]
         fit = run.result()
         if isinstance(fit, str):
             return [say(fit)]

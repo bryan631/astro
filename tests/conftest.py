@@ -10,6 +10,8 @@ def _ignore_disk_space(monkeypatch, request):
 
 
 @pytest.fixture(autouse=True)
-def _no_gaia_download(monkeypatch):
-    """Align fetches the field's Gaia stars from VizieR; tests stay offline."""
-    monkeypatch.setattr("astro.session.field_catalog", lambda *a, **k: None)
+def _no_gaia_download(monkeypatch, request):
+    """Align fetches the field's Gaia stars from ESA or VizieR; tests stay offline (a cached
+    tile is still read). The download test fakes the network itself."""
+    if "fetched" not in request.node.name:
+        monkeypatch.setattr("astro.pointing.main_solve._download", lambda *a, **k: None)

@@ -251,6 +251,29 @@ def test_align_failures_keep_the_old_box(monkeypatch, tmp_path, main_cls, scale,
     finder_cam.close(), main_cam.close()
 
 
+def test_the_drift_never_replaces_a_plate_solved_alignment(monkeypatch, tmp_path):
+    """2026-10-10: four drift fallbacks took wrong stars and overwrote good plate-solved Aligns."""
+    monkeypatch.setattr(align, "ALIGN_S", 1.5)
+    monkeypatch.setattr(align, "ALIGN_SCALE", (10.0, 40.0))
+    start = time.monotonic()
+    finder_cam, main_cam = ThreadStream(DriftingSky(False, start)), ThreadStream(DriftingSky(True, start))
+    solved = {"main_box": [[1, 2], [3, 4], [5, 6], [7, 8]], "main_solved": True,
+              "main_in_finder": {"a": [[58.0, 0.0], [0.0, 58.0]], "center": [648.0, 504.0], "residual_px": 0.5}}
+    s = Session(Site(26.6, -80.1), clock=lambda: datetime(2026, 10, 10, 2, 0, tzinfo=UTC),
+                finder=FakeFinder(finder_cam), main_camera=main_cam, main_sensor=(1000, 600),
+                data_dir=tmp_path, calibration=solved)
+    finder_cam.capture(), main_cam.capture()
+    s.action("align")
+    said = []
+    while not said and time.monotonic() - start < 10:
+        said = [m["text"] for m in s.tick(0.0) if m["type"] == "say"]
+        time.sleep(0.05)
+    assert said and "kept the alignment" in said[0], said
+    assert s.main_box == solved["main_box"] and s.main_in_finder.center.tolist() == [648.0, 504.0]
+    assert s.calibration()["main_solved"]
+    finder_cam.close(), main_cam.close()
+
+
 def test_align_run_saves_its_frames_and_tracks(tmp_path):
     run = AlignRun(np.array([640.0, 480.0]), (1280, 960), None)
     for i in range(4):

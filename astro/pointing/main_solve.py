@@ -233,9 +233,25 @@ def _tile_path(ra: float, dec: float, cache_dir: Path) -> Path:
 
 
 def cached_catalog(ra: float, dec: float, cache_dir: Path) -> np.ndarray | None:
-    """The tile's Gaia stars (n, 3: ra, dec, G) if already on disk."""
+    """Gaia stars (n, 3: ra, dec, G) on disk whose cone covers SEARCH_DEG around (ra, dec): the
+    tile's own, or a neighbor's (a field just across a tile edge downloaded again, 2026-10-10)."""
     path = _tile_path(ra, dec, cache_dir)
-    return np.load(path) if path.exists() else None
+    if path.exists():
+        return np.load(path)
+    for other in sorted(cache_dir.glob(f"gaia_g{CATALOG_G}_*.npy")):
+        try:
+            ra_c, dec_c = (float(v) for v in other.stem.split("_")[2:4])
+        except ValueError:
+            continue
+        if _separation_deg(ra, dec, ra_c, dec_c) <= TILE_RADIUS_DEG - SEARCH_DEG:
+            return np.load(other)
+    return None
+
+
+def _separation_deg(ra1: float, dec1: float, ra2: float, dec2: float) -> float:
+    r1, d1, r2, d2 = (math.radians(v) for v in (ra1, dec1, ra2, dec2))
+    c = math.sin(d1) * math.sin(d2) + math.cos(d1) * math.cos(d2) * math.cos(r1 - r2)
+    return math.degrees(math.acos(max(-1.0, min(1.0, c))))
 
 
 _fetching: set[Path] = set()  # tiles being downloaded (a second Align tap waits for the first)
@@ -249,8 +265,11 @@ def field_catalog(ra: float, dec: float, cache_dir: Path, timeout_s: float = 600
         return stars
     ra_c, dec_c = tile(ra, dec)
     path = _tile_path(ra, dec, cache_dir)
-    if path in _fetching:
-        return None
+    if path in _fetching:  # Align's own download, started as it began: wait for it
+        deadline = time.monotonic() + timeout_s
+        while path in _fetching and time.monotonic() < deadline:
+            time.sleep(0.5)
+        return cached_catalog(ra, dec, cache_dir)
     _fetching.add(path)
     cone = {"ra": ra_c, "dec": dec_c, "r": TILE_RADIUS_DEG, "g": CATALOG_G}
     try:

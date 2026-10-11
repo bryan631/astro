@@ -13,6 +13,7 @@ from astro.pointing.main_solve import (
     MAIN_SCALE,
     _tangent,
     _untangent,
+    cached_catalog,
     detect_stars,
     field_catalog,
     parse_rows,
@@ -139,6 +140,15 @@ def test_catalog_is_fetched_once_per_tile_then_read_from_disk(tmp_path, monkeypa
 
     monkeypatch.setattr(urllib.request, "urlopen", offline)
     assert field_catalog(10.0, -40.0, tmp_path) is None
+
+
+def test_a_neighbor_tile_serves_a_field_just_across_the_edge(tmp_path):
+    """2026-10-10: the scope drifted 0.1 degrees into the next tile and Align had no stars."""
+    stars = np.array([[150.1, 30.2, 9.5]])
+    np.save(main_solve._tile_path(150.0, 30.0, tmp_path), stars)
+    ra_c, dec_c = main_solve.tile(150.0, 30.0)
+    assert np.array_equal(cached_catalog(ra_c + 1.3, dec_c, tmp_path), stars)  # the next tile over
+    assert cached_catalog(ra_c + 4.0, dec_c, tmp_path) is None  # too far: its cone falls short
 
 
 def test_tiles_cover_the_search_radius():

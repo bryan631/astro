@@ -33,7 +33,7 @@ from astro.capture.roi import brightest_blob
 from astro.pointing.coords import Site, radec_to_altaz
 from astro.pointing.labels import gnomonic, sky_to_pixels
 from astro.pointing.main_offset import MainOffset, local_delta
-from astro.pointing.main_solve import MainSolution, cached_catalog, detect_stars, solve_main
+from astro.pointing.main_solve import MainSolution, detect_stars, field_catalog, solve_main
 from astro.pointing.platesolve import FinderSolver, Solution, finder_gray
 
 ALIGN_S = 10.0  # Align watches the bright star drift this long in both cameras
@@ -49,6 +49,9 @@ SEARCH_RADII_PX = (60, 120, 250)
 DETECT_SIGMA = 8.0
 KEEP_RUNS = 20  # saved Align runs (~20 MB each)
 PAIR_S = 1.0  # a main and a finder frame this close in time make a pair to plate-solve
+MAX_SOLVES = 3  # frame pairs tried per Align before the drift decides
+CATALOG_WAIT_S = 60.0  # the field's Gaia download, when Align started it
+SOLVE_WAIT_S = 60.0  # Align waits this long past ALIGN_S for a plate solve still running
 
 
 @dataclass(frozen=True)
@@ -193,6 +196,7 @@ class AlignRun:
         self.no_star = 0  # finder frames without one clear star near `near`
         self.frames: dict[str, list] = {"finder": [], "main": []}  # (t, frame), for save()
         self.solving: threading.Thread | None = None
+        self.attempts, self._solved_upto = 0, 0.0  # plate solves tried; the newest main frame tried
         self.solved: tuple[MainInFinder, Solution, MainSolution] | None = None  # plate-solve path
 
     def add(self, name: str, got: tuple[np.ndarray, int, float] | None) -> None:
@@ -219,18 +223,23 @@ class AlignRun:
     def start_solve(self, solver: FinderSolver, cache_dir: Path) -> None:
         """Once the newest main and finder frames were taken together, plate-solve them in a
         thread (~1 s); `solved` is set if both solve. The drift goes on meanwhile as the fallback."""
-        if self.solving is not None or not self.frames["main"] or not self.frames["finder"]:
+        busy = self.solving is not None and self.solving.is_alive()
+        if busy or self.solved is not None or self.attempts >= MAX_SOLVES or not self.frames["main"] \
+                or not self.frames["finder"]:
             return
         (t_main, main), (t_finder, finder) = self.frames["main"][-1], self.frames["finder"][-1]
-        if abs(t_main - t_finder) > PAIR_S:
-            return
+        if abs(t_main - t_finder) > PAIR_S or t_main <= self._solved_upto:
+            return  # not a pair, or one already tried: a failed solve tries the next pair
+        self.attempts, self._solved_upto = self.attempts + 1, t_main
         self.solving = threading.Thread(target=self._solve, args=(solver, cache_dir, finder, main),
                                         daemon=True)
         self.solving.start()
 
     def _solve(self, solver: FinderSolver, cache_dir: Path, finder: np.ndarray, main: np.ndarray) -> None:
         sol = solver.solve(finder)
-        stars = None if sol is None else cached_catalog(sol.ra_deg, sol.dec_deg, cache_dir)
+        # waits for the field's download (~30 s) if Align just started it: solving at once found
+        # no stars on disk and the drift fallback took a wrong star, four times (2026-10-10)
+        stars = None if sol is None else field_catalog(sol.ra_deg, sol.dec_deg, cache_dir, CATALOG_WAIT_S)
         msol = None if stars is None else solve_main(detect_stars(main)[0], stars, sol.ra_deg, sol.dec_deg)
         fit = None if msol is None else fit_from_solves(sol, self.finder_size, msol)
         log.info("align solved", extra={"data": {
