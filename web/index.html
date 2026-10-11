@@ -78,6 +78,7 @@
   #capture.on { background: var(--dim); }
   .sheet { position: fixed; inset: 0; background: var(--bg); padding: 12px; overflow: auto; z-index: 5; }
   .sheet .top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .say { display: flex; gap: 8px; align-items: flex-start; } .say button { padding: 10px 16px; }
   #gotext { width: 100%; font: inherit; padding: 10px; margin-bottom: 10px; background: var(--bg); color: var(--fg);
             border: 2px solid var(--fg); border-radius: 8px; }
   #targets button, #choices button { display: block; width: 100%; text-align: left; margin-bottom: 8px; }
@@ -133,7 +134,7 @@
   </div>
 
   <div class="sheet" id="s-goto" hidden><div class="top"><b>Go to</b><button data-close>Close</button></div>
-    <input id="gotext" type="search" enterkeyhint="go" autocomplete="off" placeholder="Type a name (M27, Vega, Saturn)…">
+    <div class="say"><input id="gotext" type="search" enterkeyhint="go" autocomplete="off" placeholder="Type a name (M27, Vega, Saturn)…"><button id="say">Say</button></div>
     <div id="targets">Loading…</div></div>
   <div class="sheet" id="s-pics" hidden><div class="top"><b>Pictures</b><button data-close>Close</button></div><div id="pictures"></div></div>
   <div class="sheet" id="viewer" hidden><div class="top"><span>
@@ -384,6 +385,33 @@ $("gotext").onkeydown = e => {
   const name = $("gotext").value.trim();
   if (e.key !== "Enter" || !name) return;
   sendText(`go to ${name}`); $("s-goto").hidden = true; showView("finder");
+};
+// Say: the tablet records a few seconds and the Mele turns it into text (whisper.cpp, offline:
+// the audio goes nowhere else). "Jupiter" or "go to Jupiter" both go there.
+const SAY_S = 4;
+$("say").onclick = async () => {
+  const b = $("say");
+  if (b.classList.contains("on")) return;
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({audio: true}); }
+  catch (e) { show(`The microphone isn't available: ${e.message}`); return; }
+  const rec = new MediaRecorder(stream), parts = [];
+  rec.ondataavailable = e => parts.push(e.data);
+  rec.onstop = async () => {
+    stream.getTracks().forEach(t => t.stop());
+    b.textContent = "…";
+    try {
+      const r = await fetch("/api/hear", {method: "POST", body: new Blob(parts, {type: rec.mimeType})});
+      const got = await r.json();
+      if (!r.ok) { show(got.detail || `error ${r.status}`); return; }
+      const name = got.text.replace(/^\s*go\s*to\s+/i, "").replace(/[.!?]+$/, "").trim();
+      if (!name) { show("I didn't catch that. Tap Say and try again."); return; }
+      $("gotext").value = name;
+      sendText(`go to ${name}`); $("s-goto").hidden = true; showView("finder");
+    } finally { b.textContent = "Say"; b.classList.remove("on"); }
+  };
+  b.classList.add("on"); b.textContent = "Listening…";
+  rec.start(); setTimeout(() => rec.state === "recording" && rec.stop(), SAY_S * 1000);
 };
 $("goto").onclick = async () => {
   open("s-goto"); $("targets").textContent = "Loading…"; $("gotext").value = "";

@@ -220,7 +220,7 @@ main camera; the box orange in day mode.
   on their stars while the scope moves.
 - Check the encoders on the sky: counts follow the scope, and the model holds after a restart.
 - Recordings for test data: a focus sweep and a wiggle.
-- "Go to <object>" by voice in the app (typed box done; the keyboard mic dictates into it) (2026-10-10).
+- Clear night: the Go to sheet's Say button (check whisper.cpp is installed on the Mele: scripts/install-voice.sh) (2026-10-11).
 - From the 2026-10-10 night (raw frames in data/night-20261010/): check the night colors and
   the focus number's steadiness on them.
 - Check the outlines' sizes and angles on the sky, and the telescope view's names from its own plate solves (2026-10-11).

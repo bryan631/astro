@@ -332,3 +332,25 @@ def test_tonight_page_renders_without_starting_the_telescope(monkeypatch):
     assert r.status_code == 200 and "It does not get dark tonight." in r.text
 
 
+
+
+def test_say_turns_the_tablets_audio_into_text_on_the_mele(monkeypatch):
+    """The Go to sheet's Say button: the audio goes to the Mele's whisper.cpp only."""
+    class FakeStt:
+        def __init__(self, ok):
+            self.ok, self.heard = ok, None
+
+        def available(self):
+            return self.ok
+
+        def transcribe(self, audio):
+            self.heard = audio
+            return "Astro, go to Jupiter."
+
+    client = TestClient(server.app)
+    monkeypatch.setattr(server, "_stt", lambda: FakeStt(False))
+    r = client.post("/api/hear", content=b"webm")
+    assert r.status_code == 503 and "keyboard's mic" in r.json()["detail"]
+    fake = FakeStt(True)
+    monkeypatch.setattr(server, "_stt", lambda: fake)
+    assert client.post("/api/hear", content=b"webm").json() == {"text": "go to Jupiter."} and fake.heard == b"webm"

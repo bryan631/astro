@@ -48,6 +48,8 @@ from astro.pointing.mount_model import MountModel
 from astro.pointing.platesolve import FinderSolver
 from astro.process.view import ROTATE, render
 from astro.session import Session, utcnow
+from astro.voice.speech import Stt
+from astro.wake import strip_wake
 
 ROOT = Path(__file__).resolve().parents[1]
 SIM = os.environ.get("ASTRO_SIM") == "1"
@@ -476,6 +478,27 @@ def api_status() -> dict:
             "build": web_build(),  # the page reloads itself when this changes
             "main_box": hub.session.main_box, "aligning": hub.session.aligning,
             "mode": hub.session.mode}  # setup, horizon or collimation: the page shows its buttons
+
+
+@functools.cache
+def _stt() -> Stt:
+    return Stt()
+
+
+@app.post("/api/hear")
+async def api_hear(request: Request) -> dict:
+    """Speech from the tablet's mic as text (the Go to sheet's Say button): whisper.cpp on the
+    Mele, so the audio never leaves it, and it isn't kept."""
+    stt = _stt()
+    if not stt.available():
+        raise HTTPException(503, "Speech isn't installed on the Mele (scripts/install-voice.sh). "
+                                 "The keyboard's mic can dictate into the box.")
+    audio = await request.body()
+    if not audio:
+        raise HTTPException(400, "no audio")
+    text = await asyncio.to_thread(stt.transcribe, audio)
+    log.info("heard", extra={"data": {"text": text}})
+    return {"text": strip_wake(text) or text}
 
 
 @app.get("/api/targets")
