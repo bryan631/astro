@@ -10,10 +10,13 @@ from scipy import ndimage
 
 GRID = 16  # background sampled in GRID x GRID tiles
 CLIP_SIGMA = 2.0  # tiles this much brighter than the rest hold a target or stars: not sky
-STAR_PCT = 99.5  # pixels standing out this much (percentile) are stars, for color balance
+STAR_PCT = 99.9  # star peaks standing out this much (percentile) set the color balance
+MIN_STARS = 10
 DENOISE_SIGMA_PX = 1.5  # blur for the faint sky (the stretch amplifies its noise most)
 DENOISE_KNEE = 3.0  # this many noise sigmas above the sky counts as real detail, kept sharp
 STAR_WINDOW_PX = 9  # stars are smaller than this; nebulae much bigger
+SKY_LEVEL = 0.1  # the stretched sky's gray level
+BLACK_SIGMA = 2.0  # the black point, in sky noise below the sky
 
 
 def remove_gradient(rgb: np.ndarray) -> np.ndarray:
@@ -40,16 +43,19 @@ def _quadratic(x: np.ndarray, y: np.ndarray) -> np.ndarray:
 
 
 def balance_color(rgb: np.ndarray) -> np.ndarray:
-    """Scale channels so the stars come out white on average (most stars are near-white).
-    Stars are picked by how much they stand out from their surroundings, so a bright nebula
-    (extended) keeps its own color."""
-    excess = rgb - ndimage.median_filter(rgb, size=(STAR_WINDOW_PX, STAR_WINDOW_PX, 1))
-    compact = excess.mean(axis=-1)  # starlight above whatever lies behind it
-    stars = compact >= np.percentile(compact, STAR_PCT)
-    if np.ptp(compact) == 0:  # featureless: nothing to calibrate on
+    """Scale channels so the stars come out white on average (most stars are near-white): the
+    median color of clear star peaks above their local background. Picking "stars" as the
+    brightest excess pixels picked the main camera's noisier red and blue and turned
+    Andromeda green (2026-10-10). A bright nebula (extended) keeps its own color."""
+    smooth = ndimage.gaussian_filter(rgb, (1.5, 1.5, 0))
+    excess = smooth - ndimage.median_filter(smooth, size=(STAR_WINDOW_PX, STAR_WINDOW_PX, 1))
+    lum = excess.mean(axis=-1)
+    peaks = (lum == ndimage.maximum_filter(lum, STAR_WINDOW_PX)) & (lum >= np.percentile(lum, STAR_PCT))
+    stars = excess[peaks & (excess.min(axis=-1) > 0)]
+    if len(stars) < MIN_STARS:  # featureless: nothing to calibrate on
         return rgb
-    means = excess[stars].mean(axis=0)
-    return rgb * (means.mean() / np.maximum(means, 1e-6))
+    means = np.median(stars, axis=0)
+    return rgb * (means.mean() / means)
 
 
 def denoise(rgb: np.ndarray, sigma: float = DENOISE_SIGMA_PX) -> np.ndarray:
@@ -63,18 +69,34 @@ def denoise(rgb: np.ndarray, sigma: float = DENOISE_SIGMA_PX) -> np.ndarray:
     return signal * rgb + (1 - signal) * blurred
 
 
-def asinh_stretch(rgb: np.ndarray, strength: float = 50) -> np.ndarray:
-    """Lift the faint nebula without blowing out the stars; keeps colors (one scale per pixel)."""
-    lum = rgb.mean(axis=-1, keepdims=True)
-    top = np.percentile(lum, 99.9)
-    norm = np.clip(lum / max(top, 1e-6), 0, None)
-    scale = np.arcsinh(strength * norm) / np.arcsinh(strength) / np.maximum(norm, 1e-6)
-    return (np.clip(rgb / max(top, 1e-6) * scale, 0, 1) * 255).astype(np.uint8)
+def stretch(rgb: np.ndarray, sky_level: float = SKY_LEVEL) -> np.ndarray:
+    """Lift the faint target without blowing out the stars, one scale per pixel (keeps colors):
+    the sky (at 0, see finish) lands at `sky_level` gray, the black point BLACK_SIGMA noise
+    below it. The old stretch put the sky at ~45% gray: washed out (2026-10-10)."""
+    lum = rgb.mean(axis=-1)
+    off = BLACK_SIGMA * 1.4826 * float(np.median(np.abs(lum - np.median(lum))))
+    top = float(np.percentile(lum, 99.95)) + off
+    x = np.clip((lum + off) / max(top, 1e-6), 1e-6, None)
+    k = _asinh_strength(off / max(top, 1e-6), sky_level)
+    scale = np.arcsinh(k * x) / np.arcsinh(k) / x
+    return (np.clip((rgb + off) / max(top, 1e-6) * scale[..., None], 0, 1) * 255).astype(np.uint8)
+
+
+def _asinh_strength(x: float, level: float) -> float:
+    """k with asinh(k x) / asinh(k) = level (bisection on a log scale)."""
+    lo, hi = 1e-3, 1e5
+    for _ in range(60):
+        k = float(np.sqrt(lo * hi))
+        lo, hi = (k, hi) if np.arcsinh(k * x) / np.arcsinh(k) < level else (lo, k)
+    return k
 
 
 def finish(rgb: np.ndarray) -> np.ndarray:
-    """Linear stacked RGB -> display-ready 8-bit RGB."""
-    return asinh_stretch(denoise(balance_color(np.clip(remove_gradient(rgb), 0, None))))
+    """Linear stacked RGB -> display-ready 8-bit RGB. The sky goes to 0 in each color (gray: the
+    main camera's sky is ~1.7x more red and blue than green)."""
+    flat = remove_gradient(rgb)
+    flat = flat - np.median(flat.reshape(-1, 3), axis=0)
+    return stretch(denoise(balance_color(flat)))
 
 
 def save_fits(rgb: np.ndarray, path: Path) -> None:
