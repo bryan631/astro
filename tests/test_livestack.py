@@ -182,3 +182,14 @@ def test_stack_waits_through_a_drift_out_and_keeps_adding_after_the_nudge(tmp_pa
     assert live.done.wait(30)
     assert live.frames == 6 and not live.error and live.picture.exists()
     assert True in adrift and not live.adrift  # it asked for a nudge, then found the field again
+
+
+def test_picture_drops_the_edges_few_frames_reached():
+    """2026-10-11: the drift left noisy color bands along two edges of Andromeda."""
+    rng = np.random.default_rng(6)
+    scene = sky_scene(rng)
+    stack = LiveStack("GRBG")
+    for i in range(8):
+        assert stack.add(observe(scene, 0, (0, i * 6), rng))  # drifts 42 raw px: 21 stacked px
+    full, cropped = stack.image(), stack.picture()
+    assert full.shape[0] - cropped.shape[0] <= 2 and full.shape[1] - 21 <= cropped.shape[1] < full.shape[1] - 5

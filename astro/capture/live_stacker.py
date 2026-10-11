@@ -187,7 +187,7 @@ class LiveStacker:
     def _finish(self, stack: LiveStack, live: LiveSession) -> None:
         """The gallery picture: gradient removed, color balanced, stretched (C4). The linear
         stack is kept as FITS beside it, for Siril or GraXpert later."""
-        linear = stack.image()
+        linear = stack.picture()
         save_fits(linear, live.picture.with_suffix(".fits"))
         tmp = live.picture.with_name(live.picture.name + ".tmp")
         Image.fromarray(finish(linear)).save(tmp, format="PNG")
@@ -197,7 +197,7 @@ class LiveStacker:
     def _save(self, stack: LiveStack, live: LiveSession) -> None:
         """Write next to the preview, then swap it in: the tablet never reads a half file."""
         tmp = live.preview.with_name(live.preview.name + ".tmp")
-        img = Image.fromarray(stretch(stack.image()))
+        img = Image.fromarray(stretch(stack.picture()))
         if img.width > PREVIEW_WIDTH:
             img = img.resize((PREVIEW_WIDTH, round(img.height * PREVIEW_WIDTH / img.width)))
         img.save(tmp, format="JPEG", quality=85)

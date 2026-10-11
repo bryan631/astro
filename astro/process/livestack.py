@@ -29,6 +29,7 @@ MAX_CONTROL_POINTS = 40  # brightest stars used for matching
 STAR_SMOOTH_PX = 2.0  # stars are wider than this; pixel noise isn't
 HIGHPASS_PX = 10  # the sky's glow and gradients are smoother than this; stars much smaller
 MIN_PEAK_SIGMA = 16.0  # a real pair peaked at 23; noise and an unrelated field at 8-10 (2026-10-10)
+MIN_COVER = 0.5  # the finished picture keeps pixels at least this share of the frames reached
 RING = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]], np.uint8)  # a pixel's eight neighbors
 log = logging.getLogger(__name__)
 
@@ -112,6 +113,17 @@ class LiveStack:
         if self._sum is None:
             raise ValueError("no frames yet")
         return self._sum / np.maximum(self._weight, 1)[..., None]
+
+    def picture(self) -> np.ndarray:
+        """image() without the edges fewer than MIN_COVER of the frames reached: as the field
+        drifts and turns, a frame's edge lands on few frames' worth of data, and those bands
+        stayed noisy and off-color in the finished picture (2026-10-11)."""
+        img = self.image()
+        enough = self._weight >= MIN_COVER * self._weight.max()
+        rows, cols = np.flatnonzero(enough.mean(axis=1) > 0.5), np.flatnonzero(enough.mean(axis=0) > 0.5)
+        if len(rows) < 16 or len(cols) < 16:  # nothing sensible to keep: show it all
+            return img
+        return img[rows[0]:rows[-1] + 1, cols[0]:cols[-1] + 1]
 
 
 def stretch(img: np.ndarray, black_pct: float = 25, white_pct: float = 99.8,
