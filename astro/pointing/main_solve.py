@@ -272,18 +272,18 @@ def field_catalog(ra: float, dec: float, cache_dir: Path, timeout_s: float = 600
         return cached_catalog(ra, dec, cache_dir)
     _fetching.add(path)
     cone = {"ra": ra_c, "dec": dec_c, "r": TILE_RADIUS_DEG, "g": CATALOG_G}
-    try:
+    try:  # waiters resume only once the tile is on disk (or the download failed)
         stars = _download(ESA_TAP + urllib.parse.quote(ESA_ADQL.format(**cone)), timeout_s)
         if stars is None:
             stars = _download(VIZIER.format(**cone), timeout_s)
+        if stars is None or len(stars) == 0:
+            return None
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp.npy")
+        np.save(tmp, stars)
+        tmp.replace(path)  # a half-written file never passes for the cache
     finally:
         _fetching.discard(path)
-    if stars is None or len(stars) == 0:
-        return None
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp.npy")
-    np.save(tmp, stars)
-    tmp.replace(path)  # a half-written file never passes for the cache
     log.info("gaia fetched", extra={"data": {"tile": [ra_c, dec_c], "stars": len(stars)}})
     return stars
 
@@ -292,6 +292,6 @@ def _download(url: str, timeout_s: float) -> np.ndarray | None:
     try:
         with urllib.request.urlopen(url, timeout=timeout_s) as r:
             return parse_rows(r.read().decode("utf-8", "replace"))
-    except OSError as e:  # offline, or the archive slow or down: Align falls back to the drift
+    except OSError as e:  # offline, or the archive slow or down: Align says so
         log.warning("gaia fetch failed", extra={"data": {"url": url[:60], "error": str(e)}})
         return None

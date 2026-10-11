@@ -43,6 +43,7 @@ KEEP_RUNS = 20  # saved Align runs (~20 MB each)
 PAIR_S = 1.0  # a main and a finder frame this close in time make a pair to plate-solve
 MAX_SOLVES = 3  # frame pairs tried per Align
 CATALOG_WAIT_S = 60.0  # the field's Gaia download, when Align started it
+MAX_RESIDUAL_PX = 30.0  # main pixels: the two solves agree to ~1 px (2026-10-10); far off is a bad match
 SOLVE_WAIT_S = 60.0  # Align waits this long past ALIGN_S for a plate solve still running
 
 
@@ -185,6 +186,8 @@ class AlignRun:
             xy = detect_stars(main)[0]
             msol = next((m for scale in self.scales
                          if (m := solve_main(xy, stars, sol.ra_deg, sol.dec_deg, scale)) is not None), None)
+            if msol is not None and msol.mirrored:  # the fit below is rotation and scale only; the
+                msol = None  # XT8 never mirrors (12 of 12 solves), so a mirrored solve is suspect
         fit = None if msol is None else fit_from_solves(sol, self.finder_size, msol)
         log.info("align solved", extra={"data": {
             "finder": sol and [sol.ra_deg, sol.dec_deg, sol.roll_deg], "catalog": stars is not None and len(stars),
@@ -192,7 +195,8 @@ class AlignRun:
                               round(msol.rms_arcsec, 2), round(msol.ms)],
             "center": fit and fit.center.round(1).tolist(), "scale": fit and fit.scale,
             "rotation": fit and fit.rotation_deg, "residual": fit and fit.residual_px}})
-        if fit is not None and ALIGN_SCALE[0] <= fit.scale * msol.scale_arcsec_px / MAIN_SCALE <= ALIGN_SCALE[1]:
+        if fit is not None and ALIGN_SCALE[0] <= fit.scale * msol.scale_arcsec_px / MAIN_SCALE <= ALIGN_SCALE[1] \
+                and fit.residual_px <= MAX_RESIDUAL_PX:
             self.solved = (fit, sol, msol)
         elif sol is None:
             self.why = ("The finder couldn't plate-solve (clouds, dew, or the finder out of focus?), "

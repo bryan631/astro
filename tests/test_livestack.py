@@ -154,6 +154,19 @@ def test_meter_backs_off_when_a_core_burns_out():
     assert gain <= 360
 
 
+def test_meter_backs_off_when_only_one_color_burns_out():
+    """Saturn burnt out in red alone (2026-10-10): the clip test looks at every Bayer position."""
+    class RedBurns(MeterCamera):
+        def capture(self):
+            raw = super().capture()
+            if self.gain > 360:
+                raw[1:40:2, 0:40:2] = 255  # one Bayer position only
+            return raw
+
+    gain, _ = live_stacker.meter_gain(RedBurns(), 300)
+    assert gain <= 360
+
+
 def test_stack_waits_through_a_drift_out_and_keeps_adding_after_the_nudge(tmp_path, monkeypatch):
     """2026-10-10: stacks stopped at "lost the stars" after ~1.5 minutes of drift. Now the
     stack asks for a nudge and adds to the same picture once the field is back."""
@@ -241,3 +254,4 @@ def test_a_target_bigger_than_the_view_can_be_stacked_whole_with_the_finder(tmp_
     assert live.frames > 2 and live.picture.exists() and (finder_cam.exposure_s, finder_cam.gain) == (1.0, 200)
     assert "Stacking short pictures" in s.capture(close)[0]["text"] and s.stacker.camera is s.camera("main")
     s.stacker.stop()
+    assert s.stacker.current.done.wait(20)  # its thread ends here, not in a later test's log

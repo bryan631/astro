@@ -291,7 +291,9 @@ def test_barlow_in_shrinks_the_box_about_its_center_and_out_restores_it(tmp_path
                 calibration={"main_in_finder": fit, "main_solved": True, "barlow_power": 2.5})
     s.main_box = box_on_finder_view(s.main_in_finder, (3856, 2180), (1280, 960), 180)
     before = np.array(s.main_box)
+    s._main_fix = (time.monotonic(), None, (45.0, 180.0))  # a telescope-view solve at prime focus
     assert "resized the telescope's box" in s.handle("the barlow is in")[0]["text"]
+    assert s._main_fix is None  # its scale no longer holds
     after = np.array(s.main_box)
     assert np.allclose(after.mean(axis=0), before.mean(axis=0), atol=1e-3)  # the box is rounded to 1e-4
     assert np.ptp(after[:, 0]) == pytest.approx(np.ptp(before[:, 0]) / 2.5, rel=0.01)

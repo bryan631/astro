@@ -368,6 +368,7 @@ class Session:
         if inserted == self.barlow:
             return [say("The Barlow is already in." if inserted else "The Barlow is already out.")]
         self.barlow = inserted
+        self._main_fix = None  # the telescope view's solve was at the old scale
         if self.guide is not None:  # an active guide switches tolerance too
             self.guide.tol_deg = self._tolerance_arcmin() / 60
         box = ""
@@ -673,13 +674,14 @@ class Session:
     def _main_solve(self) -> None:
         try:
             frame, sol, where = self.camera_frame("main"), self.finder.last_solution, self.position()
+            barlow = self.barlow
             stars = None if frame is None else cached_catalog(sol.ra_deg, sol.dec_deg, self.data_dir / "gaia")
             if stars is None:
                 return
             msol = next((m for scale in self._main_scales()
                          if (m := solve_main(detect_stars(frame[0])[0], stars, sol.ra_deg, sol.dec_deg, scale))),
                         None)
-            if msol is not None:
+            if msol is not None and self.barlow == barlow:  # not if the Barlow went in or out meanwhile
                 self._main_fix = (time.monotonic(), msol, where)
         except Exception:  # a bug in one solve must not stop the next ones
             log.exception("main solve failed")

@@ -228,7 +228,7 @@ def meter_gain(camera: Camera, gain: int) -> tuple[int, float]:
         raw = camera.capture()
         sky = float(np.median(raw[::4, ::4]))  # one Bayer color (green), stars don't move a median
         want = gain + 200 * np.log10(SKY_LEVEL / max(sky, 0.5))
-        if np.mean(raw[::2, ::2] >= CLIPPED_RAW) > MAX_CLIPPED:
+        if np.mean(raw >= CLIPPED_RAW) > MAX_CLIPPED:  # every color: one can clip alone
             want = min(want, gain - 60)  # stars or a core burning out: back off
         want = int(np.clip(round(want), *GAIN_RANGE))
         if abs(want - gain) < 20:
