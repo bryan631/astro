@@ -90,15 +90,13 @@ def _tangent(ra, dec, ra0, dec0) -> np.ndarray:
     return (np.asarray(x) + 1j * np.asarray(y)) * 3600
 
 
-def _untangent(w: complex, ra0: float, dec0: float) -> tuple[float, float]:
-    """The inverse of _tangent for one point."""
-    x, y = np.radians(w.real / 3600), np.radians(w.imag / 3600)
+def _untangent(w, ra0: float, dec0: float):
+    """The inverse of _tangent: (ra, dec) degrees."""
+    x, y = np.radians(np.real(w) / 3600), np.radians(np.imag(w) / 3600)
     d0 = np.radians(dec0)
-    rho = np.hypot(x, y)
-    c = np.arctan(rho)
-    dec = np.arcsin(np.cos(c) * np.sin(d0) + (y * np.sin(c) * np.cos(d0) / rho if rho else 0))
-    ra = ra0 + np.degrees(np.arctan2(x * np.sin(c), rho * np.cos(d0) * np.cos(c) - y * np.sin(d0) * np.sin(c)))
-    return float(ra % 360), float(np.degrees(dec))
+    dec = np.arcsin((np.sin(d0) + y * np.cos(d0)) / np.sqrt(1 + x * x + y * y))
+    ra = ra0 + np.degrees(np.arctan2(x, np.cos(d0) - y * np.sin(d0)))
+    return ra % 360, np.degrees(dec)
 
 
 def _count(tree: cKDTree, m: np.ndarray, t: np.ndarray, z: np.ndarray) -> np.ndarray:
@@ -144,23 +142,27 @@ def _guess(z: np.ndarray, sky: np.ndarray, bright: np.ndarray, scale: float
 
 def _refine(z: np.ndarray, ra: np.ndarray, dec: np.ndarray, m: complex, t: complex, ra0: float,
             dec0: float) -> tuple[float, float, complex, np.ndarray, np.ndarray, float] | None:
-    """Least squares on the tangent plane at the main camera's own center (the finder center's
-    plane is ~0.5% anisotropic 4 degrees out): (ra, dec, m, matched z index, catalog index, rms)."""
+    """Least squares, moving the tangent plane to the main camera's own center (the finder
+    center's plane is skewed ~0.5% and turned up to ~2 degrees 4 degrees out):
+    (ra, dec, m, matched z index, catalog index, rms)."""
     for _ in range(3):
-        ra0, dec0 = _untangent(t, ra0, dec0)
         sky = _tangent(ra, dec, ra0, dec0)
-        near = np.abs(sky) < 3600  # well past the frame's corners
-        tree = cKDTree(np.c_[sky[near].real, sky[near].imag])
-        w = m * z  # the center is now the tangent point
-        dist, idx = tree.query(np.c_[w.real, w.imag], distance_upper_bound=MATCH_ARCSEC)
-        ok = dist < MATCH_ARCSEC
-        zi, ci = np.nonzero(ok)[0], np.nonzero(near)[0][idx[ok]]
-        a = np.c_[z[zi], np.ones(len(zi))]
+        near = np.nonzero(abs(sky - t) < 3600)[0]  # well past the frame's corners
+        w = m * z + t
+        dist, idx = cKDTree(np.c_[sky[near].real, sky[near].imag]).query(
+            np.c_[w.real, w.imag], distance_upper_bound=MATCH_ARCSEC)
+        zi = np.nonzero(dist < MATCH_ARCSEC)[0]
         if len(zi) < MIN_MATCHES:
             return None
+        ci = near[idx[zi]]
+        a = np.c_[z[zi], np.ones(len(zi))]
         (m, t), *_ = np.linalg.lstsq(a, sky[ci], rcond=None)
-    rms = float(np.sqrt(np.mean(np.abs(a @ [m, t] - sky[ci]) ** 2)))
-    ra0, dec0 = _untangent(t, ra0, dec0)
+        rms = float(np.sqrt(np.mean(np.abs(a @ [m, t] - sky[ci]) ** 2)))
+        # Carry the fit onto the plane touching the sky at the main camera's center.
+        ra1, dec1 = _untangent(t, ra0, dec0)
+        w1 = _tangent(*_untangent(m * z + t, ra0, dec0), ra1, dec1)
+        (m, t), *_ = np.linalg.lstsq(np.c_[z, np.ones(len(z))], w1, rcond=None)
+        ra0, dec0 = float(ra1), float(dec1)
     return ra0, dec0, complex(m), zi, ci, rms
 
 
