@@ -52,7 +52,7 @@ from astro.pointing.finder_sync import FinderSync
 from astro.pointing.geometry import separation_deg
 from astro.pointing.labels import FinderLabels
 from astro.pointing.main_offset import MainOffset
-from astro.pointing.main_solve import field_catalog
+from astro.pointing.main_solve import MAIN_SCALE, field_catalog
 from astro.process.planet import MIN_FRAMES, StackResult, process_ser, superpixel_rgb
 from astro.process.view import ROTATE, render
 from astro.safety import DAYTIME_SUN_ALT_DEG, SafetyResult, check_target
@@ -82,6 +82,7 @@ DARK_SUN_ALT_DEG = -10.0  # Sun lower than this: the views get the night stretch
 # 8' still lands the target well inside the main camera's 32' x 18' view.
 TOLERANCE_ARCMIN = 8.0
 TOLERANCE_BARLOW_ARCMIN = 4.0  # half that with the 2x Barlow (half the field)
+BARLOW_GUESS = 2.3  # a "2x" Barlow's power at the camera's sensor, until an Align measures it
 EXTENDED_TARGETS = {p.capitalize() for p in PLANETS} | {"Moon", *MOON_FEATURES}  # SER video
 # Captures run until the page's Stop capture (the user sees the target near the frame edge);
 # these are only safety limits.
@@ -148,6 +149,8 @@ class Session:
         self.main_camera, self.main_sensor = main_camera, main_sensor
         self.zoom = {"finder": 1, "main": 1}  # the page's digital zoom per camera view
         self.barlow = False
+        self.barlow_power = BARLOW_GUESS  # replaced by the measured power at the first Barlow Align
+        self.main_size = main_sensor  # main frame (w, h), for the box
         self.record_seconds = RECORD_SECONDS
         self.recorder = (Recorder(main_camera, main_sensor, data_dir / "captures") if main_camera else None)
         self._announced_done = True
@@ -346,11 +349,37 @@ class Session:
         self.target, self.guide, self._centering, self._align = None, None, False, None
 
     def _set_barlow(self, inserted: bool) -> list[dict]:
+        if inserted == self.barlow:
+            return [say("The Barlow is already in." if inserted else "The Barlow is already out.")]
         self.barlow = inserted
         if self.guide is not None:  # an active guide switches tolerance too
             self.guide.tol_deg = self._tolerance_arcmin() / 60
-        return [say("Got it. The Barlow changes focus: refocus with the focus number before "
+        box = ""
+        if self.main_in_finder is not None:  # the box shrinks (or grows) about its center
+            f = self.barlow_power if inserted else 1 / self.barlow_power
+            mif = self.main_in_finder
+            self.main_in_finder = MainInFinder(mif.a * f, mif.center, mif.residual_px * f)
+            self.main_box = box_on_finder_view(self.main_in_finder, self.main_size, self._finder_size(),
+                                               ROTATE["finder"])
+            box = " I resized the telescope's box on the finder; tap Align for an exact one."
+        self._save_calibration()
+        return [say(f"Got it.{box} The Barlow changes focus: refocus with the focus number before "
                     "capturing.")]
+
+    def _main_scales(self) -> tuple[float, ...]:
+        """The main camera's arcsec per pixel for Align to try: prime focus, or with the Barlow its
+        measured power, or (not measured yet) a range around 2.3x, nearest first."""
+        if not self.barlow:
+            return (MAIN_SCALE,)
+        if self.barlow_power != BARLOW_GUESS:
+            return (MAIN_SCALE / self.barlow_power,)
+        powers = np.arange(1.9, 3.2, 0.07)  # steps within the solver's scale tolerance, about
+        return tuple(MAIN_SCALE / p for p in sorted(powers, key=lambda p: abs(p - BARLOW_GUESS)))
+
+    def _finder_size(self) -> tuple[int, int]:
+        frame = self.camera_frame("finder")
+        h, w = frame[0].shape if frame else (960, 1280)
+        return w, h
 
     def _stop_capture(self) -> list[dict]:
         if self._recentering:  # stopping a paused capture ends its guidance too
@@ -831,6 +860,7 @@ class Session:
             "main_box": self.main_box,
             "finder_map": self.labels.map.tolist() if self.labels.map is not None else None,
             "main_solved": self.main_solved,
+            "barlow": self.barlow, "barlow_power": self.barlow_power,
             "main_in_finder": ({"a": self.main_in_finder.a.tolist(),
                                 "center": self.main_in_finder.center.tolist(),
                                 "residual_px": self.main_in_finder.residual_px}
@@ -850,6 +880,8 @@ class Session:
         if data.get("camera_axes") is not None:
             self.centerer.axes.matrix = np.array(data["camera_axes"])
         self.main_box = data.get("main_box")  # main field corners on the finder view
+        self.barlow = bool(data.get("barlow"))  # it stays in the focuser across a restart
+        self.barlow_power = data.get("barlow_power") or BARLOW_GUESS
         if data.get("finder_map") is not None:
             self.labels.map = np.array(data["finder_map"])
         if (mif := data.get("main_in_finder")) is not None:
@@ -903,18 +935,15 @@ class Session:
         return self._align is not None
 
     def align(self) -> list[dict]:
-        """Align (Phase 3b): with a bright star in the main view, watch it drift in both cameras
-        for ALIGN_S, then fit where the main camera's view sits on the finder's."""
+        """Align (Phase 3b): plate-solve a main and a finder frame taken together, then fit where
+        the main camera's view sits on the finder's (astro/pointing/align.py)."""
         if self.finder is None or self.main_camera is None:
             return [say("Align needs both cameras connected.")]
         if self._camera_busy():
             return [say("Stop the capture first, then Align.")]
         solved, _ = self.finder.sync(fresh=True)  # the solve turns finder pixels into sky
-        frame = self.camera_frame("finder")
-        h, w = frame[0].shape if frame else (960, 1280)
-        near = self.main_in_finder.center if self.main_in_finder else np.array([w / 2, h / 2])
         self.guide, self._centering = None, False
-        self._align = AlignRun(near, (w, h), self.finder.last_solution if solved else None)
+        self._align = AlignRun(self._finder_size(), self._main_scales())
         if solved:  # the field's Gaia stars, for plate-solving the main camera (cached after once)
             sol = self.finder.last_solution
             threading.Thread(target=field_catalog, args=(sol.ra_deg, sol.dec_deg, self.data_dir / "gaia"),
@@ -940,12 +969,17 @@ class Session:
             fit, sol, main = run.solved
             self.main_box = box_on_finder_view(fit, run.main_size, (w, h), ROTATE["finder"])
             self.main_in_finder, self.main_solved = fit, True
+            self.main_size = run.main_size
             self.centerer.offset = radec_offset_to_altaz(sol, main.ra_deg, main.dec_deg, self.site, self.clock())
+            power = ""
+            if self.barlow:  # measured now: later Aligns try just this
+                self.barlow_power = round(MAIN_SCALE / main.scale_arcsec_px, 3)
+                power = f" The Barlow magnifies {self.barlow_power:.1f} times."
             self._save_calibration()
             east, north = finder_offset_to_sky(fit.center[0] - w / 2, fit.center[1] - h / 2, sol, w)
             return [say(f"Aligned from the stars in both cameras. The telescope points "
                         f"{np.hypot(east, north) * 60:.0f} arcminutes from the finder's center, turned "
-                        f"{fit.rotation_deg:.0f} degrees. Its box is on the finder view.")]
+                        f"{fit.rotation_deg:.0f} degrees. Its box is on the finder view.{power}")]
         # Plate solves only: the drift fit needed the same star in both cameras and picked wrong
         # ones that replaced good alignments, five times on 2026-10-10.
         return [say(run.why)]
