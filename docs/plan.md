@@ -224,9 +224,8 @@ main camera; the box orange in day mode.
 - "Go to <object>" by voice in the app (typed box done; the keyboard mic dictates into it) (2026-10-10).
 - From the 2026-10-10 night (raw frames in data/night-20261010/): check the night colors and
   the focus number's steadiness on them.
-- Names on the main view come through Align's box (finder accuracy, ~1'); use a main plate solve when one is fresh. Check the outlines' sizes and angles on the sky (2026-10-11).
+- Check the outlines' sizes and angles on the sky, and the telescope view's names from its own plate solves (2026-10-11).
 - Clear night: check the live stack's frames/missed/gain in the "stacking done" log (the Mele stacks 0.26 s a frame against 0.2 s frames; the finder's solves compete for the CPU) and the nudge-back prompt (2026-10-11).
-- Wide-field pictures with the finder camera (11 x 8 degrees, multi-second frames without trails) for big targets: Andromeda is 3 x 1 degrees (2026-10-11).
 
 ## Known risks / open questions
 - SV705C Linux SDK stability (fallback: ZWO ASI585MC).

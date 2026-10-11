@@ -152,3 +152,32 @@ class FinderLabels:
                 "end_dec": t_dec + semi * np.cos(pa),
                 "ratio": [round(t[k].size_arcmin[1] / t[k].size_arcmin[0], 3) for k in sized]}
         return self._fixed
+
+
+def main_view_labels(labels: FinderLabels, msol, main_size: tuple[int, int], site: Site,
+                     when: datetime, level: int = 2) -> list[list]:
+    """Names on the telescope view straight from its own plate solve (`msol`, a MainSolution):
+    exact, where names through Align's box carry the finder's ~1'. Same entries as
+    FinderLabels.labels, as fractions of the main view (not turned: ROTATE["main"] is 0)."""
+    f = labels._fixed_objects()
+    bodies = [altaz_to_radec(*body_altaz(b, site, when), site, when) for b in BODIES]
+    ra = np.r_[f["ra"], [b[0] for b in bodies]]
+    dec = np.r_[f["dec"], [b[1] for b in bodies]]
+    names, kinds = f["names"] + [b.capitalize() for b in BODIES], f["kinds"] + ["planet"] * len(BODIES)
+    mag = np.r_[f["mag"], np.full(len(BODIES), -np.inf)]
+    w, h = main_size
+    m = msol.scale_arcsec_px * np.exp(1j * np.radians(msol.roll_deg))
+    parity = -1 if msol.mirrored else 1
+
+    def to_view(r, d):  # sky -> main view fractions: east + i north = m (x + i parity y)
+        east, north = gnomonic(msol.ra_deg, msol.dec_deg, r, d)
+        z = (np.asarray(east) + 1j * np.asarray(north)) * 3600 / m
+        return z.real / w, parity * z.imag / h
+
+    x, y = to_view(ra, dec)
+    ex, ey = to_view(f["end_ra"], f["end_dec"])
+    outline = {i: [round(float(ex[k] - x[i]), 4), round(float(ey[k] - y[i]), 4), f["ratio"][k]]
+               for k, i in enumerate(f["outlined"])}
+    on = (np.abs(x) < 0.6) & (np.abs(y) < 0.6) & ((mag <= BRIGHT_MAG) | (level >= 2))
+    return [[names[i], kinds[i], round(float(x[i]), 4), round(float(y[i]), 4), *outline.get(i, [])]
+            for i in np.flatnonzero(on)]

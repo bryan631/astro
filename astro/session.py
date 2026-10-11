@@ -50,9 +50,15 @@ from astro.pointing.align import (
 from astro.pointing.coords import Site, altaz_to_radec, body_altaz, radec_to_altaz
 from astro.pointing.finder_sync import FinderSync
 from astro.pointing.geometry import separation_deg
-from astro.pointing.labels import FinderLabels
+from astro.pointing.labels import FinderLabels, main_view_labels
 from astro.pointing.main_offset import MainOffset
-from astro.pointing.main_solve import MAIN_SCALE, field_catalog
+from astro.pointing.main_solve import (
+    MAIN_SCALE,
+    cached_catalog,
+    detect_stars,
+    field_catalog,
+    solve_main,
+)
 from astro.process.planet import MIN_FRAMES, StackResult, process_ser, superpixel_rgb
 from astro.process.view import ROTATE, render
 from astro.safety import DAYTIME_SUN_ALT_DEG, SafetyResult, check_target
@@ -79,6 +85,9 @@ WHOLE, CLOSE_UP = " (whole, finder camera)", " (close-up, telescope)"
 UNNAMED_PLANET = "the planet"  # a disk in the picture when the pointing can't name it
 FIELD_RADIUS_DEG = 0.3  # the telescope's 32' x 18' view, center to corner
 PLANET_NEAR_DEG = 3.0  # ... and it's the planet within this of where the scope points
+MAIN_SOLVE_EVERY_S = 8.0  # telescope-view plate solves for exact names on it, while names show
+MAIN_FIX_S = 30.0  # such a solve places names this long...
+MAIN_FIX_MOVE_DEG = 2 / 60  # ...while the scope stays within this of where it was
 AUTO_SOLVE_EVERY_S = 5.0  # background plate solves at night (back to back while not synced)
 AUTO_SOLVE_NEAR_DEG = 5.0  # a background solve replaces model syncs this close (keeps the spread)
 DARK_SUN_ALT_DEG = -10.0  # Sun lower than this: the views get the night stretch (twilight: as is)
@@ -168,6 +177,8 @@ class Session:
         self._preview_seen = 0
         self._adrift_said = False  # told the user the stack lost its field
         self._auto_logged: tuple | None = None  # the last auto solve outcome logged
+        self._main_fix: tuple | None = None  # (monotonic time, MainSolution, position) for names
+        self._main_solving, self._main_solve_at = False, -1e9
         self._processor = ThreadPoolExecutor(max_workers=1)  # one stacking job at a time
         self._holding = False  # asked the user to hold still for a fresh fix
         self._jobs: list[tuple[str, Future[StackResult]]] = []  # pictures being made, in order
@@ -624,9 +635,16 @@ class Session:
         return found
 
     def main_labels(self, level: int = 2) -> list[list]:
-        """The finder's names that fall on the main camera, moved onto the main view through
-        Align's box (its corners on the finder view are the main frame's corners), outlines
-        too. Empty before the first Align. As exact as the finder's names and the box."""
+        """Names on the main view: from the telescope camera's own plate solve when one is fresh
+        and the scope hasn't moved since (exact; solved in the background while names are
+        shown), else the finder's names moved onto the main view through Align's box (its
+        corners on the finder view are the main frame's corners), outlines too: as exact as the
+        finder's names and the box. Empty before the first Align with no solve."""
+        self._main_solve_soon()
+        fix = self._main_fix
+        if fix is not None and time.monotonic() - fix[0] < MAIN_FIX_S \
+                and separation_deg(*fix[2], *self.position()) < MAIN_FIX_MOVE_DEG:
+            return main_view_labels(self.labels, fix[1], self.main_size, self.site, self.clock(), level)
         if not self.main_box:
             return []
         box = np.array(self.main_box)  # main frame's top-left, top-right, bottom-right, bottom-left
@@ -642,6 +660,31 @@ class Session:
                     outline = [*np.round(np.array(outline[:2]) @ a[:2], 4).tolist(), outline[2]]
                 out.append([name, kind, round(float(mx), 4), round(float(my), 4), *outline])
         return out
+
+    def _main_solve_soon(self) -> None:
+        """A plate solve of the telescope view in the background, every MAIN_SOLVE_EVERY_S at
+        most, for exact names on it: near the finder's solve, against the Gaia stars on disk."""
+        if self._main_solving or time.monotonic() - self._main_solve_at < MAIN_SOLVE_EVERY_S \
+                or getattr(self.finder, "last_solution", None) is None or self._camera_busy():
+            return
+        self._main_solve_at, self._main_solving = time.monotonic(), True
+        threading.Thread(target=self._main_solve, daemon=True).start()
+
+    def _main_solve(self) -> None:
+        try:
+            frame, sol, where = self.camera_frame("main"), self.finder.last_solution, self.position()
+            stars = None if frame is None else cached_catalog(sol.ra_deg, sol.dec_deg, self.data_dir / "gaia")
+            if stars is None:
+                return
+            msol = next((m for scale in self._main_scales()
+                         if (m := solve_main(detect_stars(frame[0])[0], stars, sol.ra_deg, sol.dec_deg, scale))),
+                        None)
+            if msol is not None:
+                self._main_fix = (time.monotonic(), msol, where)
+        except Exception:  # a bug in one solve must not stop the next ones
+            log.exception("main solve failed")
+        finally:
+            self._main_solving = False
 
     def adjust_camera(self, name: str, zoom: int | None = None) -> None:
         """The page's digital zoom for a camera view (brightness is the page's own)."""

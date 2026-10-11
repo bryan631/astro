@@ -1,3 +1,4 @@
+import time
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -8,6 +9,7 @@ from scipy import ndimage
 from astro.planner.catalog import Target
 from astro.pointing.coords import Site, radec_to_altaz
 from astro.pointing.labels import FinderLabels, altaz_now, load_stars, place, tube_map
+from astro.pointing.main_solve import MainSolution
 from astro.pointing.platesolve import FinderSolver, finder_gray
 from astro.process.view import ROTATE
 from astro.session import Session
@@ -126,3 +128,21 @@ def test_main_view_names_come_through_the_align_box(tmp_path):
     got = {lb[0]: lb[2:] for lb in s.main_labels()}
     assert got["A"] == pytest.approx([0, 0], abs=1e-3) and got["B"] == pytest.approx([-0.5, -0.5], abs=1e-3)
     assert "C" not in got and got["M1"] == pytest.approx([0, 0, 0.1, 0, 0.5], abs=1e-3)
+
+
+def test_main_view_names_from_its_own_plate_solve_are_exact(tmp_path):
+    """Once the telescope view plate-solves, its names come from that solve: a target at the
+    solve's center is the view's center, one 5' east lies 600 px along the solve's east."""
+    s = Session(Site(26.6, -80.1), lambda: (45.0, 180.0), data_dir=tmp_path, main_sensor=(3856, 2180))
+    msol = MainSolution(150.0, 30.0, 90.0, 0.5, 20, 0.4, 10, False, np.zeros((0, 2)), np.zeros((0, 2)))
+    east = 150.0 + 5 / 60 / np.cos(np.radians(30.0))
+    s.labels = FinderLabels([Target("Here", "T1", "galaxy", 150.0, 30.0, "", (4.0, 2.0), 0.0),
+                             Target("East", "T2", "galaxy", east, 30.0, "")])
+    s._main_fix = (time.monotonic(), msol, (45.0, 180.0))
+    s._main_solve_at = time.monotonic()  # no new solve started by the test
+    got = {lb[0]: lb[2:] for lb in s.main_labels() if lb[1] == "target"}
+    assert got["T1"][:2] == pytest.approx([0, 0], abs=1e-4)
+    assert got["T2"] == pytest.approx([0, -600 / 2180], abs=2e-3)  # roll 90: east is up the view (y down)
+    assert np.hypot(got["T1"][2] * 3856, got["T1"][3] * 2180) == pytest.approx(240, rel=0.01)  # 2' semi-axis
+    s._main_fix = (time.monotonic() - 100, msol, (45.0, 180.0))  # stale: back to Align's box (none yet)
+    assert s.main_labels() == []
