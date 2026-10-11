@@ -3,6 +3,7 @@
 import itertools
 
 import numpy as np
+import pytest
 from scipy import ndimage
 
 from astro.capture.focus import measure_focus
@@ -69,3 +70,36 @@ def test_real_saturated_star_alone_gets_an_edge_number():
     lum = superpixel_rgb(d["main"][10], str(d["main_bayer"])).astype(np.float32).mean(axis=2)
     m = measure_focus(lum)
     assert m.mode == "planet" and m.score > 0
+
+
+def stars_at(n, sigma, trail_px=0.0, flux=(800, 8000), size=(540, 960), seed=1):
+    """n stars at subpixel positions (summed flux in the range), drifted `trail_px` along x
+    during the exposure, on a noisy sky: the telescope view (binned) on a night like 2026-10-10."""
+    rng = np.random.default_rng(seed)
+    img = np.zeros(size)
+    yy, xx = np.mgrid[0:size[0], 0:size[1]]
+    for y, x, f in zip(rng.uniform(20, size[0] - 20, n), rng.uniform(20, size[1] - 20, n),
+                       np.exp(rng.uniform(*np.log(flux), n)), strict=True):
+        sl = (slice(int(y) - 14, int(y) + 15), slice(int(x) - 14, int(x) + 15))
+        for t in np.linspace(-trail_px / 2, trail_px / 2, 9):
+            img[sl] += f / 9 / (2 * np.pi * sigma**2) * np.exp(-((yy[sl] - y) ** 2 + (xx[sl] - x - t) ** 2) / (2 * sigma**2))
+    return np.clip(img + 20 + rng.normal(0, 5, size), 0, 255)
+
+
+def test_width_follows_the_stars_smoothly_with_few_stars():
+    """2026-10-11: the pixel-counted radius stepped (1, 1.41, 2 px) and, with the telescope
+    view's ~8 stars, vanished near best focus. Fitted widths track the truth at every size."""
+    for sigma in (0.8, 1.0, 1.3, 1.7, 2.2, 3.0):
+        m = measure_focus(stars_at(8, sigma))
+        assert m.mode == "stars" and m.hfr_px == pytest.approx(1.1774 * sigma, rel=0.04), (sigma, m)
+
+
+def test_sharp_saturated_stars_still_count():
+    m = measure_focus(stars_at(8, 0.7, flux=(3000, 20000)))  # nearly every star clips at 255
+    assert m.mode == "stars" and m.stars >= 6 and m.hfr_px == pytest.approx(1.1774 * 0.7, rel=0.08)
+
+
+def test_the_drift_trail_does_not_count_as_blur():
+    """0.25 s frames from an untracked scope trail stars ~2.5 binned px; focus doesn't change that."""
+    still, trailed = measure_focus(stars_at(12, 1.2)), measure_focus(stars_at(12, 1.2, trail_px=3.0))
+    assert trailed.hfr_px == pytest.approx(still.hfr_px, rel=0.05)
