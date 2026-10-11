@@ -221,18 +221,13 @@ main camera; the box orange in day mode.
 - Check the encoders on the sky: counts follow the scope, and the model holds after a restart.
 - Buttons for the setup wizard, horizon walk and collimation (still worded for voice).
 - Recordings for test data: a focus sweep and a wiggle.
-- Saturn night (2026-10-10, three SER videos on the Mele in data/captures, logs in data/night-20261010/saturn_log.txt):
-  - Recenter (pause) showed the recording view instead of the live full field.
-  - While recording, the planet's live ROI is pasted over the planet on the still full view; show it as an inset
-    off to the side instead, so the planet shows twice (the still full view and the live recording).
-  - Better planet stacking (the gallery PNGs are ~2 KB): look at it indoors after the session.
 - "Go to <object>" by voice in the app (typed box done; the keyboard mic dictates into it) (2026-10-10).
 - Remove Align's drift fit (pick_star, fit_main_in_finder, the tracks) now that Align is plate solves only (2026-10-10).
 - Planet stacker crops the simulator's Saturn to the whole frame (2645 x 1991, ~10 s); real Saturn crops to ~290 px. Check the moon search on sim frames (2026-10-10).
-- Finder zoom: center the zoomed finder view on the main camera's box, not the frame center (2026-10-10).
-- Names button: turning names on or off flickers twice, as if tapped extra times (2026-10-10).
 - From the 2026-10-10 night (raw frames in data/night-20261010/): check the night colors and
-  the focus number's steadiness on them; Align's star pick (it took a star 3.5 degrees out).
+  the focus number's steadiness on them.
+- Battery remaining: the battery's USB data (HID UPS) or the 12 V line measured by the Nano.
+- Auto solve logs every failed solve (~1 per second): log only when the reason changes.
 
 ## Known risks / open questions
 - SV705C Linux SDK stability (fallback: ZWO ASI585MC).
