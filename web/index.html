@@ -214,7 +214,7 @@ async function viewLoop(name) {
         const url = URL.createObjectURL(await r.blob());
         img.onload = () => { fit(name); URL.revokeObjectURL(url); };
         img.src = url;
-        showFocus(name, r.headers.get("X-Focus"), r.headers.get("X-Stars"), r.headers.get("X-Focus-Mode"));
+        showFocus(name, r.headers.get("X-Focus"), r.headers.get("X-Stars"), r.headers.get("X-Focus-Mode"), r.headers.get("X-Mask-Offset"));
         // only a request made with names on, and only while they still are: a frame already on its
         // way when Names was tapped redrew the old state (names flickered off, on, off)
         if (labels && labels === `&labels=${namesOn}`) drawNames(name, JSON.parse(r.headers.get("X-Labels") || "[]"));
@@ -239,14 +239,16 @@ const showView = name => views[name].el.scrollIntoView({behavior: "smooth", inli
 $("v-finder").querySelector(".label").onclick = () => showView("main");  // landscape: swap cameras
 $("v-main").querySelector(".label").onclick = () => showView("finder");
 addEventListener("resize", fitPage); fitPage();
-function showFocus(name, value, stars, mode) {  // higher is sharper: turn the focuser to maximize it
+function showFocus(name, value, stars, mode, maskOffset) {  // higher is sharper: turn the focuser to maximize it
   const v = views[name], box = v.el.querySelector(".focus");
   if (value === null) { box.querySelector("b").textContent = ""; box.querySelector("small").textContent = ""; return; }
   const x = Number(value);
+  if (mode !== v.focusMode) { v.focus = []; v.focusMode = mode; }  // another scale: a new graph
   v.focus.push(x); if (v.focus.length > 60) v.focus.shift();
   const best = Math.max(...v.focus);
   box.querySelector("b").textContent = `focus ${x.toFixed(0)}`;
-  box.querySelector("small").textContent = `${mode === "planet" ? "edge" : `${stars} stars`} · best ${best.toFixed(0)}`;
+  const how = mode === "planet" ? "edge" : mode === "bahtinov" ? `mask, spike off ${Number(maskOffset).toFixed(1)} px` : `${stars} stars`;
+  box.querySelector("small").textContent = `${how} · best ${best.toFixed(0)}`;
   const c = box.querySelector("canvas"), g = c.getContext("2d"), lo = Math.min(...v.focus);
   g.clearRect(0, 0, c.width, c.height); g.strokeStyle = getComputedStyle(document.body).color; g.beginPath();
   v.focus.forEach((f, i) => { const px = i * c.width / 59, py = c.height - 2 - (f - lo) / Math.max(best - lo, 1e-6) * (c.height - 4);

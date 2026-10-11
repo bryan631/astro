@@ -406,7 +406,8 @@ class Session:
     def focus_hint(self) -> list[dict]:
         """Focus is visual: the number on each camera view (higher is sharper). No coach."""
         return [say("Turn the focus knob to make the focus number on the camera view as high "
-                    "as you can.")]
+                    "as you can. With the Bahtinov mask on a bright star, the number reads the mask: "
+                    "100 is in focus.")]
 
     def capture(self, choice: str | None = None) -> list[dict]:
         """Record or stack what's in the telescope view (_what_to_capture), or `choice` when

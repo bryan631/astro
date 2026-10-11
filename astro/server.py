@@ -496,7 +496,7 @@ async def api_camera(name: str, after: int = 0, labels: int = 0) -> Response:
     """The camera's newest frame as a JPEG. `after`: the frame number the page already shows;
     the request waits (up to FRAME_WAIT_S) for a newer one, so each view is a simple loop of
     requests that never re-downloads a frame. Headers: X-Seq (frame number), X-Frame-Age (s),
-    X-Focus (focus number, higher is sharper), X-Stars, X-Focus-Mode (stars or planet), X-Zoom-Center (the zoomed crop's middle, view fractions), and with
+    X-Focus (focus number, higher is sharper), X-Stars, X-Focus-Mode (stars, planet or bahtinov; X-Mask-Offset), X-Zoom-Center (the zoomed crop's middle, view fractions), and with
     `labels` 1 or 2, X-Labels: the names on the view at that level (Session.finder_labels, main_labels)."""
     if name not in ("finder", "main"):
         raise HTTPException(404)
@@ -520,7 +520,7 @@ async def api_camera(name: str, after: int = 0, labels: int = 0) -> Response:
     cached = _rendered.get(name)
     if cached is None or cached[0] != key:
         data, metrics = await asyncio.to_thread(render, raw, bayer, session.zoom[name], ROTATE[name],
-                                             session.dark(), center)
+                                             session.dark(), center, name == "main")
         metrics = _steady_focus(name, metrics)
         cached = _rendered[name] = (key, data, metrics)
     _, data, metrics = cached
@@ -532,6 +532,8 @@ async def api_camera(name: str, after: int = 0, labels: int = 0) -> Response:
     if metrics.get("focus") is not None:
         headers |= {"X-Focus": f"{metrics['focus']:.1f}", "X-Stars": str(metrics["stars"]),
                     "X-Focus-Mode": metrics["focus_mode"]}
+        if "mask_offset" in metrics:  # the Bahtinov's middle spike, signed (px): 0 at focus
+            headers["X-Mask-Offset"] = f"{metrics['mask_offset']:.2f}"
     return Response(data, media_type="image/jpeg", headers=headers)
 
 

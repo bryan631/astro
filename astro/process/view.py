@@ -5,6 +5,7 @@ import numpy as np
 from PIL import Image
 from scipy import ndimage
 
+from astro.capture.bahtinov import focus_number, measure_bahtinov
 from astro.capture.focus import MAD_SIGMA, measure_focus, sky_map
 from astro.process.planet import superpixel_rgb
 
@@ -31,9 +32,11 @@ def remove_hot_pixels(rgb: np.ndarray) -> np.ndarray:
 
 
 def render(raw: np.ndarray, bayer: str, zoom: int = 1, rotate: int = 180,
-           night: bool | None = None, center: tuple[float, float] = (0.0, 0.0)) -> tuple[bytes, dict]:
+           night: bool | None = None, center: tuple[float, float] = (0.0, 0.0),
+           mask: bool = False) -> tuple[bytes, dict]:
     """A raw frame as a JPEG for a camera view, and its numbers: focus (higher is sharper, see
-    astro/capture/focus.py measure_focus), stars measured, focus_mode (stars, planet, none).
+    astro/capture/focus.py measure_focus), stars measured, focus_mode (stars, planet, none, or
+    with `mask` looked for, bahtinov: astro/capture/bahtinov.py, and mask_offset).
 
     Turned by `rotate` degrees (ROTATE: each camera as mounted) so the page shows it upright;
     `zoom` crops around `center` (view fractions from the middle, e.g. the main camera's box on
@@ -52,6 +55,9 @@ def render(raw: np.ndarray, bayer: str, zoom: int = 1, rotate: int = 180,
     focus = measure_focus(lum)  # also through bright cloud glow (it measures from the sky level)
     metrics = {"focus": focus.score, "stars": focus.stars, "focus_mode": focus.mode,
                "center": tuple(-c for c in used) if rotate == 180 else used}
+    if mask and (found := measure_bahtinov(lum)) is not None:  # the mask's on: it decides
+        metrics |= {"focus": focus_number(found), "focus_mode": "bahtinov",
+                    "mask_offset": round(found.offset_px, 2)}
     if night is None:
         night = lo <= DAY_MEDIAN
     if night:
