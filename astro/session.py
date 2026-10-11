@@ -7,6 +7,7 @@ state live next door: Sky (targets and plans), FinderLabels (names), ViewSetting
 exposure), AlignRun, Recorder and LiveStacker.
 """
 
+import io
 import logging
 import os
 import threading
@@ -18,10 +19,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
+from PIL import Image
 
 from astro import calibration_store
 from astro.capture.collimation import CollimationCoach
 from astro.capture.exposure import SATURATED_RAW, ViewSettings
+from astro.capture.focus import measure_focus
 from astro.capture.live_stacker import LiveStacker
 from astro.capture.recorder import CaptureRefused, Recorder, prune
 from astro.capture.roi import brightest_blob, has_disk
@@ -50,8 +53,8 @@ from astro.pointing.geometry import separation_deg
 from astro.pointing.labels import FinderLabels
 from astro.pointing.main_offset import MainOffset
 from astro.pointing.main_solve import field_catalog
-from astro.process.planet import MIN_FRAMES, StackResult, process_ser
-from astro.process.view import ROTATE
+from astro.process.planet import MIN_FRAMES, StackResult, process_ser, superpixel_rgb
+from astro.process.view import ROTATE, render
 from astro.safety import DAYTIME_SUN_ALT_DEG, SafetyResult, check_target
 from astro.spots import Spot, upsert, with_mask
 from astro.wizard import SetupWizard
@@ -68,6 +71,7 @@ DIRECTION_PROBE_S = 1.5  # after a left/right cue, look this long for the azimut
 FIX_STALE_S = 2.0  # a plate-solve fix older than this is too old to steer by
 ENCODER_STALE_S = 1.0  # encoder positions older than this mean the board or cable is gone
 PLANET_DISK_PX = 2000  # one clipped blob this big (raw px) is a disk: Jupiter ~30000, Sirius ~700
+JUST_THIS_FRAME, STACK_ANYWAY = "Just this frame", "Stack anyway"  # Capture with nothing in view
 UNNAMED_PLANET = "the planet"  # a disk in the picture when the pointing can't name it
 FIELD_RADIUS_DEG = 0.3  # the telescope's 32' x 18' view, center to corner
 PLANET_NEAR_DEG = 3.0  # ... and it's the planet within this of where the scope points
@@ -387,10 +391,17 @@ class Session:
             if len(found) > 1:
                 return [say("I see more than one thing in the telescope. Which one?"),
                         {"type": "choose", "options": found}]
-            # nothing recognized: the Go to target (pointing unknown) or the field
-            choice = found[0] if found else (self.target or "the field")
+            if not found and not self._main_sees_something():  # stacking blind made empty pictures
+                return [say("I don't see a planet or any stars in the telescope view. What should I capture?"),
+                        {"type": "choose", "options": [JUST_THIS_FRAME, STACK_ANYWAY]}]
+            choice = found[0] if found else (self.target or "the field")  # pointing unknown: the Go to target
+        if choice == JUST_THIS_FRAME:
+            return self._save_frame()
+        stack = choice == STACK_ANYWAY
+        if stack:  # the Go to target (pointing unknown) or the field
+            choice = self.target or "the field"
         target = choice if choice in self.names() else None  # the session's, once it starts
-        video = target in EXTENDED_TARGETS or choice == UNNAMED_PLANET  # planets, Moon
+        video = not stack and (target in EXTENDED_TARGETS or choice == UNNAMED_PLANET)  # planets, Moon
         try:
             if video:
                 self.recorder.start(choice, self.record_seconds)
@@ -406,6 +417,25 @@ class Session:
         self._stack_done_announced, self._preview_seen = False, 0
         return [say(f"Stacking short pictures of {choice}. Watch it build up on the screen. "
                     "Try not to touch the telescope.")]
+
+    def _main_sees_something(self) -> bool:
+        """Any star or disk in the telescope view right now (no frame: assume so)."""
+        frame = self.camera_frame("main")
+        if frame is None:
+            return True
+        return measure_focus(superpixel_rgb(frame[0], frame[1]).mean(axis=-1)).mode != "none"
+
+    def _save_frame(self) -> list[dict]:
+        """The telescope view as it shows on the page, saved as a picture."""
+        frame = self.view_frame("main")
+        if frame is None:
+            return [say("There's no picture from the telescope camera yet.")]
+        data, _ = render(frame[0], frame[1], 1, ROTATE["main"], self.dark())
+        self.gallery_dir.mkdir(parents=True, exist_ok=True)
+        path = self.gallery_dir / f"{datetime.now(UTC).strftime('%Y%m%d_%H%M%S_%f')}_frame.png"
+        Image.open(io.BytesIO(data)).save(path)
+        return [say("I saved the telescope view as a picture. Tap Pictures to see it."),
+                {"type": "picture", "file": path.name}]
 
     def _what_to_capture(self) -> list[str]:
         """What's in the telescope view, by name: a planet's disk seen in the picture, then the

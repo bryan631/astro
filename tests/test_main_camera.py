@@ -14,7 +14,7 @@ from astro.devices.sim.main_cam import SimMainCamera
 from astro.guidance.centering import Step
 from astro.guidance.engine import Guide
 from astro.pointing.coords import Site, body_altaz, radec_to_altaz
-from astro.session import TOLERANCE_BARLOW_ARCMIN, Session
+from astro.session import JUST_THIS_FRAME, STACK_ANYWAY, TOLERANCE_BARLOW_ARCMIN, Session
 
 WPB = Site(26.7, -80.1)
 EVENING = datetime(2026, 10, 3, 22, 0, tzinfo=timezone(timedelta(hours=-4)))
@@ -116,6 +116,20 @@ def test_barlow_change_requires_refocus(tmp_path):
     s.main_focus_ok = True
     assert "refocus" in texts(s.handle("I put in the barlow"))[0]
     assert s.barlow
+
+
+def test_capture_with_nothing_in_view_asks_what_to_capture(tmp_path):
+    """2026-10-10: Capture stacked "the field" with no stars in view and made an empty picture."""
+    s, cam = make_session(tmp_path)
+    cam.true_altaz = lambda: (80.0, 10.0)  # empty sky
+    cam._stars = lambda alt, az, roi: 0.0  # and no field stars
+    s.camera("main").capture()
+    out = s.capture()
+    assert out[1] == {"type": "choose", "options": [JUST_THIS_FRAME, STACK_ANYWAY]}
+    saved = s.capture(JUST_THIS_FRAME)
+    assert saved[1]["type"] == "picture" and (tmp_path / "gallery" / saved[1]["file"]).exists()
+    assert "Stacking" in s.capture(STACK_ANYWAY)[0]["text"] and s.stacker.busy
+    s.stacker.stop()
 
 
 def test_capture_without_planet_explains(tmp_path):

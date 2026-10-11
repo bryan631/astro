@@ -221,7 +221,6 @@ main camera; the box orange in day mode.
 - Check the encoders on the sky: counts follow the scope, and the model holds after a restart.
 - Buttons for the setup wizard, horizon walk and collimation (still worded for voice).
 - Recordings for test data: a focus sweep and a wiggle.
-- Capture with nothing recognized and no stars in the telescope view: ask what to capture ("Just this frame" saves the frame as a picture, or stack anyway) instead of stacking "the field" blindly (2026-10-10).
 - Saturn night (2026-10-10, three SER videos on the Mele in data/captures, logs in data/night-20261010/saturn_log.txt):
   - Recenter (pause) showed the recording view instead of the live full field.
   - While recording, the planet's live ROI is pasted over the planet on the still full view; show it as an inset
