@@ -11,6 +11,7 @@ import contextlib
 import functools
 import hashlib
 import hmac
+import io
 import json
 import logging
 import math
@@ -20,6 +21,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+import numpy as np
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -522,6 +524,19 @@ async def api_camera(name: str, after: int = 0, labels: bool = False) -> Respons
         headers |= {"X-Focus": f"{metrics['focus']:.1f}", "X-Stars": str(metrics["stars"]),
                     "X-Focus-Mode": metrics["focus_mode"]}
     return Response(data, media_type="image/jpeg", headers=headers)
+
+
+@app.get("/api/camera/{name}.npy")
+def api_camera_raw(name: str) -> Response:
+    """The camera's newest raw frame as a NumPy file, for tuning the views and the focus number
+    on real sky (np.load)."""
+    frame = running_hub().session.camera_frame(name) if name in ("finder", "main") else None
+    if frame is None:
+        raise HTTPException(404)
+    out = io.BytesIO()
+    np.save(out, frame[0])
+    return Response(out.getvalue(), media_type="application/octet-stream",
+                    headers={"X-Bayer": frame[1]})
 
 
 def _seq(cam) -> int:
