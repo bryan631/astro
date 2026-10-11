@@ -51,6 +51,18 @@ def test_two_syncs_track_anywhere(solver):
     assert separation_deg(*fs.position(), scope.alt, scope.az) < 0.2
 
 
+def test_names_follow_the_last_solve_not_the_models_error(solver):
+    """2026-10-10: names sat beside the wrong stars in a dense field, off by the model's fit
+    error. label_position is the solve's pointing moved by what the encoders turned since."""
+    scope, fs = make(solver, 50, 100)
+    assert fs.sync()[0]
+    model_to_sky = fs.model.to_sky
+    fs.model.to_sky = lambda a, z: (model_to_sky(a, z)[0] + 0.5, model_to_sky(a, z)[1])  # a poor fit
+    scope.alt, scope.az = 51.0, 101.0  # a small push after the solve
+    assert separation_deg(*fs.position(), scope.alt, scope.az) > 0.4
+    assert separation_deg(*fs.label_position(), scope.alt, scope.az) < 0.05
+
+
 def test_defocused_finder_explains(solver):
     _, fs = make(solver, blur_px=9)
     ok, msg = fs.sync()

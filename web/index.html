@@ -51,9 +51,15 @@
   .ctl { position: absolute; right: 6px; bottom: 6px; display: flex; gap: 6px; }
   .ctl button { padding: 4px 10px; font-size: 16px; border-radius: 8px; }
   .names { position: absolute; inset: 0; }  /* star names beside the stars (Names button) */
-  .names span { position: absolute; transform: translate(7px, -50%); font-size: 13px; white-space: nowrap;
+  .names span { position: absolute; transform: translate(10px, -50%); font-size: 13px; white-space: nowrap;
                 opacity: .8; text-shadow: 0 0 3px #000, 0 0 3px #000; }
+  /* a ring on the star itself, so a name in a dense field points at one star (like a map pin) */
+  .names span::before { content: ""; position: absolute; left: -17px; top: calc(50% - 7px); width: 14px; height: 14px;
+                        box-sizing: border-box; border: 1.5px solid currentColor; border-radius: 50%; }
   .names .target, .names .planet { color: var(--hi); font-weight: bold; opacity: 1; }
+  .names span.big { transform: translate(-50%, -50%); }
+  .names span.big::before { display: none; }
+  .names i { position: absolute; box-sizing: border-box; border: 1.5px dashed currentColor; border-radius: 50%; }  /* outline */
   #arrow { position: absolute; font-size: 140px; line-height: 1; opacity: .85; pointer-events: none;
            transition: transform .2s; text-shadow: 0 0 8px #000; }
   #dist { position: absolute; bottom: 40px; font-size: 32px; text-shadow: 0 0 6px #000; }
@@ -72,11 +78,16 @@
   #capture.on { background: var(--dim); }
   .sheet { position: fixed; inset: 0; background: var(--bg); padding: 12px; overflow: auto; z-index: 5; }
   .sheet .top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .say { display: flex; gap: 8px; align-items: flex-start; } .say button { padding: 10px 16px; }
+  #gotext { width: 100%; font: inherit; padding: 10px; margin-bottom: 10px; background: var(--bg); color: var(--fg);
+            border: 2px solid var(--fg); border-radius: 8px; }
   #targets button, #choices button { display: block; width: 100%; text-align: left; margin-bottom: 8px; }
   #targets button.down { opacity: .5; }
   #targets small { display: block; font-size: 15px; opacity: .8; }
   #pictures { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
-  #pictures button { padding: 0; border: 0; } #pictures img { width: 100%; border-radius: 8px; }
+  #pictures button { padding: 0; border: 0; position: relative; } #pictures img { width: 100%; border-radius: 8px; }
+  #pictures button span { position: absolute; left: 6px; top: 6px; padding: 1px 7px; border-radius: 6px; font-size: 14px;
+                          background: rgba(0, 0, 0, .65); color: #fff; }  /* the picture's number */
   #viewer { display: flex; flex-direction: column; }
   #viewer .pic { flex: 1; overflow: hidden; display: flex; align-items: center; justify-content: center; }
   #viewer img { max-width: 100%; max-height: 100%; transform-origin: center; }
@@ -106,7 +117,7 @@
     </div>
     <div class="view" id="v-main">
       <img class="cam" alt="telescope camera">
-      <div class="frame"><div id="field" hidden></div></div>
+      <div class="frame"><div class="names"></div><div id="field" hidden></div></div>
       <div class="label">Telescope<span class="swap"> ⇄</span></div><div class="focus"><b></b><small></small><canvas width="160" height="40"></canvas></div>
       <div id="capinfo"></div><img id="inset" hidden alt="live stack">
       <div class="cap"></div>
@@ -118,19 +129,25 @@
     <button id="goto">Go to</button><button id="align">Align</button><button id="focus">Focus</button>
     <button id="capture">Capture</button><button id="recenter">Recenter</button>
     <button id="pics">Pictures</button><button id="more">More</button>
+    <span id="modebtns" hidden></span>
     <span class="grow"></span><button id="stop">STOP</button>
   </div>
 
-  <div class="sheet" id="s-goto" hidden><div class="top"><b>Go to</b><button data-close>Close</button></div><div id="targets">Loading…</div></div>
+  <div class="sheet" id="s-goto" hidden><div class="top"><b>Go to</b><button data-close>Close</button></div>
+    <div class="say"><input id="gotext" type="search" enterkeyhint="go" autocomplete="off" placeholder="Type a name (M27, Vega, Saturn)…"><button id="say">Say</button></div>
+    <div id="targets">Loading…</div></div>
   <div class="sheet" id="s-pics" hidden><div class="top"><b>Pictures</b><button data-close>Close</button></div><div id="pictures"></div></div>
   <div class="sheet" id="viewer" hidden><div class="top"><span>
       <button data-vb="-">−</button> <button data-vb="+">+</button> <button data-vz="1">1x</button> <button data-vz="2">2x</button> <button data-vz="4">4x</button></span>
-      <button data-close>Close</button></div><div class="pic"><img alt="picture"></div></div>
+      <b id="piccap"></b><button data-close>Close</button></div><div class="pic"><img alt="picture"></div></div>
   <div class="sheet" id="s-choose" hidden><div class="top"><b>Capture which one?</b><button data-close>Close</button></div><div id="choices"></div></div>
   <div class="sheet" id="s-log" hidden><div class="top"><b>Messages</b><button data-close>Close</button></div><div id="log"></div></div>
   <div class="sheet" id="s-more" hidden><div class="top"><b>More</b><button data-close>Close</button></div>
     <p><button id="mode">Day mode</button> <button id="sync">Sync now</button>
        <button data-text="barlow in">Barlow in</button> <button data-text="barlow out">Barlow out</button></p>
+    <p><button data-text="set up the telescope" data-shut>Set up the telescope</button>
+       <button data-text="start horizon walk" data-shut>Horizon walk</button>
+       <button data-text="collimate" data-shut>Collimation</button></p>
     <p><label id="checks" hidden><input type="checkbox" id="checksoff"> Skip safety checks (daytime)</label></p>
     <p><a href="/tonight">Tonight at each spot</a> · <a href="/treeline.html">Record a treeline</a></p>
     <pre id="debugbox"></pre></div>
@@ -183,23 +200,29 @@ function handle(m) {
 
 // --- camera views: always live. Each view asks for a frame newer than the one it shows; the
 // server waits for it, so nothing stays open and nothing is downloaded twice.
-const views = {finder: {el: $("v-finder"), b: 1, zoom: 1, focus: []}, main: {el: $("v-main"), b: 1, zoom: 1, focus: []}};
+// zc: the middle of the zoomed crop (view fractions; the finder zooms in on the main camera's box)
+const views = {finder: {el: $("v-finder"), b: 1, zoom: 1, zc: [0, 0], focus: []},
+               main: {el: $("v-main"), b: 1, zoom: 1, zc: [0, 0], focus: []}};
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function viewLoop(name) {
   const v = views[name], img = v.el.querySelector("img.cam"), cap = v.el.querySelector(".cap");
   let seq = 0;
   for (;;) {
     try {
-      const labels = name === "finder" && namesOn ? "&labels=1" : "";
+      const labels = namesOn ? `&labels=${namesOn}` : "";
       const r = await fetch(`/api/camera/${name}.jpg?after=${seq}${labels}`, {cache: "no-store"});
       const age = Number(r.headers.get("X-Frame-Age"));
       if (r.status === 200) {
         seq = Number(r.headers.get("X-Seq")) || seq;
+        const zc = (r.headers.get("X-Zoom-Center") || "0,0").split(",").map(Number);
+        if (zc.join() !== v.zc.join()) { v.zc = zc; if (name === "finder") drawMainBox(); }
         const url = URL.createObjectURL(await r.blob());
         img.onload = () => { fit(name); URL.revokeObjectURL(url); };
         img.src = url;
-        showFocus(name, r.headers.get("X-Focus"), r.headers.get("X-Stars"), r.headers.get("X-Focus-Mode"));
-        if (name === "finder") drawNames(JSON.parse(r.headers.get("X-Labels") || "[]"));
+        showFocus(name, r.headers.get("X-Focus"), r.headers.get("X-Stars"), r.headers.get("X-Focus-Mode"), r.headers.get("X-Mask-Offset"));
+        // only a request made with names on, and only while they still are: a frame already on its
+        // way when Names was tapped redrew the old state (names flickered off, on, off)
+        if (labels && labels === `&labels=${namesOn}`) drawNames(name, JSON.parse(r.headers.get("X-Labels") || "[]"));
         cap.textContent = age > 3 ? `frame ${age.toFixed(0)} s old` : "";
       } else if (r.status === 204) {
         cap.textContent = `no new frame for ${age.toFixed(0)} s`;
@@ -221,14 +244,16 @@ const showView = name => views[name].el.scrollIntoView({behavior: "smooth", inli
 $("v-finder").querySelector(".label").onclick = () => showView("main");  // landscape: swap cameras
 $("v-main").querySelector(".label").onclick = () => showView("finder");
 addEventListener("resize", fitPage); fitPage();
-function showFocus(name, value, stars, mode) {  // higher is sharper: turn the focuser to maximize it
+function showFocus(name, value, stars, mode, maskOffset) {  // higher is sharper: turn the focuser to maximize it
   const v = views[name], box = v.el.querySelector(".focus");
   if (value === null) { box.querySelector("b").textContent = ""; box.querySelector("small").textContent = ""; return; }
   const x = Number(value);
+  if (mode !== v.focusMode) { v.focus = []; v.focusMode = mode; }  // another scale: a new graph
   v.focus.push(x); if (v.focus.length > 60) v.focus.shift();
   const best = Math.max(...v.focus);
   box.querySelector("b").textContent = `focus ${x.toFixed(0)}`;
-  box.querySelector("small").textContent = `${mode === "planet" ? "edge" : `${stars} stars`} · best ${best.toFixed(0)}`;
+  const how = mode === "planet" ? "edge" : mode === "bahtinov" ? `mask, spike off ${Number(maskOffset).toFixed(1)} px` : `${stars} stars`;
+  box.querySelector("small").textContent = `${how} · best ${best.toFixed(0)}`;
   const c = box.querySelector("canvas"), g = c.getContext("2d"), lo = Math.min(...v.focus);
   g.clearRect(0, 0, c.width, c.height); g.strokeStyle = getComputedStyle(document.body).color; g.beginPath();
   v.focus.forEach((f, i) => { const px = i * c.width / 59, py = c.height - 2 - (f - lo) / Math.max(best - lo, 1e-6) * (c.height - 4);
@@ -246,28 +271,39 @@ document.querySelectorAll(".view").forEach(el => {
 });
 
 // Star, planet and target names on the finder view, from the last plate solve and the encoders
-// (Session.finder_labels): [name, kind, x, y], x and y fractions from the view's center.
-let namesOn = false;
-const esc = t => t.replace(/[&<>]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;"})[c]);
-function drawNames(labels) {
-  const z = views.finder.zoom;
-  views.finder.el.querySelector(".names").innerHTML = labels
-    .map(([n, kind, x, y]) => [n, kind, x * z, y * z]).filter(([, , x, y]) => Math.abs(x) < .5 && Math.abs(y) < .5)
-    .map(([n, kind, x, y]) => `<span class="${kind}" style="left:${(x + .5) * 100}%;top:${(y + .5) * 100}%">${esc(n)}</span>`).join("");
+// (Session.finder_labels, main_labels): [name, kind, x, y], x and y fractions from the view's
+// center, and for a target with a size [..., ex, ey, ratio]: its outline's semi-major axis.
+// The Names button steps through off, the bright stars (1) and all named stars (2).
+let namesOn = 0;
+const esc = t => t.replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"})[c]);
+function drawNames(name, labels) {
+  const v = views[name], z = v.zoom, [cx, cy] = v.zc, box = v.el.querySelector(".names");
+  const W = box.clientWidth, H = box.clientHeight;
+  box.innerHTML = labels.map(([n, kind, x, y, ex, ey, ratio]) => {
+    x = (x - cx) * z; y = (y - cy) * z;
+    const a = ex === undefined ? 0 : Math.hypot(ex * W, ey * H) * z;  // semi-major, screen px
+    if (Math.abs(x) > (a ? .5 + a / W : .5) || Math.abs(y) > (a ? .5 + a / H : .5)) return "";
+    const at = `left:${(x + .5) * 100}%;top:${(y + .5) * 100}%`;
+    if (a < 12) return `<span class="${kind}" style="${at}">${esc(n)}</span>`;  // small: a ring
+    const t = Math.atan2(ey * H, ex * W), b = a * ratio, below = Math.hypot(a * Math.sin(t), b * Math.cos(t));
+    return `<i class="${kind}" style="${at};width:${2 * a}px;height:${2 * b}px;transform:translate(-50%,-50%) rotate(${t}rad)"></i>` +
+      `<span class="${kind} big" style="${at};margin-top:${below + 9}px">${esc(n)}</span>`;  // name under it
+  }).join("");
 }
-function setNames(on) {  // remembered on this tablet
-  namesOn = on; $("names").classList.toggle("on", on);
-  if (!on) drawNames([]);
-  try { localStorage.setItem("names", on ? "1" : ""); } catch {}
+function setNames(level) {  // remembered on this tablet
+  namesOn = level; $("names").classList.toggle("on", level > 0);
+  $("names").textContent = level === 2 ? "Names+" : "Names";
+  if (!level) { drawNames("finder", []); drawNames("main", []); }
+  try { localStorage.setItem("names", level ? String(level) : ""); } catch {}
 }
-$("names").onclick = () => setNames(!namesOn);
-try { if (localStorage.getItem("names")) setNames(true); } catch {}
+$("names").onclick = () => setNames((namesOn + 1) % 3);
+try { const n = parseInt(localStorage.getItem("names")); if (n === 1 || n === 2) setNames(n); } catch {}
 
 // The main camera's field on the finder view (Align measures it), scaled with the finder's zoom.
 let mainBox = null;
 function drawMainBox() {
-  const poly = $("mainbox"), z = views.finder.zoom;
-  poly.setAttribute("points", mainBox ? mainBox.map(([x, y]) => `${x * z},${y * z}`).join(" ") : "");
+  const poly = $("mainbox"), z = views.finder.zoom, [cx, cy] = views.finder.zc;
+  poly.setAttribute("points", mainBox ? mainBox.map(([x, y]) => `${(x - cx) * z},${(y - cy) * z}`).join(" ") : "");
 }
 
 // --- pointing: the arrow on the finder view says which way to push; distance below it.
@@ -324,18 +360,61 @@ function choose(options) {
 // --- buttons
 $("capture").onclick = () => { action("capture"); if (!capturing) showView("main"); };
 $("stop").onclick = () => action("stop");
-$("align").onclick = () => action("align");
+$("align").onclick = () => {  // lit while Align watches the star (the status says when it's done)
+  action("align"); $("align").classList.add("on"); setTimeout(pollStatus, 11500);
+};
 $("recenter").onclick = () => { action("recenter"); showView("finder"); };
 $("focus").onclick = () => { const on = document.body.classList.toggle("focusing");
   $("focus").classList.toggle("on", on);
   if (on) { for (const v of Object.values(views)) v.focus = []; action("focus"); } };  // a fresh best and graph
 $("sync").onclick = () => action("sync");
-document.querySelectorAll("[data-text]").forEach(b => b.onclick = () => sendText(b.dataset.text));
+document.querySelectorAll("[data-text]").forEach(b => b.onclick = () => {
+  sendText(b.dataset.text);
+  if ("shut" in b.dataset) close(b);  // a mode starts: back to the cameras
+});
 const open = id => { $(id).hidden = false; }, close = el => { el.closest(".sheet").hidden = true; };
 document.querySelectorAll("[data-close]").forEach(b => b.onclick = () => close(b));
 msgEl.onclick = () => { $("log").textContent = logLines.slice().reverse().join("\n") || "No messages yet."; open("s-log"); };
+// Typing filters the list; Enter sends "go to <name>" (any name the server knows, or Claude
+// works it out). The keyboard's own mic key dictates into the box.
+$("gotext").oninput = () => {
+  const q = $("gotext").value.trim().toLowerCase();
+  $("targets").querySelectorAll("button").forEach(b => b.hidden = q && !b.textContent.toLowerCase().includes(q));
+};
+$("gotext").onkeydown = e => {
+  const name = $("gotext").value.trim();
+  if (e.key !== "Enter" || !name) return;
+  sendText(`go to ${name}`); $("s-goto").hidden = true; showView("finder");
+};
+// Say: the tablet records a few seconds and the Mele turns it into text (whisper.cpp, offline:
+// the audio goes nowhere else). "Jupiter" or "go to Jupiter" both go there.
+const SAY_S = 4;
+$("say").onclick = async () => {
+  const b = $("say");
+  if (b.classList.contains("on")) return;
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({audio: true}); }
+  catch (e) { show(`The microphone isn't available: ${e.message}`); return; }
+  const rec = new MediaRecorder(stream), parts = [];
+  rec.ondataavailable = e => parts.push(e.data);
+  rec.onstop = async () => {
+    stream.getTracks().forEach(t => t.stop());
+    b.textContent = "…";
+    try {
+      const r = await fetch("/api/hear", {method: "POST", body: new Blob(parts, {type: rec.mimeType})});
+      const got = await r.json();
+      if (!r.ok) { show(got.detail || `error ${r.status}`); return; }
+      const name = got.text.replace(/^\s*go\s*to\s+/i, "").replace(/[.!?]+$/, "").trim();
+      if (!name) { show("I didn't catch that. Tap Say and try again."); return; }
+      $("gotext").value = name;
+      sendText(`go to ${name}`); $("s-goto").hidden = true; showView("finder");
+    } finally { b.textContent = "Say"; b.classList.remove("on"); }
+  };
+  b.classList.add("on"); b.textContent = "Listening…";
+  rec.start(); setTimeout(() => rec.state === "recording" && rec.stop(), SAY_S * 1000);
+};
 $("goto").onclick = async () => {
-  open("s-goto"); $("targets").textContent = "Loading…";
+  open("s-goto"); $("targets").textContent = "Loading…"; $("gotext").value = "";
   try {
     const list = await (await fetch("/api/targets")).json();
     $("targets").innerHTML = list.map(t => `<button data-name="${t.name}" class="${t.up ? "" : "down"}">${t.name}
@@ -364,15 +443,26 @@ try { if (localStorage.getItem("day")) setDay(true); } catch {}
 // --- pictures: a grid; tapping one opens it in the viewer (a new window crashed the installed app).
 const demo = new URLSearchParams(location.search).get("demo");
 const DEMO_PICTURES = ["m42", "m31", "m45", "jupiter", "saturn", "moon"].map(n => `/demo/${n}.jpg`);
+// Numbered oldest first, so a picture keeps its number as new ones arrive ("picture 3").
+function caption(url, n) {  // "#3 Andromeda Galaxy, Oct 11 3:22 AM" from 20261011_032227_..._Andromeda_Galaxy_v2.png
+  const m = url.split("/").pop().match(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})_\d+_(.+?)(_v\d+)?\.\w+$/);
+  if (!m) return `#${n}`;
+  const when = new Date(Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]));
+  const at = when.toLocaleString([], {month: "short", day: "numeric", hour: "numeric", minute: "2-digit"});
+  return `#${n} ${m[7].replace(/_/g, " ")}, ${at}`;
+}
 async function showPictures() {
   const urls = demo ? DEMO_PICTURES : (await (await fetch("/gallery")).json()).map(f => `/pictures/${f}`);
-  $("pictures").innerHTML = urls.length ? urls.map(u => `<button><img src="${u}" alt="${u}"></button>`).join("") : "No pictures yet.";
+  $("pictures").innerHTML = urls.length ? urls.map((u, i) =>
+    `<button data-cap="${esc(caption(u, urls.length - i))}"><span>${urls.length - i}</span><img src="${u}" alt="${u}"></button>`).join("") : "No pictures yet.";
 }
 $("pics").onclick = () => { open("s-pics"); showPictures(); };
 let viewerB = 1;
-$("pictures").onclick = e => { const img = e.target.closest("button")?.querySelector("img"); if (img) openViewer(img.src); };
+$("pictures").onclick = e => { const b = e.target.closest("button"); if (b?.querySelector("img")) openViewer(b.querySelector("img").src, b.dataset.cap); };
 inset.onclick = () => openViewer(inset.src);
-function openViewer(src) { const img = $("viewer").querySelector("img"); img.src = src; img.style.transform = ""; open("viewer"); }
+function openViewer(src, cap = "") {
+  const img = $("viewer").querySelector("img"); img.src = src; img.style.transform = ""; $("piccap").textContent = cap; open("viewer");
+}
 document.querySelectorAll("[data-vb]").forEach(b => b.onclick = () => {
   viewerB = Math.min(4, Math.max(0.25, viewerB * (b.dataset.vb === "+" ? 1.4 : 1 / 1.4)));
   $("viewer").querySelector("img").style.setProperty("--b", (document.body.classList.contains("day") ? 1 : .6) * viewerB);
@@ -402,7 +492,22 @@ async function pollStatus() {
   $("status").innerHTML = [item("Tablet link", link, link ? "" : "reconnecting"), item("Finder", s.finder),
     item("Telescope", s.main), item("Encoders", s.encoders), item("Internet", s.internet),
     s.claude ? item("Claude", s.claude === "ok", s.claude === "ok" ? "" : `(${s.claude})`) : ""].filter(Boolean).join("");
+  if (link) $("align").classList.toggle("on", !!s.aligning);
+  if (link) showMode(s.mode);
   $("checks").hidden = !s.daytime; $("checksoff").checked = !!s.checks_off;
+}
+// A guided mode's own buttons next to the main ones (the voice words still work): setup waits for
+// "ready" or "skip"; a horizon walk marks points until "done"; collimation ends with STOP.
+const MODE_BUTTONS = {setup: [["Ready", "ready"], ["Skip", "skip"]], horizon: [["Mark", "mark"], ["Done", "done"]],
+                      collimation: []};
+let shownMode;
+function showMode(mode) {
+  if (mode === shownMode) return;
+  shownMode = mode;
+  const box = $("modebtns"), buttons = MODE_BUTTONS[mode] || [];
+  box.innerHTML = buttons.map(([label, text]) => `<button class="on" data-say="${text}">${label}</button>`).join("");
+  box.querySelectorAll("button").forEach(b => b.onclick = () => sendText(b.dataset.say));
+  box.hidden = !buttons.length;
 }
 $("checksoff").onchange = e => wsSend(JSON.stringify({type: "checks", off: e.target.checked}));
 setInterval(pollStatus, 5000); setTimeout(pollStatus, 1000);

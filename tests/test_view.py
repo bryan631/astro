@@ -1,6 +1,7 @@
 import io
 
 import numpy as np
+import pytest
 from PIL import Image
 
 from astro.process.view import remove_hot_pixels, render
@@ -37,3 +38,14 @@ def test_hot_pixel_removed_star_kept():
     rgb[29:32, 29:32] = 150  # star: several pixels
     out = remove_hot_pixels(rgb)
     assert out[10, 10].max() < 40 and out[30, 30].min() == 150
+
+
+def test_zoom_crops_around_a_center_kept_inside_the_frame():
+    raw = np.zeros((96, 128), np.uint8)
+    raw[:48, 64:] = 200  # the sensor's top-right quarter is bright
+    _, m = render(raw, "RGGB", zoom=2, rotate=0, night=False, center=(0.3, -0.1))
+    assert m["center"] == pytest.approx((0.25, -0.1), abs=0.02)  # x clamped: the crop stays inside
+    data, m = render(raw, "RGGB", zoom=2, rotate=180, night=False, center=(-0.25, 0.25))
+    assert m["center"] == pytest.approx((-0.25, 0.25), abs=0.02)
+    img = np.asarray(Image.open(io.BytesIO(data)))
+    assert img.mean() > 150  # turned 180, the view's top-left is the sensor's bright top-right

@@ -1,11 +1,15 @@
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 from scipy import ndimage
 
+from astro.capture import live_stacker
+from astro.pointing.coords import Site
 from astro.process import livestack
 from astro.process.livestack import LiveStack, stretch
 from astro.process.planet import _LAYOUT
+from astro.session import Session
 
 SIZE = 256  # raw pixels; stacks are half that after superpixel debayer
 
@@ -56,6 +60,23 @@ def test_cloudy_frame_is_skipped():
     assert stack.status.frames_skipped == 1 and stack.status.frames_added == 1
 
 
+def test_shift_fallback_stacks_frames_triangles_cannot_match(monkeypatch):
+    """2026-10-10: triangle matching dropped most 0.2 s frames of the Dumbbell; a drifting
+    field is nearly a pure shift, which phase correlation measures from the whole picture."""
+    def no_triangles(*a, **k):
+        raise ValueError("List of matching triangles exhausted")
+
+    monkeypatch.setattr(livestack.astroalign, "find_transform", no_triangles)
+    rng = np.random.default_rng(5)
+    scene = sky_scene(rng)
+    stack = LiveStack("GRBG")
+    for i in range(6):
+        assert stack.add(observe(scene, 0, (-2.0 * i, 3.0 * i), rng))  # rows, cols in raw px
+    assert stack.reference_center() == pytest.approx((64 + 1.5 * 5, 64 - 1.0 * 5), abs=0.3)
+    cloud = (20 + rng.normal(0, 8, (SIZE, SIZE))).clip(0, 255).astype(np.uint8)
+    assert not stack.add(cloud)  # noise has no real peak: still skipped
+
+
 def test_stretch_maps_to_8bit():
     out = stretch(np.random.default_rng(0).normal(100, 5, (32, 32, 3)))
     assert out.dtype == np.uint8 and out.max() == 255 and out.min() == 0
@@ -98,3 +119,139 @@ def test_four_stars_anchor_the_stack_three_do_not(monkeypatch):
     for stars, anchored in [(3, False), (4, True)]:
         monkeypatch.setattr(livestack, "check_focus", lambda lum, n=stars: SimpleNamespace(stars=n))
         assert LiveStack("GRBG").add(frame) is anchored  # a double star plus two field stars
+
+
+class MeterCamera:
+    """A camera whose sky brightens 10x per 200 gain steps (0.1 dB), with a star field that
+    saturates in a patch above `burns_at`."""
+
+    def __init__(self, sky_at_300=2.4, burns_at=None):
+        self.gain, self.sky_at_300, self.burns_at = 300, sky_at_300, burns_at
+
+    def set_gain(self, gain):
+        self.gain = gain
+
+    def capture(self):
+        rng = np.random.default_rng(self.gain)
+        sky = self.sky_at_300 * 10 ** ((self.gain - 300) / 200)
+        raw = rng.poisson(sky, (400, 400)).clip(0, 255).astype(np.uint8)
+        if self.burns_at is not None and self.gain > self.burns_at:
+            raw[:20, :20] = 255  # a bright core
+        return raw
+
+
+def test_gain_is_metered_to_put_the_sky_above_black():
+    """2026-10-10: at gain 300 the stacks' sky sat at ~2 of 255. The meter raises it to ~12."""
+    cam = MeterCamera()
+    gain, _ = live_stacker.meter_gain(cam, 300)
+    assert cam.gain == gain and abs(gain - 440) <= 25  # 300 + 200 log10(12 / 2.4)
+    assert 9 < cam.sky_at_300 * 10 ** ((gain - 300) / 200) < 16
+
+
+def test_meter_backs_off_when_a_core_burns_out():
+    cam = MeterCamera(burns_at=360)
+    gain, _ = live_stacker.meter_gain(cam, 300)
+    assert gain <= 360
+
+
+def test_meter_backs_off_when_only_one_color_burns_out():
+    """Saturn burnt out in red alone (2026-10-10): the clip test looks at every Bayer position."""
+    class RedBurns(MeterCamera):
+        def capture(self):
+            raw = super().capture()
+            if self.gain > 360:
+                raw[1:40:2, 0:40:2] = 255  # one Bayer position only
+            return raw
+
+    gain, _ = live_stacker.meter_gain(RedBurns(), 300)
+    assert gain <= 360
+
+
+def test_stack_waits_through_a_drift_out_and_keeps_adding_after_the_nudge(tmp_path, monkeypatch):
+    """2026-10-10: stacks stopped at "lost the stars" after ~1.5 minutes of drift. Now the
+    stack asks for a nudge and adds to the same picture once the field is back."""
+    rng = np.random.default_rng(5)
+    scene = sky_scene(rng)
+    cloud = (20 + rng.normal(0, 8, (SIZE, SIZE))).clip(0, 255).astype(np.uint8)
+    frames = [observe(scene, 0, (i, 0), rng) for i in range(3)] + [cloud] * 12 + \
+             [observe(scene, 0, (-5 + i, 2), rng) for i in range(3)]
+    adrift = []
+
+    class Cam:
+        bayer, exposure_s, gain = "GRBG", 0.2, 300
+
+        def set_roi(self, roi): pass
+        def set_exposure(self, s): pass
+        def set_gain(self, g): pass
+
+        def capture(self):
+            adrift.append(stacker.current.adrift)
+            if not frames:
+                stacker.stop()
+                return cloud
+            return frames.pop(0)
+
+    monkeypatch.setattr(live_stacker, "meter_gain", lambda cam, gain: (gain, 12.0))
+    stacker = live_stacker.LiveStacker(Cam(), tmp_path / "gallery", tmp_path / "live")
+    live = stacker.start("M99", 60)
+    assert live.done.wait(30)
+    assert live.frames == 6 and not live.error and live.picture.exists()
+    assert True in adrift and not live.adrift  # it asked for a nudge, then found the field again
+
+
+def test_picture_drops_the_edges_few_frames_reached():
+    """2026-10-11: the drift left noisy color bands along two edges of Andromeda."""
+    rng = np.random.default_rng(6)
+    scene = sky_scene(rng)
+    stack = LiveStack("GRBG")
+    for i in range(8):
+        assert stack.add(observe(scene, 0, (0, i * 6), rng))  # drifts 42 raw px: 21 stacked px
+    full, cropped = stack.image(), stack.picture()
+    assert full.shape[0] - cropped.shape[0] <= 2 and full.shape[1] - 21 <= cropped.shape[1] < full.shape[1] - 5
+
+
+@pytest.mark.parametrize("bayer", ["RGGB", "GRBG", "GBRG", "BGGR"])
+def test_debayer_puts_each_color_in_its_channel(bayer):
+    (ry, rx), *_ = _LAYOUT[bayer]
+    raw = np.zeros((16, 16), np.uint8)
+    raw[ry::2, rx::2] = 200  # only the red pixels lit
+    rgb = livestack.debayer(raw, bayer)[4:12, 4:12].mean(axis=(0, 1))
+    assert rgb[0] > 150 and rgb[1] < 20 and rgb[2] < 20
+
+
+class StarCam:
+    """A streamed camera's face for the stacker: drifting synthetic star frames."""
+
+    def __init__(self, bayer="GRBG", exposure_s=1.0, gain=200):
+        self.bayer, self.exposure_s, self.gain, self.sensor_size = bayer, exposure_s, gain, (SIZE, SIZE)
+        self.rng, self.scene, self.n = np.random.default_rng(9), None, 0
+
+    def capture(self):
+        self.scene = sky_scene(self.rng) if self.scene is None else self.scene
+        self.n += 1
+        return observe(self.scene, 0, (self.n * 0.5, 0), self.rng)
+
+    def set_roi(self, roi): pass
+    def set_exposure(self, s): self.exposure_s = s
+    def set_gain(self, g): self.gain = g
+
+
+def test_a_target_bigger_than_the_view_can_be_stacked_whole_with_the_finder(tmp_path):
+    """Andromeda is 3 x 1 degrees; the telescope sees 32' x 18'. Capture asks, and the whole
+    picture comes from the finder at its own settings (they go on feeding the plate solver)."""
+    finder_cam, main_cam = StarCam(), StarCam()
+    finder = SimpleNamespace(camera=finder_cam, synced=False, position=lambda: (45.0, 180.0))
+    s = Session(Site(26.6, -80.1), finder=finder,
+                main_camera=main_cam, main_sensor=(SIZE, SIZE), data_dir=tmp_path)
+    s._what_to_capture = lambda: ["Andromeda Galaxy"]
+    s.stack_seconds = 2.0
+    asked = s.capture()
+    assert "bigger than the telescope's view" in asked[0]["text"]
+    whole, close = asked[1]["options"]
+    assert "finder camera" in s.capture(whole)[0]["text"]
+    live = s.stacker.current
+    assert live.wide and s.stacker.camera is s.camera("finder") and live.done.wait(20)
+    assert live.frames > 2 and live.picture.exists() and (finder_cam.exposure_s, finder_cam.gain) == (1.0, 200)
+    assert "Stacking short pictures" in s.capture(close)[0]["text"] and s.stacker.camera is s.camera("main")
+    s.stacker.stop()
+    assert s.stacker.current.done.wait(20)  # its thread ends here, not in a later test's log

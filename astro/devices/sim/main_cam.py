@@ -26,7 +26,9 @@ NOISE = 4.0
 # so frames drift and rotate exactly as the sky does.
 STAR_TILE_DEG = 1.0  # stars are generated per sky tile, seeded by the tile, so they never jump
 STARS_PER_SQ_ARCMIN = 0.5
-STAR_FLUX = (100.0, 1500.0)  # summed ADU before blur; far fainter than any planet
+STAR_FLUX = (100.0, 1500.0)  # summed ADU before blur at STAR_EXPOSURE_S; far fainter than any planet
+STAR_EXPOSURE_S = 0.2  # stars scale with exposure: a 20 ms planet video shows none (they were
+# drawn at full brightness, the planet stacker kept each as a moon and cropped the whole frame)
 STAR_SEEING_PX = 1.5
 
 
@@ -40,7 +42,7 @@ class SimMainCamera:
         self.true_altaz, self.site, self.clock = true_altaz, site, clock
         self.scale, self.blur_px = arcsec_per_px, blur_px
         self.sensor_size = SENSOR
-        self.exposure_s, self.gain = 0.01, 0
+        self.exposure_s, self.gain = 0.25, 0  # the night live view's exposure
         self._roi: Roi | None = None
         self._rng = np.random.default_rng(seed)
         self._tiles: dict = {}  # star field per sky tile, generated once
@@ -78,7 +80,7 @@ class SimMainCamera:
         visible = (-r < cx) & (cx < roi.width + r) & (-r < cy) & (cy < roi.height + r)
         for i in np.flatnonzero(visible):  # usually zero or one body
             img += _disk(roi.width, roi.height, cx[i], cy[i], r[i])
-        img += self._stars(alt, az, roi)
+        img += self._stars(alt, az, roi) * (self.exposure_s / STAR_EXPOSURE_S)
         if self.blur_px > 0:
             img = ndimage.gaussian_filter(img, self.blur_px)
         return np.clip(img, 0, 255).astype(np.uint8)

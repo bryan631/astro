@@ -219,8 +219,12 @@ main camera; the box orange in day mode.
   focus numbers with many stars; a metered Jupiter or Saturn video; check that the names stay
   on their stars while the scope moves.
 - Check the encoders on the sky: counts follow the scope, and the model holds after a restart.
-- Buttons for the setup wizard, horizon walk and collimation (still worded for voice).
 - Recordings for test data: a focus sweep and a wiggle.
+- Clear night: the Go to sheet's Say button (check whisper.cpp is installed on the Mele: scripts/install-voice.sh) (2026-10-11).
+- From the 2026-10-10 night (raw frames in data/night-20261010/): check the night colors and
+  the focus number's steadiness on them.
+- Check the outlines' sizes and angles on the sky, and the telescope view's names from its own plate solves (2026-10-11).
+- Clear night: check the live stack's frames/missed/gain in the "stacking done" log (the Mele stacks 0.26 s a frame against 0.2 s frames; the finder's solves compete for the CPU) and the nudge-back prompt (2026-10-11).
 
 ## Known risks / open questions
 - SV705C Linux SDK stability (fallback: ZWO ASI585MC).

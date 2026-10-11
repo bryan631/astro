@@ -3,22 +3,23 @@
 from dataclasses import dataclass
 
 import numpy as np
-from scipy import ndimage
+from scipy import ndimage, optimize
 
-# The focus number (Phase 3b). Stars: 100 / median half-flux radius (px) over every usable
-# star, so the many faint stars decide it; saturated stars look wider than they are and are
-# skipped. Planets and the Moon (few stars, one big bright object): edge sharpness.
+# The focus number (Phase 3b). Stars: 100 / median half-flux radius (px) over the usable stars,
+# so the many faint stars decide it; saturated stars look wider than they are and are skipped.
+# Each star's width is a fitted Gaussian's (2026-10-11): the pixel-counted radius stepped
+# through 1, 1.41, 2 px, and its size test dropped sharp stars, so near best focus the number
+# vanished. Planets and the Moon (few stars, one big bright object): edge sharpness.
 MAD_SIGMA = 1.4826  # median absolute deviation -> standard deviation, for Gaussian noise
 DETECT_SIGMA = 5.0  # a star is a blob above sky + 5 sigma (after a light smoothing)
 MEASURE_SIGMA = 8.0  # ... and is measured only if its peak is this far above: noise inflates HFR
-# Inside a cutout, pixels below this fraction of the star's own peak count as sky. Relative,
-# so every star is cut at the same place on its profile and brightness doesn't change its
-# radius; 25% is above 2 sigma for every measured (>= 8 sigma) star.
-REL_CLIP = 0.25
-SATURATED = 245.0  # 8-bit: a star this bright at its peak is clipped
-MIN_AREA_PX, MAX_AREA_PX = 3, 3000  # a lone hot pixel isn't a star; a planet or donut isn't either
+SATURATED = 245.0  # 8-bit: a pixel this bright is clipped (left out of a star's fit)
+MAX_CLIPPED_PX = 30  # a star with more clipped pixels than this is too burnt out to fit
+MIN_AREA_PX, MAX_AREA_PX = 3, 3000  # detected (smoothed) pixels: a planet or donut isn't a star
 MIN_STARS = 3  # fewer: judge by the brightest object's edges instead
-MAX_STARS = 300
+MAX_STARS = 40  # fitted per frame, spread over brightness
+MIN_SIGMA_PX, MAX_SIGMA_PX = 0.4, 10.0  # a fitted width narrower than this is a hot pixel
+GAUSS_HFR = 1.1774  # a Gaussian's half-flux radius in sigmas (sqrt(2 ln 2))
 MIN_HFR_PX = 0.5  # a perfectly sharp star can't make the number blow up
 PLANET_AREA_PX = 80  # a bright blob at least this big is a disk (Saturn: ~20 px across, binned)
 SKY_BLOCK_PX = 64  # the sky's own gradient (cloud glow, the horizon) is smooth over this
@@ -29,7 +30,7 @@ GRADIENT_DOMINATES = 4.0  # take the gradient off only when the spread drops thi
 class FocusMeasure:
     score: float | None  # higher is sharper; None when there's nothing to judge
     stars: int  # stars measured
-    hfr_px: float | None  # median half-flux radius (stars mode)
+    hfr_px: float | None  # median half-flux radius of the fitted stars' narrow axis (stars mode)
     mode: str  # "stars", "planet" or "none"
 
 
@@ -74,27 +75,37 @@ def measure_focus(lum: np.ndarray) -> FocusMeasure:
     """The focus number for a frame (8-bit scale gray, hot pixels already removed)."""
     raw = lum.astype(np.float32)
     img = flatten_sky(raw)
-    bg, noise = _sky(img)
+    smooth = ndimage.gaussian_filter(img, 1.0)
+    # The thresholds use the smoothed frame's own noise: the unsmoothed noise is ~1.6x higher on
+    # the main camera at night and hid half its few stars (2026-10-10).
+    bg, noise = _sky(smooth)
     above = bg + DETECT_SIGMA * noise
-    labels, n = ndimage.label(ndimage.gaussian_filter(img, 1.0) > above)
+    labels, n = ndimage.label(smooth > above)
     if n == 0:
         return FocusMeasure(None, 0, None, "none")
     ids = np.arange(1, n + 1)
     on = labels > 0  # the per-star sums below look only at star pixels (a full frame is slow)
     lab = labels[on]
-    areas = ndimage.sum_labels(img[on] > above, lab, ids)  # unsmoothed: a hot pixel stays 1 px
-    peaks = ndimage.maximum(img[on], lab, ids)
-    clipped = ndimage.maximum(raw[on], lab, ids) >= SATURATED
-    usable = ids[(areas >= MIN_AREA_PX) & (areas <= MAX_AREA_PX) & ~clipped
-                 & (peaks > bg + MEASURE_SIGMA * noise)]
-    if len(usable) >= MIN_STARS:
-        if len(usable) > MAX_STARS:  # an even spread over brightness, not just the brightest
-            usable = usable[np.argsort(peaks[usable - 1])][:: len(usable) // MAX_STARS + 1]
-        centers = ndimage.center_of_mass(img - bg, labels, usable)
-        hfrs = [_hfr(img, bg, c, areas[i - 1], peaks[i - 1] - bg)
-                for c, i in zip(centers, usable, strict=True)]
-        hfr = max(float(np.median(hfrs)), MIN_HFR_PX)
-        return FocusMeasure(100 / hfr, len(usable), hfr, "stars")
+    areas = np.bincount(lab, minlength=n + 1)[1:]
+    # Smoothed peaks: a noise spike on a faint star's top moved where its profile is cut, and
+    # with the main camera's ~8 stars the number jumped 66-83 on a still scope (2026-10-10).
+    peaks = ndimage.maximum(smooth[on], lab, ids)
+    clipped = np.bincount(lab, weights=raw[on] >= SATURATED, minlength=n + 1)[1:]
+    ok = (areas >= MIN_AREA_PX) & (areas <= MAX_AREA_PX) & (peaks > bg + MEASURE_SIGMA * noise)
+    usable = ids[ok & (clipped == 0)]
+    # Too few unclipped stars: clipped ones too, fitted on their unclipped pixels. Sharp stars
+    # saturate first, and without them the number vanished near best focus. Only then: a burnt
+    # out star's unclipped pixels are its wide halo, which read 4x too wide (2026-10-10 frames).
+    if len(usable) < MIN_STARS:
+        usable = ids[ok & (clipped <= MAX_CLIPPED_PX)]
+    if len(usable) > MAX_STARS:  # an even spread over brightness, not just the brightest
+        usable = usable[np.argsort(peaks[usable - 1])][np.linspace(0, len(usable) - 1, MAX_STARS).astype(int)]
+    centers = ndimage.center_of_mass(img - bg, labels, usable) if len(usable) else []
+    sigmas = [w for c, i in zip(centers, usable, strict=True)
+              if (w := star_sigma(img - bg, c, areas[i - 1], raw < SATURATED)) is not None]  # hot pixels: None
+    if len(sigmas) >= MIN_STARS:
+        hfr = max(GAUSS_HFR * float(np.median(sigmas)), MIN_HFR_PX)
+        return FocusMeasure(100 / hfr, len(sigmas), hfr, "stars")
     big = ids[areas >= PLANET_AREA_PX]
     if len(big):
         return FocusMeasure(_edge_sharpness(img, labels, int(big[np.argmax(areas[big - 1])]), bg),
@@ -102,13 +113,35 @@ def measure_focus(lum: np.ndarray) -> FocusMeasure:
     return FocusMeasure(None, len(usable), None, "none")
 
 
-def _hfr(img, bg, center, area, peak) -> float:
-    """Half-flux radius of one star, in a cutout sized to the star."""
-    r = int(np.clip(3 * np.sqrt(area / np.pi), 4, 20))
+def star_sigma(img: np.ndarray, center: tuple[float, float], area: float,
+               valid: np.ndarray | None = None) -> float | None:
+    """A star's width (px) along its narrow axis: a fitted elliptical Gaussian, in a cutout
+    sized to the star (`img` has the sky off), on the `valid` (unclipped) pixels. Smooth at any
+    size, and the drift trail of a 0.25 s frame from an untracked scope, along the other axis,
+    doesn't count. None if the fit fails or is too narrow for a star (a hot pixel) or too wide."""
+    r = int(np.clip(2.5 * np.sqrt(area / np.pi), 4, 15))
     cy, cx = (round(v) for v in center)
-    cut = img[max(cy - r, 0):cy + r + 1, max(cx - r, 0):cx + r + 1] - bg
-    cut = np.where(cut > REL_CLIP * peak, cut, 0)
-    return half_flux_radius(cut, subtract_median=False)
+    if cy - r < 0 or cx - r < 0 or cy + r >= img.shape[0] or cx + r >= img.shape[1]:
+        return None
+    window = (slice(cy - r, cy + r + 1), slice(cx - r, cx + r + 1))
+    cut = img[window].astype(np.float64)
+    keep = np.ones(cut.shape, bool) if valid is None else valid[window]
+    yy, xx = np.mgrid[-r:r + 1, -r:r + 1]
+
+    def residual(p):
+        a, b, y0, x0, sa, sb, th = p
+        c, s = np.cos(th), np.sin(th)
+        u, v = (xx - x0) * c + (yy - y0) * s, (yy - y0) * c - (xx - x0) * s
+        return (b + a * np.exp(-u * u / (2 * sa * sa) - v * v / (2 * sb * sb)) - cut)[keep]
+
+    w0 = max(np.sqrt(area / np.pi) / 2, 0.8)
+    fit = optimize.least_squares(residual, [cut.max(), 0.0, center[0] - cy, center[1] - cx, w0, w0, 0.0],
+                                 method="lm", max_nfev=200)
+    a, _, y0, x0, sa, sb, _ = fit.x
+    narrow = min(abs(sa), abs(sb))
+    if not fit.success or a <= 0 or max(abs(y0), abs(x0)) > r or not MIN_SIGMA_PX <= narrow <= MAX_SIGMA_PX:
+        return None
+    return float(narrow)
 
 
 def _edge_sharpness(img, labels, label: int, bg: float) -> float:

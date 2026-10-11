@@ -14,7 +14,7 @@ from astro.devices.sim.main_cam import SimMainCamera
 from astro.guidance.centering import Step
 from astro.guidance.engine import Guide
 from astro.pointing.coords import Site, body_altaz, radec_to_altaz
-from astro.session import TOLERANCE_BARLOW_ARCMIN, Session
+from astro.session import JUST_THIS_FRAME, STACK_ANYWAY, TOLERANCE_BARLOW_ARCMIN, Session
 
 WPB = Site(26.7, -80.1)
 EVENING = datetime(2026, 10, 3, 22, 0, tzinfo=timezone(timedelta(hours=-4)))
@@ -100,13 +100,15 @@ def test_what_to_capture_uses_the_pointing_when_synced(tmp_path):
     assert s._what_to_capture() == []
 
 
-def test_view_shows_the_whole_field_while_a_planet_records_its_roi(tmp_path):
+def test_view_shows_the_whole_field_and_the_live_roi_as_an_inset_while_recording(tmp_path):
     s, _ = make_session(tmp_path)
     s.recorder.background = np.zeros((1080, 1920), np.uint8)
     s.recorder.roi = Roi(100, 50, 512, 512)
     s.camera_frame = lambda name: (np.full((512, 512), 200, np.uint8), "GRBG", 0.1)
     full, _, _ = s.view_frame("main")
-    assert full.shape == (1080, 1920) and full[50:562, 100:612].min() == 200 and full[0, 0] == 0
+    assert full.shape == (1080, 1920) and full[50:562, 100:612].max() == 0  # the planet's place: as it was
+    inset = full[1080 - 512:, 1920 - 512:]  # the far corner from a planet at the top left
+    assert inset[2:-2, 2:-2].min() == 200 and inset[0].min() == 255  # live, in a white frame
 
 
 def test_barlow_change_requires_refocus(tmp_path):
@@ -114,6 +116,20 @@ def test_barlow_change_requires_refocus(tmp_path):
     s.main_focus_ok = True
     assert "refocus" in texts(s.handle("I put in the barlow"))[0]
     assert s.barlow
+
+
+def test_capture_with_nothing_in_view_asks_what_to_capture(tmp_path):
+    """2026-10-10: Capture stacked "the field" with no stars in view and made an empty picture."""
+    s, cam = make_session(tmp_path)
+    cam.true_altaz = lambda: (80.0, 10.0)  # empty sky
+    cam._stars = lambda alt, az, roi: 0.0  # and no field stars
+    s.camera("main").capture()
+    out = s.capture()
+    assert out[1] == {"type": "choose", "options": [JUST_THIS_FRAME, STACK_ANYWAY]}
+    saved = s.capture(JUST_THIS_FRAME)
+    assert saved[1]["type"] == "picture" and (tmp_path / "gallery" / saved[1]["file"]).exists()
+    assert "Stacking" in s.capture(STACK_ANYWAY)[0]["text"] and s.stacker.busy
+    s.stacker.stop()
 
 
 def test_capture_without_planet_explains(tmp_path):
@@ -163,6 +179,25 @@ def test_recorder_recenters_on_drift(tmp_path, monkeypatch):
     _, frames = read_ser(rec.path)
     assert cam.roi is None  # recorder restores full frame when done
     assert frames[-1].max() > 200  # planet still in the last frame after drifting past the ROI
+
+
+def test_recenter_pause_shows_the_field_at_live_settings_and_resume_goes_back(tmp_path, monkeypatch):
+    """2026-10-10: paused at the planet's exposure the field was black, so Recenter looked stuck."""
+    monkeypatch.setattr("astro.capture.recorder.ROI_PX", 128)
+    cam = DriftingPlanet()
+    cam.exposure_s, cam.gain = 0.25, 480  # the live view's
+    recorder = Recorder(cam, (800, 600), tmp_path)
+    rec = recorder.start("Saturn", 2.0)
+    planet = (cam.exposure_s, cam.gain)
+    recorder.pause()
+    time.sleep(0.2)
+    assert cam.roi is None and (cam.exposure_s, cam.gain) == (0.25, 480) and recorder.roi is not None
+    frames = rec.frames
+    recorder.resume()
+    time.sleep(0.2)
+    assert (cam.exposure_s, cam.gain) == planet and cam.roi is not None and rec.frames > frames
+    recorder.stop()
+    rec.done.wait(5)
 
 
 def test_second_capture_is_refused_while_recording(tmp_path):
@@ -257,7 +292,7 @@ def test_recording_becomes_a_gallery_picture(tmp_path):
     s.recorder.current.done.wait(5)
     assert "making your picture" in texts(s.tick(100.0))[0]
     out = []
-    for i in range(100):
+    for i in range(600):  # the stacker takes ~1 s
         out = s.tick(101.0 + i)
         if out:
             break
@@ -276,7 +311,7 @@ def test_picture_keeps_capture_time_name_and_every_job_is_announced(tmp_path):
         s.target = "Mars"  # user moved on before the recording finished
         s.recorder.current.done.wait(5)
         said += texts(s.tick(0.0))
-    for _ in range(200):
+    for _ in range(1200):  # two pictures, ~10 s each on the simulator
         said += texts(s.tick(1.0))
         if sum("is ready" in x for x in said) == 2:
             break

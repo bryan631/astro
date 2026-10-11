@@ -11,15 +11,19 @@ import contextlib
 import functools
 import hashlib
 import hmac
+import io
 import json
 import logging
 import math
 import os
 import socket
+import statistics
 import time
+from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 
+import numpy as np
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -44,12 +48,16 @@ from astro.pointing.mount_model import MountModel
 from astro.pointing.platesolve import FinderSolver
 from astro.process.view import ROTATE, render
 from astro.session import Session, utcnow
+from astro.voice.speech import Stt
+from astro.wake import strip_wake
 
 ROOT = Path(__file__).resolve().parents[1]
 SIM = os.environ.get("ASTRO_SIM") == "1"
 OFFLINE = os.environ.get("ASTRO_OFFLINE") == "1"  # no forecast fetches (tests, field hotspot)
 TICK_S = 0.1
 FRAME_WAIT_S = 3.0  # a view's request waits this long for a frame newer than the one it has
+FOCUS_FRAMES = 5  # the focus number is the median of this many frames: seeing and the main
+# camera's few stars make one frame's number jump
 THINKING_AFTER_S = 1.0  # say "Let me think." if an answer takes longer than this
 SORRY = "Sorry, something went wrong. Please try that again."
 
@@ -468,7 +476,29 @@ def api_status() -> dict:
     return {**hub.session.connections(), "internet": internet_ok(), "claude": hub.agent.status(),
             "daytime": hub.session.daytime(), "checks_off": hub.session.override,
             "build": web_build(),  # the page reloads itself when this changes
-            "main_box": hub.session.main_box}
+            "main_box": hub.session.main_box, "aligning": hub.session.aligning,
+            "mode": hub.session.mode}  # setup, horizon or collimation: the page shows its buttons
+
+
+@functools.cache
+def _stt() -> Stt:
+    return Stt()
+
+
+@app.post("/api/hear")
+async def api_hear(request: Request) -> dict:
+    """Speech from the tablet's mic as text (the Go to sheet's Say button): whisper.cpp on the
+    Mele, so the audio never leaves it, and it isn't kept."""
+    stt = _stt()
+    if not stt.available():
+        raise HTTPException(503, "Speech isn't installed on the Mele (scripts/install-voice.sh). "
+                                 "The keyboard's mic can dictate into the box.")
+    audio = await request.body()
+    if not audio:
+        raise HTTPException(400, "no audio")
+    text = await asyncio.to_thread(stt.transcribe, audio)
+    log.info("heard", extra={"data": {"text": text}})
+    return {"text": strip_wake(text) or text}
 
 
 @app.get("/api/targets")
@@ -486,12 +516,12 @@ _rendered: dict[str, tuple[tuple, bytes, dict]] = {}  # per camera: (frame seq, 
 
 
 @app.get("/api/camera/{name}.jpg")
-async def api_camera(name: str, after: int = 0, labels: bool = False) -> Response:
+async def api_camera(name: str, after: int = 0, labels: int = 0) -> Response:
     """The camera's newest frame as a JPEG. `after`: the frame number the page already shows;
     the request waits (up to FRAME_WAIT_S) for a newer one, so each view is a simple loop of
     requests that never re-downloads a frame. Headers: X-Seq (frame number), X-Frame-Age (s),
-    X-Focus (focus number, higher is sharper), X-Stars, X-Focus-Mode (stars or planet), and with
-    `labels` (finder) X-Labels: the names on the view (Session.finder_labels)."""
+    X-Focus (focus number, higher is sharper), X-Stars, X-Focus-Mode (stars, planet or bahtinov; X-Mask-Offset), X-Zoom-Center (the zoomed crop's middle, view fractions), and with
+    `labels` 1 or 2, X-Labels: the names on the view at that level (Session.finder_labels, main_labels)."""
     if name not in ("finder", "main"):
         raise HTTPException(404)
     session = running_hub().session
@@ -508,20 +538,56 @@ async def api_camera(name: str, after: int = 0, labels: bool = False) -> Respons
     raw, bayer, age = frame
     if _seq(cam) <= after:  # nothing newer: the page keeps its picture and shows the age
         return Response(status_code=204, headers={"X-Seq": str(after), "X-Frame-Age": f"{age:.1f}"})
-    key = (_seq(cam), session.zoom[name])
+    box = session.main_box if name == "finder" and session.zoom[name] > 1 else None
+    center = tuple(np.mean(box, axis=0)) if box else (0.0, 0.0)  # finder zoom: on the main camera's field
+    key = (_seq(cam), session.zoom[name], center)
     cached = _rendered.get(name)
     if cached is None or cached[0] != key:
         data, metrics = await asyncio.to_thread(render, raw, bayer, session.zoom[name], ROTATE[name],
-                                             session.dark())
+                                             session.dark(), center, name == "main")
+        metrics = _steady_focus(name, metrics)
         cached = _rendered[name] = (key, data, metrics)
     _, data, metrics = cached
-    headers = {"X-Seq": str(key[0]), "X-Frame-Age": f"{age:.1f}"}
-    if name == "finder" and labels:  # names beside the stars (the page's Names button)
-        headers["X-Labels"] = json.dumps(await asyncio.to_thread(session.finder_labels), separators=(",", ":"))
+    cx, cy = metrics["center"]
+    headers = {"X-Seq": str(key[0]), "X-Frame-Age": f"{age:.1f}", "X-Zoom-Center": f"{cx:.4f},{cy:.4f}"}
+    if labels:  # names beside the stars (the page's Names button)
+        found = await asyncio.to_thread(session.finder_labels if name == "finder" else session.main_labels, labels)
+        headers["X-Labels"] = json.dumps(found, separators=(",", ":"))
     if metrics.get("focus") is not None:
         headers |= {"X-Focus": f"{metrics['focus']:.1f}", "X-Stars": str(metrics["stars"]),
                     "X-Focus-Mode": metrics["focus_mode"]}
+        if "mask_offset" in metrics:  # the Bahtinov's middle spike, signed (px): 0 at focus
+            headers["X-Mask-Offset"] = f"{metrics['mask_offset']:.2f}"
     return Response(data, media_type="image/jpeg", headers=headers)
+
+
+@app.get("/api/camera/{name}.npy")
+def api_camera_raw(name: str) -> Response:
+    """The camera's newest raw frame as a NumPy file, for tuning the views and the focus number
+    on real sky (np.load)."""
+    frame = running_hub().session.camera_frame(name) if name in ("finder", "main") else None
+    if frame is None:
+        raise HTTPException(404)
+    out = io.BytesIO()
+    np.save(out, frame[0])
+    return Response(out.getvalue(), media_type="application/octet-stream",
+                    headers={"X-Bayer": frame[1]})
+
+
+_recent_focus: dict[str, deque] = {}  # per camera: (mode, focus) of its last FOCUS_FRAMES frames
+
+
+def _steady_focus(name: str, metrics: dict) -> dict:
+    """The metrics with the focus number as the median of the recent frames in the same mode
+    (stars or planet); a frame with nothing to judge keeps showing the recent number."""
+    recent = _recent_focus.setdefault(name, deque(maxlen=FOCUS_FRAMES))
+    if metrics.get("focus") is not None:
+        recent.append((metrics["focus_mode"], metrics["focus"]))
+    if not recent:
+        return metrics
+    mode = recent[-1][0]
+    return metrics | {"focus": statistics.median(f for m, f in recent if m == mode), "focus_mode": mode,
+                      "stars": metrics["stars"]}
 
 
 def _seq(cam) -> int:

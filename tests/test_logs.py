@@ -35,7 +35,8 @@ def test_a_crashed_thread_lands_in_the_log(tmp_path, monkeypatch):
     t.join()
     for h in logging.getLogger("astro").handlers:
         h.flush()
-    entry = json.loads(path.read_text().splitlines()[-1])
-    assert entry["event"] == "thread crashed" and entry["thread"] == "auto-solve"
+    entries = [json.loads(line) for line in path.read_text().splitlines()]
+    entry = next(e for e in entries if e["event"] == "thread crashed")  # other tests' threads may log too
+    assert entry["thread"] == "auto-solve"
     assert "KeyError: 'bug'" in entry["exc"]
     logging.getLogger("astro").handlers.clear()

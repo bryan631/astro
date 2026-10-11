@@ -5,25 +5,33 @@ from scipy import ndimage
 from astro.capture.ser import SerWriter
 from astro.process.planet import (
     _LAYOUT,
+    SCALE,
     align_channels,
-    finish,
+    bayer_lum,
+    drizzle,
+    moon_margin,
+    normalize,
     planet_center,
     process_ser,
+    register,
+    repair_clipping,
     sharpness,
+    shift_images,
     stack,
     superpixel_rgb,
 )
 
-SIZE = 96
+SIZE = 128
+COLOR = np.array([1.0, 0.85, 0.6])  # more red than blue, like Saturn
 
 
-def planet_scenes(cx, cy, r=20):
-    """(n, h, w, 3) banded planets at per-frame centers (more red than blue, like Saturn)."""
-    y, x = np.mgrid[0:SIZE, 0:SIZE]
+def planet_scenes(cx, cy, r=20, size=SIZE):
+    """(n, h, w, 3) banded planets at per-frame centers."""
+    y, x = np.mgrid[0:size, 0:size]
     cx, cy = np.asarray(cx, float)[:, None, None], np.asarray(cy, float)[:, None, None]
     disk = (x - cx) ** 2 + (y - cy) ** 2 <= r**2
     lum = disk * (160 + 50 * np.sin((y - cy) / r * 9))
-    return lum[..., None] * np.array([1.0, 0.85, 0.6])
+    return lum[..., None] * COLOR
 
 
 def mosaic(rgb, bayer="GRBG"):
@@ -37,15 +45,19 @@ def mosaic(rgb, bayer="GRBG"):
     return raw
 
 
+def blur(scenes, sigma):
+    """Gaussian blur of (n, h, w, 3) scenes, a different sigma per frame (seeing)."""
+    size = scenes.shape[1]
+    k2 = np.fft.fftfreq(size)[:, None] ** 2 + np.fft.fftfreq(size)[None, :] ** 2
+    otf = np.exp(-2 * np.pi**2 * np.asarray(sigma)[:, None, None, None] ** 2 * k2[None, :, :, None])
+    return np.fft.ifft2(np.fft.fft2(scenes, axes=(1, 2)) * otf, axes=(1, 2)).real
+
+
 def seeing_frames(n=40, seed=0):
-    """Planet jittering ~3 px with per-frame blur and noise, like seeing; built vectorized."""
+    """Planet jittering ~3 px with per-frame blur and noise, like seeing."""
     rng = np.random.default_rng(seed)
     dy, dx = rng.normal(0, 3, (2, n))
-    scenes = planet_scenes(48 + dx, 48 + dy)
-    sigma = rng.uniform(0.5, 3.5, n)[:, None, None, None]
-    k2 = np.fft.fftfreq(SIZE)[:, None] ** 2 + np.fft.fftfreq(SIZE)[None, :] ** 2
-    blur = np.exp(-2 * np.pi**2 * sigma**2 * k2[None, :, :, None])  # Gaussian, per frame
-    scenes = np.fft.ifft2(np.fft.fft2(scenes, axes=(1, 2)) * blur, axes=(1, 2)).real
+    scenes = blur(planet_scenes(64 + dx, 64 + dy), rng.uniform(0.5, 3.5, n))
     return (mosaic(scenes) + rng.normal(8, 6, (n, SIZE, SIZE))).clip(0, 255).astype(np.uint8)
 
 
@@ -55,30 +67,85 @@ def test_superpixel_puts_colors_in_place():
     assert r > g > b
 
 
-def test_batch_sharpness_matches_scipy_laplacian():
-    lum = superpixel_rgb(seeing_frames(4), "GRBG").mean(axis=-1)
-    inner = [ndimage.laplace(f)[1:-1, 1:-1].var() for f in lum]  # reference, frame by frame
-    assert np.allclose(sharpness(lum), inner, rtol=1e-4)
+def test_bayer_lum_has_no_bayer_pattern():
+    flat = mosaic(np.full((1, 16, 16, 3), 100.0) * COLOR)[0]  # uniform colored field
+    assert np.ptp(bayer_lum(flat)) < 1e-3
 
 
-def test_stack_is_sharper_and_cleaner_than_typical_frame():
+def test_sharpness_prefers_sharp_frames_whatever_their_brightness():
+    scenes = blur(planet_scenes([48, 48], [48, 48]), [0.5, 3.0]).mean(axis=-1)
+    sharp, soft = sharpness(scenes)
+    assert sharp > 1.5 * soft
+    assert np.isclose(sharpness(scenes[:1] * 0.5)[0], sharp, rtol=1e-3)  # thin cloud
+
+
+def test_register_recovers_subpixel_shift():
+    ref = blur(planet_scenes([48], [48]), [2.0])[0].mean(axis=-1)
+    true = np.array([[1.3, -2.6], [-0.4, 0.25]])
+    moved = shift_images(np.stack([ref, ref]), -true)  # shifted away; register undoes it
+    assert np.abs(register(moved, ref) - true).max() < 0.05
+
+
+def test_drizzle_rebuilds_the_scene_at_twice_the_resolution():
+    """Frames dithered by known subpixel offsets drizzle back onto the true scene."""
+    rng = np.random.default_rng(1)
+    offsets = rng.uniform(-6, 6, (60, 2))
+    scene = blur(planet_scenes([0.0], [0.0], size=SIZE * SCALE), [6.0])[0]  # planet at 0, 0
+
+    def look(y, x):  # the scene at continuous raw-pixel coordinates (planet centered)
+        iy = np.round(y * SCALE).astype(int) % (SIZE * SCALE)
+        ix = np.round(x * SCALE).astype(int) % (SIZE * SCALE)
+        return scene[iy[:, None], ix[None, :]]
+
+    grid = np.arange(SIZE, dtype=float)
+    frames = np.stack([mosaic(look(grid - 48 - dy, grid - 48 - dx)[None])[0] for dy, dx in offsets])
+    corner = -24.0  # output (0, 0) sits 24 raw px up-left of the planet
+    acc, clipped, wgt = drizzle(frames, np.arange(60), 48 + offsets + corner, "GRBG", (96, 96))
+    out = normalize(acc, wgt)
+    truth = look(corner + np.arange(96) / SCALE, corner + np.arange(96) / SCALE)
+    inner = (slice(8, -8), slice(8, -8))
+    assert np.abs(out[inner] - truth[inner]).max() < 0.06 * truth.max()
+    assert clipped.max() == 0
+
+
+def test_stack_is_sharp_and_cleaner_than_a_single_frame():
     frames = seeing_frames()
-    result, used = stack(frames, "GRBG")
-    result = result.mean(axis=2)
-    singles = superpixel_rgb(frames, "GRBG").mean(axis=-1)
-    typical = singles[np.argsort(sharpness(singles))[len(singles) // 2]]
-    sky = (slice(0, 8), slice(0, 8))
-    assert used == 10
-    assert result[sky].std() < typical[sky].std() / 1.5  # averaging cuts noise
-    edge = (np.abs(np.diff(result, axis=1)).max(), np.abs(np.diff(typical, axis=1)).max())
-    assert edge[0] > edge[1] * 0.8  # alignment kept the disk edge crisp (no smear)
+    result, _, used = stack(frames, "GRBG")
+    g = result[..., 1]
+    assert used == 8 and result.shape[0] > 2 * 40  # 20% of the frames; 2x the planet's size
+    single = superpixel_rgb(frames[0], "GRBG")[..., 1]
+    assert g[4:24, 4:24].std() < single[2:12, 2:12].std() / 2  # averaging cuts the sky's noise
+    assert abs(planet_center(g)[0] - g.shape[0] / 2) < 3  # planet centered in the crop
+    assert np.abs(np.diff(g, axis=0)).max() > 0.2 * g.max()  # bands and limb stay crisp
 
 
 def test_align_channels_removes_color_offset():
-    img = planet_scenes([48], [48])[0]
+    img = blur(planet_scenes([48], [48]), [1.0])[0]
     img[..., 0] = ndimage.shift(img[..., 0], (0, 3))  # red displaced 3 px (dispersion)
-    out = align_channels(img)
+    out, _ = align_channels(img, np.zeros_like(img))
     assert abs(planet_center(out[..., 0])[1] - planet_center(out[..., 1])[1]) < 0.2
+
+
+def test_repair_clipping_rebuilds_red_from_green():
+    """2026-10-10: red clipped on Saturn's disk; the stacked disk came out cyan."""
+    img = planet_scenes([64], [64])[0]
+    truth = img[..., 0].copy()
+    clipped = np.zeros_like(img)
+    core = (img[..., 1] > 0) & (np.hypot(*np.mgrid[-64:64, -64:64]) < 14)
+    img[core, 0] = 150.0  # flat: saturated
+    clipped[core, 0] = 1.0
+    out = repair_clipping(img, clipped)
+    assert np.abs(out[core, 0] - truth[core]).mean() < 0.1 * np.abs(img[core, 0] - truth[core]).mean()
+
+
+def test_moon_margin_grows_the_box_toward_the_moon():
+    """2026-10-10: Jupiter's moons belong in the picture."""
+    frame = np.zeros((200, 400), np.uint8)
+    y, x = np.mgrid[0:200, 0:400]
+    frame[(x - 200) ** 2 + (y - 100) ** 2 <= 20**2] = 180  # the disk
+    frame[98:104, 337:343] = 120  # a moon 140 px right of it
+    top, left, _, right = moon_margin(frame[None], 0, np.array([100.0, 200.0]), 40)
+    assert right > 100 and top == left == 0
 
 
 def test_process_ser_writes_png(tmp_path):
@@ -88,15 +155,4 @@ def test_process_ser_writes_png(tmp_path):
     result = process_ser(tmp_path / "saturn.ser", tmp_path / "gallery")
     img = np.asarray(Image.open(result.path))
     assert result.frames_total == 12 and result.frames_used == 3
-    assert img.ndim == 3 and img.max() == 255 and img.shape[0] >= 32
-
-
-def test_finished_picture_keeps_the_moons():
-    """2026-10-10: the crop kept only the disk; Jupiter's moons belong in the picture."""
-    img = np.zeros((200, 400, 3))
-    y, x = np.mgrid[0:200, 0:400]
-    img[(x - 200) ** 2 + (y - 100) ** 2 <= 20**2] = 180  # the disk
-    for mx in (60, 340):  # two moons far outside 1.6 radii
-        img[99:102, mx - 1:mx + 2] = 120
-    out = finish(img + np.random.default_rng(0).normal(0, 1, img.shape))
-    assert out.shape[1] > 280  # both moons kept: wider than the disk's 64 px crop
+    assert img.ndim == 3 and img.shape[0] > 2 * 40 and 200 < img.max() <= 255

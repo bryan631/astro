@@ -123,7 +123,7 @@ def planet_picture(name, truth, frames=40):
     for _ in range(frames):
         f = ndimage.shift(ndimage.gaussian_filter(truth, (2.5, 2.5, 0)), (*rng.normal(0, 3, 2), 0), order=1)
         stack += f + rng.normal(0, 0.05, truth.shape)
-    Image.fromarray(planet.finish(stack / frames)).save(OUT / f"{name}.jpg", quality=90)
+    Image.fromarray(planet.finish(stack / frames, np.zeros_like(truth))).save(OUT / f"{name}.jpg", quality=90)
 
 
 if __name__ == "__main__":

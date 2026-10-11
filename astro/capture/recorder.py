@@ -157,10 +157,13 @@ class Recorder:
 
     def _meter(self) -> None:
         """Exposure for the disk: its brightest pixels (0.1% of the ROI, inside the disk) in
-        PLANET_PEAK, so the video keeps detail instead of a white disk (2026-10-10)."""
+        PLANET_PEAK, so the video keeps detail instead of a white disk (2026-10-10). Per color
+        (each 2x2 Bayer position), the brightest decides: metered on all pixels together, red
+        (a quarter of them) clipped over most of Saturn's disk (2026-10-10)."""
         exposure = PLANET_EXPOSURE_S
         for _ in range(6):
-            peak = float(np.percentile(self.camera.capture(), 99.9))
+            frame = self.camera.capture()
+            peak = max(float(np.percentile(frame[y::2, x::2], 99.9)) for y in (0, 1) for x in (0, 1))
             if PLANET_PEAK[0] <= peak <= PLANET_PEAK[1]:
                 return
             exposure *= 0.25 if peak >= 250 else sum(PLANET_PEAK) / 2 / max(peak, 1.0)
@@ -189,17 +192,25 @@ class Recorder:
     def _run(self, rec: Recording, roi: Roi | None, seconds: float) -> None:
         end = time.monotonic() + seconds
         size = (roi.height, roi.width)  # every frame in the file has the ROI's size
+        planet = None  # the planet's (exposure, gain) while paused
         try:
             with SerWriter(rec.path, roi.width, roi.height, bayer=self.camera.bayer) as ser:
                 while time.monotonic() < end and not self._stop.is_set():
-                    if rec.paused.is_set():  # recentering: the whole field on the main view
-                        if roi is not None:
-                            self.camera.set_roi(None)
+                    if rec.paused.is_set():  # recentering: the whole field on the main view, at
+                        if roi is not None:  # the live view's settings (the planet's showed a black
+                            planet = (self.camera.exposure_s, self.camera.gain)  # field, 2026-10-10)
+                            self.camera.set_roi(None)  # keeps self.roi: resume uses its size
+                            self.camera.set_exposure(self._restore[0])
+                            self.camera.set_gain(self._restore[1])
                             roi = None
                             rec.edge.reset()
                         self._stop.wait(PAUSED_WAIT_S)
                         continue
-                    if roi is None:  # resumed: find the planet again and follow it
+                    if roi is None:  # resumed: the planet's settings, find it again and follow it
+                        if planet is not None:
+                            self.camera.set_exposure(planet[0])
+                            self.camera.set_gain(planet[1])
+                            planet = None
                         blob = brightest_blob(self.camera.capture())
                         if blob is None:
                             self._stop.wait(PAUSED_WAIT_S)

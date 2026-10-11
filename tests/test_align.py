@@ -1,4 +1,4 @@
-"""Align: the main camera's place on the finder, from one bright star seen by both."""
+"""Align: the main camera's place on the finder, from plate solves of both cameras."""
 
 import time
 from datetime import UTC, datetime
@@ -8,17 +8,20 @@ import pytest
 from scipy import ndimage
 
 from astro.devices.stream import ThreadStream
-from astro.pointing import align
+from astro.pointing import align, main_solve
 from astro.pointing.align import (
+    AlignRun,
+    MainInFinder,
     box_on_finder_view,
     finder_offset_to_sky,
-    fit_main_in_finder,
-    pick_star,
     sky_offset_to_altaz,
 )
 from astro.pointing.coords import Site
+from astro.pointing.labels import gnomonic, sky_to_pixels
+from astro.pointing.main_solve import _untangent
 from astro.pointing.platesolve import FinderSolver, Solution, finder_gray
 from astro.session import Session
+from tests.test_main_solve import seen_by_main, sky_field
 
 FIXTURE = "tests/data/align/bright-star-2026-10-10.npz"  # both cameras, time-stamped
 
@@ -28,58 +31,13 @@ def rot(deg):
     return np.array([[np.cos(r), -np.sin(r)], [np.sin(r), np.cos(r)]])
 
 
-def test_fit_recovers_scale_rotation_and_center_from_a_drift():
-    a, c = 58 * rot(15), np.array([700.0, 430.0])
-    finder_t = np.arange(0, 10, 0.8)
-    finder_xy = c + np.c_[-0.5 * finder_t, 0.17 * finder_t] + [3, -2]  # the star drifts past c
-    main_t = np.arange(0.1, 10, 0.5)
-    f_at = c + np.c_[-0.5 * main_t, 0.17 * main_t] + [3, -2]
-    main_xy = (f_at - c) @ a.T + np.random.default_rng(0).normal(0, 1, (len(main_t), 2))
-    fit = fit_main_in_finder(finder_t, finder_xy, main_t, main_xy)
-    assert fit.scale == pytest.approx(58, rel=0.02) and fit.rotation_deg == pytest.approx(15, abs=1)
-    assert np.allclose(fit.center, c, atol=0.3) and fit.residual_px < 3
-    assert fit_main_in_finder(finder_t, finder_xy, main_t[:3], main_xy[:3]) is None  # too short
-
-
 def test_the_box_sits_on_the_center_and_turns_with_the_finder_view():
-    fit = fit_main_in_finder([0, 10], [[640, 480], [635, 482]], np.arange(6) * 2.0,
-                             np.c_[np.arange(6) * 58.0 * -1, np.arange(6) * 23.2] - [0, 0])
+    fit = MainInFinder(58 * rot(5), np.array([640.0, 480.0]), 0.0)
     box = np.array(box_on_finder_view(fit, (3856, 2180), (1280, 960), 0))
     assert np.allclose(box.mean(axis=0), 0, atol=0.01)  # main center on the finder center
     assert np.ptp(box[:, 0]) == pytest.approx(3856 / 58 / 1280, rel=0.1)  # ~5% of the finder width
     turned = np.array(box_on_finder_view(fit, (3856, 2180), (1280, 960), 180))
     assert np.allclose(turned, -box)
-
-
-def star_field(stars, size=(480, 640), sky=40.0):
-    img = np.zeros(size)
-    for x, y, flux in stars:
-        img[int(y), int(x)] += flux
-    rng = np.random.default_rng(1)
-    return ndimage.gaussian_filter(img, 1.2) + sky + rng.normal(0, 2, size)
-
-
-def test_pick_star_wants_one_clear_winner_near_the_expected_place():
-    near = (320, 240)
-    clear = star_field([(330, 250, 5000), (300, 200, 600), (100, 100, 20000)])  # far one ignored
-    assert pick_star(clear, near) == pytest.approx((330, 250), abs=0.5)
-    ambiguous = star_field([(330, 250, 900), (300, 200, 700)])
-    assert pick_star(ambiguous, near) is None
-
-
-def test_pick_star_sees_through_a_cloud_glow_gradient():
-    """2026-10-10: cloud glow made the finder's bottom ~2.5x brighter than its top; one sky
-    level for the frame put the threshold above the stars."""
-    yy = np.mgrid[:480, :640][0]
-    glow = star_field([(330, 150, 3000)]) + 80.0 * yy / 480
-    assert pick_star(glow, (320, 240)) == pytest.approx((330, 150), abs=0.5)
-
-
-def test_real_field_without_a_bright_star_is_ambiguous():
-    """2026-10-10: the main camera's star was one of several equally faint finder stars, so
-    Align must ask for a brighter star rather than guess."""
-    gray = finder_gray(np.load(FIXTURE)["finder"][0])
-    assert pick_star(gray, (gray.shape[1] / 2, gray.shape[0] / 2)) is None
 
 
 def test_finder_pixels_to_sky_follow_the_solver():
@@ -178,58 +136,41 @@ class FakeFinder:
         return 1, None
 
 
-class CloudedFinder(FakeFinder):
-    def sync(self, fresh=False):
-        return False, "I only see a star or two."
-
-
-@pytest.mark.parametrize("clear", [True, False])
-def test_align_button_fits_the_main_camera_onto_the_finder(monkeypatch, tmp_path, clear):
-    """Without a plate solve (clouds), Align still moves the box; Go to keeps its old aim."""
-    monkeypatch.setattr(align, "ALIGN_S", 2.5)
-    monkeypatch.setattr(align, "ALIGN_SCALE", (10.0, 40.0))  # the fakes' scale is 20
-    start = time.monotonic()
-    finder_cam, main_cam = ThreadStream(DriftingSky(False, start)), ThreadStream(DriftingSky(True, start))
-    s = Session(Site(26.6, -80.1), clock=lambda: datetime(2026, 10, 10, 2, 0, tzinfo=UTC),
-                finder=(FakeFinder if clear else CloudedFinder)(finder_cam), main_camera=main_cam,
-                main_sensor=(1000, 600),
-                data_dir=tmp_path)
-    finder_cam.capture(), main_cam.capture()  # both streaming
-    assert "Aligning" in s.action("align")[0]["text"]
-    said = []
-    while not said and time.monotonic() - start < 10:
-        said = [m["text"] for m in s.tick(0.0) if m["type"] == "say"]
-        time.sleep(0.05)
-    assert said and said[0].startswith("Aligned" if clear else "Box moved"), said
-    fit = s.main_in_finder
-    assert np.allclose(fit.center, C, atol=1.5) and fit.rotation_deg == pytest.approx(10, abs=1.5)
-    assert fit.scale == pytest.approx(20, rel=0.05)
-    assert s.main_box and s.centerer.offset.observations == (1 if clear else 0)
-    assert s.calibration()["main_in_finder"]["center"] == pytest.approx(list(fit.center))
-    finder_cam.close(), main_cam.close()
-
-
 class DarkMain(DriftingSky):
     def capture(self):
         w, h = self.sensor_size
         return np.full((h, w), 20, np.uint8)  # no star in the telescope view
 
 
-@pytest.mark.parametrize("main_cls,scale,expected", [
-    (DriftingSky, (30.0, 40.0), "That didn't fit"),  # the fakes' scale is 20: rejected, box kept
-    (DarkMain, (10.0, 40.0), "I don't see a bright star"),
+class NoSolver:
+    def solve(self, frame):
+        return None
+
+
+@pytest.mark.parametrize("solver,cached,expected", [
+    (NoSolver(), False, "The finder couldn't plate-solve"),
+    ("sky", False, "I don't have the star catalog"),
+    ("sky", True, "I couldn't plate-solve the telescope view"),
 ])
-def test_align_failures_keep_the_old_box(monkeypatch, tmp_path, main_cls, scale, expected):
-    monkeypatch.setattr(align, "ALIGN_S", 1.5)
-    monkeypatch.setattr(align, "ALIGN_SCALE", scale)
+def test_align_failures_say_why_and_keep_the_old_box(monkeypatch, tmp_path, solver, cached, expected):
+    """Plate solves only: no star needs to be in both cameras, and a failure says which part
+    failed instead of asking for "the finder star in the telescope"."""
+    monkeypatch.setattr(align, "ALIGN_S", 3.0)
+    if cached:
+        (tmp_path / "gaia").mkdir()
+        np.save(main_solve._tile_path(SKY_FINDER.ra_deg, SKY_FINDER.dec_deg, tmp_path / "gaia"),
+                sky_field(np.random.default_rng(8)))
     start = time.monotonic()
-    finder_cam, main_cam = ThreadStream(DriftingSky(False, start)), ThreadStream(main_cls(True, start))
+    finder_cam, main_cam = ThreadStream(DriftingSky(False, start)), ThreadStream(DarkMain(True, start))
+    finder = SolvingFinder(finder_cam)
+    if solver != "sky":
+        finder.solver = solver
     old_box = [[1, 2], [3, 4], [5, 6], [7, 8]]
     s = Session(Site(26.6, -80.1), clock=lambda: datetime(2026, 10, 10, 2, 0, tzinfo=UTC),
-                finder=FakeFinder(finder_cam), main_camera=main_cam, main_sensor=(1000, 600),
+                finder=finder, main_camera=main_cam, main_sensor=(1000, 600),
                 data_dir=tmp_path, calibration={"main_box": old_box})
     finder_cam.capture(), main_cam.capture()
-    s.action("align")
+    assert "Aligning" in s.action("align")[0]["text"]
     said = []
     while not said and time.monotonic() - start < 10:
         said = [m["text"] for m in s.tick(0.0) if m["type"] == "say"]
@@ -237,3 +178,125 @@ def test_align_failures_keep_the_old_box(monkeypatch, tmp_path, main_cls, scale,
     assert said and said[0].startswith(expected), said
     assert s.main_box == old_box and s.main_in_finder is None and s._align is None
     finder_cam.close(), main_cam.close()
+
+
+def test_align_run_saves_its_frames(tmp_path):
+    run = AlignRun((1280, 960))
+    for i in range(4):
+        run.add("finder", (np.zeros((96, 128), np.uint8), i, float(i)))
+        run.add("main", (np.full((40, 60), i, np.uint8), i, float(i)))
+    run.save(tmp_path / "a.npz")
+    got = np.load(tmp_path / "a.npz")
+    assert got["finder"].shape == (4, 96, 128) and got["main"][:, 0, 0].tolist() == [0, 3]
+
+
+class StaticMain(DriftingSky):
+    """The main camera seeing a fixed synthetic star field (rendered once)."""
+
+    frame: np.ndarray
+
+    def __init__(self, frame):
+        super().__init__(True, 0.0)
+        self.frame, self.sensor_size = frame, frame.shape[::-1]
+
+    def capture(self):
+        return self.frame
+
+
+SKY_FINDER = Solution(150.0, 30.0, 25.0, 10.38, 20, 40, 1e-9, 300)
+
+
+class FakeSolver:
+    def solve(self, frame):
+        return SKY_FINDER
+
+
+class SolvingFinder(FakeFinder):
+    solver = FakeSolver()
+
+
+def test_align_from_two_plate_solves(monkeypatch, tmp_path):
+    """With the field's Gaia stars cached, one frame pair places the main camera, with no
+    guessing which finder star is the one in the main camera."""
+    monkeypatch.setattr(align, "ALIGN_S", 30.0)
+    rng = np.random.default_rng(8)
+    catalog = sky_field(rng)
+    ra_c, dec_c = _untangent(complex(1.2 * 3600, 0.5 * 3600), SKY_FINDER.ra_deg, SKY_FINDER.dec_deg)
+    xy = seen_by_main(catalog, ra_c, dec_c, 60.0)  # brightest first
+    img = np.zeros((2180, 3856))
+    for (x, y), flux in zip(xy, np.geomspace(60000, 4000, len(xy)), strict=True):
+        img[int(y + 1090), int(x + 1928)] = flux
+    frame = np.clip(ndimage.gaussian_filter(img, 3.0) + 30 + rng.normal(0, 8, img.shape), 0, 255).astype(np.uint8)
+    (tmp_path / "gaia").mkdir()
+    np.save(main_solve._tile_path(SKY_FINDER.ra_deg, SKY_FINDER.dec_deg, tmp_path / "gaia"), catalog)
+    start = time.monotonic()
+    finder_cam, main_cam = ThreadStream(DriftingSky(False, start)), ThreadStream(StaticMain(frame))
+    s = Session(Site(26.6, -80.1), clock=lambda: datetime(2026, 10, 10, 2, 0, tzinfo=UTC),
+                finder=SolvingFinder(finder_cam), main_camera=main_cam, main_sensor=(3856, 2180),
+                data_dir=tmp_path)
+    finder_cam.capture(), main_cam.capture()
+    s.action("align")
+    said = []
+    while not said and time.monotonic() - start < 15:
+        said = [m["text"] for m in s.tick(0.0) if m["type"] == "say"]
+        time.sleep(0.05)
+    assert said and said[0].startswith("Aligned from the stars"), said
+    east, north = gnomonic(SKY_FINDER.ra_deg, SKY_FINDER.dec_deg, ra_c, dec_c)
+    expected = np.add(sky_to_pixels(east, north, SKY_FINDER, 1280), [640, 480])
+    assert np.allclose(s.main_in_finder.center, expected, atol=0.1)
+    assert s.main_box and s.centerer.offset.observations == 1
+    finder_cam.close(), main_cam.close()
+
+
+def star_frame(xy, rng):
+    """A main frame (2180 x 3856) with stars at `xy` (raw px from the center, brightest first)."""
+    img = np.zeros((2180, 3856))
+    for (x, y), flux in zip(xy, np.geomspace(60000, 4000, len(xy)), strict=True):
+        img[int(y + 1090), int(x + 1928)] = flux
+    return np.clip(ndimage.gaussian_filter(img, 3.0) + 30 + rng.normal(0, 8, img.shape), 0, 255).astype(np.uint8)
+
+
+def test_align_with_the_barlow_measures_its_power(monkeypatch, tmp_path):
+    """A "2x" Barlow is ~2.2-2.6x at the sensor: Align tries a range, and remembers the power."""
+    monkeypatch.setattr(align, "ALIGN_S", 30.0)
+    rng = np.random.default_rng(9)
+    catalog = sky_field(rng, n=60000)  # the Barlow's 13' x 8' field needs a rich one
+    ra_c, dec_c = _untangent(complex(0.6 * 3600, -0.4 * 3600), SKY_FINDER.ra_deg, SKY_FINDER.dec_deg)
+    w = main_solve._tangent(catalog[:, 0], catalog[:, 1], ra_c, dec_c) / (main_solve.MAIN_SCALE / 2.45)
+    w = w * np.exp(-1j * np.radians(30.0))
+    inside = (abs(w.real) < 1900) & (abs(w.imag) < 1060)
+    xy = np.c_[w[inside].real, w[inside].imag][np.argsort(catalog[inside, 2])[:25]]
+    (tmp_path / "gaia").mkdir()
+    np.save(main_solve._tile_path(SKY_FINDER.ra_deg, SKY_FINDER.dec_deg, tmp_path / "gaia"), catalog)
+    start = time.monotonic()
+    finder_cam, main_cam = ThreadStream(DriftingSky(False, start)), ThreadStream(StaticMain(star_frame(xy, rng)))
+    s = Session(Site(26.6, -80.1), clock=lambda: datetime(2026, 10, 10, 2, 0, tzinfo=UTC),
+                finder=SolvingFinder(finder_cam), main_camera=main_cam, main_sensor=(3856, 2180),
+                data_dir=tmp_path, calibration={"barlow": True})
+    finder_cam.capture(), main_cam.capture()
+    s.action("align")
+    said = []
+    while not said and time.monotonic() - start < 30:
+        said = [m["text"] for m in s.tick(0.0) if m["type"] == "say"]
+        time.sleep(0.05)
+    assert said and "The Barlow magnifies 2.5 times" in said[0], said  # 2.45, said to a tenth
+    assert s.barlow_power == pytest.approx(2.45, abs=0.02) and s._main_scales() == (main_solve.MAIN_SCALE / s.barlow_power,)
+    assert s.calibration()["barlow_power"] == s.barlow_power
+    finder_cam.close(), main_cam.close()
+
+
+def test_barlow_in_shrinks_the_box_about_its_center_and_out_restores_it(tmp_path):
+    fit = {"a": [[58.0, 0.0], [0.0, 58.0]], "center": [700.0, 400.0], "residual_px": 0.5}
+    s = Session(Site(26.6, -80.1), data_dir=tmp_path, main_sensor=(3856, 2180),
+                calibration={"main_in_finder": fit, "main_solved": True, "barlow_power": 2.5})
+    s.main_box = box_on_finder_view(s.main_in_finder, (3856, 2180), (1280, 960), 180)
+    before = np.array(s.main_box)
+    s._main_fix = (time.monotonic(), None, (45.0, 180.0))  # a telescope-view solve at prime focus
+    assert "resized the telescope's box" in s.handle("the barlow is in")[0]["text"]
+    assert s._main_fix is None  # its scale no longer holds
+    after = np.array(s.main_box)
+    assert np.allclose(after.mean(axis=0), before.mean(axis=0), atol=1e-3)  # the box is rounded to 1e-4
+    assert np.ptp(after[:, 0]) == pytest.approx(np.ptp(before[:, 0]) / 2.5, rel=0.01)
+    assert s.calibration()["barlow"] is True
+    s.handle("took out the barlow")
+    assert np.allclose(s.main_box, before, atol=1e-3)

@@ -22,14 +22,15 @@ STAR_NAMES = Path(__file__).with_name("star_names.csv")
 STEP_DEG = 0.5  # the probe offsets that measure the map: small, but far above the solve's error
 REFRESH_S = 5.0  # the sky turns ~0.02 degrees in 5 s: under 2 finder pixels
 BODIES = (*PLANETS, "moon")
+BRIGHT_MAG = 3.0  # Names level 1: the prominent stars (~130 in the sky); level 2 names all ~350
 
 
-def load_stars(path: Path = STAR_NAMES) -> tuple[list[str], np.ndarray, np.ndarray]:
-    """Names and J2000 (ra, dec) degrees, brightest first."""
+def load_stars(path: Path = STAR_NAMES) -> tuple[list[str], np.ndarray, np.ndarray, np.ndarray]:
+    """Names, J2000 (ra, dec) degrees and magnitudes, brightest first."""
     with open(path, encoding="utf-8") as f:
         rows = list(csv.DictReader(line for line in f if not line.startswith("#")))
     return ([r["name"] for r in rows], np.array([float(r["ra_deg"]) for r in rows]),
-            np.array([float(r["dec_deg"]) for r in rows]))
+            np.array([float(r["dec_deg"]) for r in rows]), np.array([float(r["mag"]) for r in rows]))
 
 
 def gnomonic(lon0, lat0, lon, lat):
@@ -95,36 +96,88 @@ class FinderLabels:
     def __init__(self, targets: list[Target]):
         self.map: np.ndarray | None = None
         self._targets = targets
-        self._fixed: tuple | None = None  # (names, kinds, ra, dec), loaded on first use
+        self._fixed: dict | None = None  # names, kinds, ra, dec, mag, outlines: loaded on first use
         self._cache: dict | None = None
 
     def labels(self, sol: Solution | None, size: tuple[int, int], pointing: tuple[float, float],
-               site: Site, when: datetime, now: float, rotate: int) -> tuple[list[list], bool]:
+               site: Site, when: datetime, now: float, rotate: int, level: int = 2
+               ) -> tuple[list[list], bool]:
         """([[name, kind, x, y], ...] with x, y as fractions from the view's center, for a
-        view turned by `rotate`; True if `sol` gave a new map to save). Call only once a map
+        view turned by `rotate`; True if `sol` gave a new map to save). A target with a size
+        adds its outline: [..., ex, ey, ratio], the ellipse's semi-major axis (fractions of the
+        view's width and height) and its minor/major ratio. Level 1 names only the stars to
+        BRIGHT_MAG, level 2 all of them; targets and planets always. Call only once a map
         exists or `sol` is set; `now` is a monotonic clock."""
         w, h = size
         c, new_map = self._cache, False
         if c is None or c["sol"] is not sol or now - c["at"] > REFRESH_S:
             if sol is not None and (c is None or c["sol"] is not sol):
                 self.map, new_map = tube_map(sol, w, site, when), True
-            names, kinds, ra, dec = self._fixed_objects()
-            alt, az = altaz_now(ra, dec, site, when)
-            body = np.array([body_altaz(b, site, when) for b in BODIES])
+            f = self._fixed_objects()
+            alt, az = altaz_now(np.r_[f["ra"], f["end_ra"]], np.r_[f["dec"], f["end_dec"]], site, when)
+            n, body = len(f["ra"]), np.array([body_altaz(b, site, when) for b in BODIES])
             c = self._cache = {"sol": sol, "m": self.map, "at": now,
-                               "names": names + [b.capitalize() for b in BODIES],
-                               "kinds": kinds + ["planet"] * len(BODIES),
-                               "alt": np.r_[alt, body[:, 0]], "az": np.r_[az, body[:, 1]]}
+                               "names": f["names"] + [b.capitalize() for b in BODIES],
+                               "kinds": f["kinds"] + ["planet"] * len(BODIES),
+                               "alt": np.r_[alt[:n], body[:, 0]], "az": np.r_[az[:n], body[:, 1]],
+                               "mag": np.r_[f["mag"], np.full(len(BODIES), -np.inf)],
+                               "outlined": f["outlined"], "ratio": f["ratio"],
+                               "end_alt": alt[n:], "end_az": az[n:]}
         x, y, on = place(c["alt"], c["az"], pointing, c["m"], size)
+        ex, ey, _ = place(c["end_alt"], c["end_az"], pointing, c["m"], size)
         sign = -1 if rotate == 180 else 1  # the view is turned like the picture
+        outline = {i: [round(sign * (ex[k] - x[i]) / w, 4), round(sign * (ey[k] - y[i]) / h, 4),
+                       c["ratio"][k]] for k, i in enumerate(c["outlined"])}
         return [[c["names"][i], c["kinds"][i], round(sign * (x[i] / w - 0.5), 4),
-                 round(sign * (y[i] / h - 0.5), 4)]
-                for i in np.flatnonzero(on & (c["alt"] > 0))], new_map
+                 round(sign * (y[i] / h - 0.5), 4), *outline.get(i, [])]
+                for i in np.flatnonzero(on & (c["alt"] > 0) & ((c["mag"] <= BRIGHT_MAG) | (level >= 2)))
+                ], new_map
 
-    def _fixed_objects(self) -> tuple:
+    def _fixed_objects(self) -> dict:
+        """Stars and targets; each target with a size also gets the sky point at the end of its
+        major axis (PA east of north), which the map turns into the outline on the view."""
         if self._fixed is None:
-            stars, ra, dec = load_stars()
+            stars, ra, dec, mag = load_stars()
             t = self._targets
-            self._fixed = (stars + [x.id for x in t], ["star"] * len(stars) + ["target"] * len(t),
-                           np.r_[ra, [x.ra for x in t]], np.r_[dec, [x.dec for x in t]])
+            sized = [k for k, x in enumerate(t) if x.size_arcmin[0] > 0]
+            semi = np.array([t[k].size_arcmin[0] / 120 for k in sized])  # degrees
+            pa = np.radians([t[k].pa_deg for k in sized])
+            t_dec = np.array([t[k].dec for k in sized])
+            self._fixed = {
+                "names": stars + [x.id for x in t], "kinds": ["star"] * len(stars) + ["target"] * len(t),
+                "ra": np.r_[ra, [x.ra for x in t]], "dec": np.r_[dec, [x.dec for x in t]],
+                "mag": np.r_[mag, np.full(len(t), -np.inf)],
+                "outlined": [len(stars) + k for k in sized],
+                "end_ra": np.array([t[k].ra for k in sized]) + semi * np.sin(pa) / np.cos(np.radians(t_dec)),
+                "end_dec": t_dec + semi * np.cos(pa),
+                "ratio": [round(t[k].size_arcmin[1] / t[k].size_arcmin[0], 3) for k in sized]}
         return self._fixed
+
+
+def main_view_labels(labels: FinderLabels, msol, main_size: tuple[int, int], site: Site,
+                     when: datetime, level: int = 2) -> list[list]:
+    """Names on the telescope view straight from its own plate solve (`msol`, a MainSolution):
+    exact, where names through Align's box carry the finder's ~1'. Same entries as
+    FinderLabels.labels, as fractions of the main view (not turned: ROTATE["main"] is 0)."""
+    f = labels._fixed_objects()
+    bodies = [altaz_to_radec(*body_altaz(b, site, when), site, when) for b in BODIES]
+    ra = np.r_[f["ra"], [b[0] for b in bodies]]
+    dec = np.r_[f["dec"], [b[1] for b in bodies]]
+    names, kinds = f["names"] + [b.capitalize() for b in BODIES], f["kinds"] + ["planet"] * len(BODIES)
+    mag = np.r_[f["mag"], np.full(len(BODIES), -np.inf)]
+    w, h = main_size
+    m = msol.scale_arcsec_px * np.exp(1j * np.radians(msol.roll_deg))
+    parity = -1 if msol.mirrored else 1
+
+    def to_view(r, d):  # sky -> main view fractions: east + i north = m (x + i parity y)
+        east, north = gnomonic(msol.ra_deg, msol.dec_deg, r, d)
+        z = (np.asarray(east) + 1j * np.asarray(north)) * 3600 / m
+        return z.real / w, parity * z.imag / h
+
+    x, y = to_view(ra, dec)
+    ex, ey = to_view(f["end_ra"], f["end_dec"])
+    outline = {i: [round(float(ex[k] - x[i]), 4), round(float(ey[k] - y[i]), 4), f["ratio"][k]]
+               for k, i in enumerate(f["outlined"])}
+    on = (np.abs(x) < 0.6) & (np.abs(y) < 0.6) & ((mag <= BRIGHT_MAG) | (level >= 2))
+    return [[names[i], kinds[i], round(float(x[i]), 4), round(float(y[i]), 4), *outline.get(i, [])]
+            for i in np.flatnonzero(on)]

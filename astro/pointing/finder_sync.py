@@ -135,6 +135,7 @@ class FinderSync:
         self.last_rms: float | None = None  # arcmin, mount model fit after the latest sync
         self.on_change: Callable[[], None] | None = None  # model changed: persist calibration
         self.last_solution: Solution | None = None
+        self._anchor: tuple | None = None  # (encoders, alt, az) at the last solve, for names
         # How many times the encoder board has booted since we connected (None: not tracked).
         self.encoder_boots: Callable[[], int] | None = None
         # Seconds since the encoders last reported (None if not tracked, e.g. simulators).
@@ -150,6 +151,7 @@ class FinderSync:
         """New site: the old mount model's alt/az frame no longer applies; re-sync from scratch."""
         with self._model_lock:
             self.site, self.model, self.synced = site, MountModel(), False
+            self._anchor = None
         if self.on_change:
             self.on_change()
 
@@ -158,6 +160,19 @@ class FinderSync:
         enc = self.encoders()
         with self._model_lock:
             return self.model.to_sky(*enc)
+
+    def label_position(self) -> tuple[float, float]:
+        """Where the finder points now, for the names: the last solve's (alt, az), moved by what
+        the encoders turned since. The model alone is off by its fit error, an angle that put
+        names beside the wrong stars in a dense field (2026-10-10)."""
+        enc = self.encoders()
+        with self._model_lock:
+            now = self.model.to_sky(*enc)
+            if self._anchor is None:
+                return now
+            enc0, alt, az = self._anchor
+            then = self.model.to_sky(*enc0)
+        return alt + now[0] - then[0], (az + now[1] - then[1]) % 360
 
     def model_dict(self) -> dict:
         """The mount model for the calibration file, never half refitted."""
@@ -186,6 +201,7 @@ class FinderSync:
             if self.model is not model:
                 return False, "The place changed while I solved; sync again."
             self.last_solution = sol  # published only for the current model (labels use it)
+            self._anchor = (enc, alt, az)
             if replace_near_deg is not None:
                 self.model.syncs = [s for s in self.model.syncs if separation_deg(
                     s.true_alt_deg, s.true_az_deg, alt, az) > replace_near_deg]

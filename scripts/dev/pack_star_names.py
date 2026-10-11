@@ -1,7 +1,8 @@
 """Cut the HYG star database down to the star names drawn on the finder view.
 
-Keeps every star to magnitude 6.5 with a proper name (Vega), a Bayer letter (β Cyg) or a
-Flamsteed number (61 Cyg): about 3,100 stars. HYG is CC BY-SA 4.0 (David Nash, astronexus):
+Keeps every star to magnitude 6.5 with a proper name (Vega): about 350 stars. Bayer letters
+(δ Cyg) and numbered names (Flamsteed "61 Cyg", Gould "82 G. Eri") are left out: they clutter
+the view and say nothing out loud (2026-10-10, 2026-10-11). HYG is CC BY-SA 4.0 (David Nash, astronexus):
     curl -LO https://raw.githubusercontent.com/astronexus/HYG-Database/main/hyg/CURRENT/hygdata_v41.csv
     .venv/bin/python scripts/dev/pack_star_names.py hygdata_v41.csv astro/pointing/star_names.csv
 """
@@ -10,21 +11,11 @@ import csv
 import sys
 
 MAX_MAG = 6.5
-GREEK = {"Alp": "α", "Bet": "β", "Gam": "γ", "Del": "δ", "Eps": "ε", "Zet": "ζ", "Eta": "η",
-         "The": "θ", "Iot": "ι", "Kap": "κ", "Lam": "λ", "Mu": "μ", "Nu": "ν", "Xi": "ξ",
-         "Omi": "ο", "Pi": "π", "Rho": "ρ", "Sig": "σ", "Tau": "τ", "Ups": "υ", "Phi": "φ",
-         "Chi": "χ", "Psi": "ψ", "Ome": "ω"}
-SUPERSCRIPT = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
 
 
 def label(row: dict) -> str | None:
-    if row["proper"]:
+    if row["proper"] and not row["proper"][0].isdigit():
         return row["proper"]
-    if row["bayer"]:
-        letter, _, n = row["bayer"].partition("-")
-        return f"{GREEK[letter]}{n.translate(SUPERSCRIPT)} {row['con']}"
-    if row["flam"]:
-        return f"{row['flam']} {row['con']}"
     return None
 
 

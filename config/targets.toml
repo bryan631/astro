@@ -1,5 +1,7 @@
 # Curated targets that work from a Bortle 7-8 suburb with an 8" Dob and no tracking.
-# ra/dec in degrees (J2000). Planets and the Moon are computed, not listed here.
+# ra/dec in degrees (J2000); size_arcmin [major, minor] and pa_deg (east of north) draw the
+# outline on the views (a circle where the angle isn't known). Planets and the Moon are
+# computed, not listed here.
 
 [[target]]
 name = "Orion Nebula"
@@ -8,6 +10,7 @@ category = "nebula"
 ra = 83.82
 dec = -5.39
 note = "The best nebula in the sky; bright even from the suburbs."
+size_arcmin = [65, 60]
 
 [[target]]
 name = "Pleiades"
@@ -16,6 +19,7 @@ category = "cluster"
 ra = 56.75
 dec = 24.12
 note = "The Seven Sisters; about 2 degrees across, so a picture shows the brightest few."
+size_arcmin = [110, 110]
 
 [[target]]
 name = "Beehive Cluster"
@@ -24,6 +28,7 @@ category = "cluster"
 ra = 130.1
 dec = 19.67
 note = "Big, bright open cluster in Cancer."
+size_arcmin = [95, 95]
 
 [[target]]
 name = "Hercules Cluster"
@@ -32,6 +37,7 @@ category = "cluster"
 ra = 250.42
 dec = 36.46
 note = "Great globular cluster: a ball of hundreds of thousands of stars."
+size_arcmin = [20, 20]
 
 [[target]]
 name = "M92"
@@ -40,6 +46,7 @@ category = "cluster"
 ra = 259.28
 dec = 43.14
 note = "Bright globular cluster, often overlooked next to M13."
+size_arcmin = [14, 14]
 
 [[target]]
 name = "M4"
@@ -48,6 +55,7 @@ category = "cluster"
 ra = 245.9
 dec = -26.53
 note = "Loose globular cluster next to the red star Antares."
+size_arcmin = [36, 36]
 
 [[target]]
 name = "Sagittarius Cluster"
@@ -56,6 +64,7 @@ category = "cluster"
 ra = 279.1
 dec = -23.9
 note = "One of the brightest globular clusters, low in the south."
+size_arcmin = [32, 32]
 
 [[target]]
 name = "Wild Duck Cluster"
@@ -64,6 +73,7 @@ category = "cluster"
 ra = 282.77
 dec = -6.27
 note = "Rich, dense open cluster shaped like a flight of ducks."
+size_arcmin = [14, 14]
 
 [[target]]
 name = "Double Cluster"
@@ -72,6 +82,7 @@ category = "cluster"
 ra = 35.1
 dec = 57.14
 note = "Two star clusters side by side in Perseus."
+size_arcmin = [30, 30]
 
 [[target]]
 name = "M35"
@@ -80,6 +91,7 @@ category = "cluster"
 ra = 92.23
 dec = 24.33
 note = "Large open cluster in Gemini."
+size_arcmin = [28, 28]
 
 [[target]]
 name = "M41"
@@ -88,6 +100,7 @@ category = "cluster"
 ra = 101.5
 dec = -20.73
 note = "Bright open cluster just south of Sirius."
+size_arcmin = [38, 38]
 
 [[target]]
 name = "Ring Nebula"
@@ -96,6 +109,8 @@ category = "nebula"
 ra = 283.4
 dec = 33.03
 note = "A small smoke ring left by a dying star."
+size_arcmin = [1.4, 1.0]
+pa_deg = 60
 
 [[target]]
 name = "Dumbbell Nebula"
@@ -104,6 +119,7 @@ category = "nebula"
 ra = 299.9
 dec = 22.72
 note = "Bright planetary nebula shaped like an apple core."
+size_arcmin = [8, 8]
 
 [[target]]
 name = "Lagoon Nebula"
@@ -112,6 +128,8 @@ category = "nebula"
 ra = 270.92
 dec = -24.38
 note = "Large glowing cloud in Sagittarius with a cluster inside."
+size_arcmin = [90, 40]
+pa_deg = 90
 
 [[target]]
 name = "Saturn Nebula"
@@ -120,6 +138,7 @@ category = "nebula"
 ra = 316.04
 dec = -11.36
 note = "Small, bright blue-green planetary nebula."
+size_arcmin = [0.5, 0.5]
 
 [[target]]
 name = "Eskimo Nebula"
@@ -128,6 +147,7 @@ category = "nebula"
 ra = 112.29
 dec = 20.91
 note = "Small bright planetary nebula with a face-like look."
+size_arcmin = [0.8, 0.8]
 
 [[target]]
 name = "Andromeda Galaxy"
@@ -136,6 +156,8 @@ category = "galaxy"
 ra = 10.68
 dec = 41.27
 note = "Our nearest big galaxy; from the suburbs you will see the bright core."
+size_arcmin = [178, 63]
+pa_deg = 35
 
 [[target]]
 name = "Albireo"
