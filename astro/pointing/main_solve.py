@@ -10,13 +10,16 @@ then a least-squares fit on the tangent plane at the main camera's own center re
 Sky positions on the tangent plane are complex numbers (east + i north, arcsec) and main pixels
 too (x + i y from the frame's center), so a guess is one complex multiply-add: sky = m z + t.
 
-The Gaia stars come from VizieR, cached on disk per coarse sky tile (the scope often has
-internet, not always): one cone covers every finder solve whose center falls in the tile.
+The Gaia stars come from ESA's Gaia archive (VizieR as a fallback), cached on disk per coarse
+sky tile (the scope often has internet, not always): one cone covers every finder solve whose
+center falls in the tile.
 """
 
 import logging
 import math
+import re
 import time
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,6 +49,11 @@ MATCH_ARCSEC = 3.0  # a detected star counts as matched this close to a catalog 
 MIN_MATCHES = 6
 TILE_DEG = 2.0  # catalog cache tiles; a cone of TILE_RADIUS_DEG covers SEARCH_DEG from any center in one
 TILE_RADIUS_DEG = 6.0
+# One cone (G < 12.5, 6 degrees, ~33k stars in Cygnus): ESA's archive took 26 s, VizieR over
+# 15 min, since it scans every faint star in the cone (2026-10-10).
+ESA_TAP = "https://gea.esac.esa.int/tap-server/tap/sync?REQUEST=doQuery&LANG=ADQL&FORMAT=csv&QUERY="
+ESA_ADQL = ("SELECT ra, dec, phot_g_mean_mag FROM gaiadr3.gaia_source WHERE phot_g_mean_mag < {g} AND "
+            "1 = CONTAINS(POINT(ra, dec), CIRCLE({ra:.2f}, {dec:.2f}, {r:.1f}))")
 VIZIER = ("https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=I/355/gaiadr3&-c={ra:.2f}%20{dec:+.2f}"
           "&-c.rd={r:.1f}&-out=RA_ICRS,DE_ICRS,Gmag&Gmag=%3C{g}&-out.max=200000")
 
@@ -206,11 +214,11 @@ def tile(ra: float, dec: float) -> tuple[float, float]:
     return round(ra / step) % n * step, dec_c
 
 
-def parse_tsv(text: str) -> np.ndarray:
-    """VizieR's tab-separated (ra, dec, G) rows -> (n, 3); comments, headers and blanks skipped."""
+def parse_rows(text: str) -> np.ndarray:
+    """(ra, dec, G) rows, comma- or tab-separated -> (n, 3); comments, headers, blanks skipped."""
     rows = []
     for line in text.splitlines():
-        parts = line.split("\t")
+        parts = re.split("[,\t]", line)
         if len(parts) == 3 and not line.startswith("#"):
             try:
                 rows.append([float(p) for p in parts])
@@ -233,10 +241,10 @@ def cached_catalog(ra: float, dec: float, cache_dir: Path) -> np.ndarray | None:
 _fetching: set[Path] = set()  # tiles being downloaded (a second Align tap waits for the first)
 
 
-def field_catalog(ra: float, dec: float, cache_dir: Path, timeout_s: float = 120) -> np.ndarray | None:
+def field_catalog(ra: float, dec: float, cache_dir: Path, timeout_s: float = 600) -> np.ndarray | None:
     """Gaia stars (n, 3: ra, dec, G) within SEARCH_DEG of (ra, dec), from the tile's cache or
-    VizieR. None when offline and not cached. VizieR can take minutes for one cone (~13k rows
-    near the Milky Way: 4 min on 2026-10-10), so call this off the main loop."""
+    the internet. None when offline and not cached. A download takes ~30 s (minutes if only
+    VizieR answers), so call this off the main loop."""
     if (stars := cached_catalog(ra, dec, cache_dir)) is not None:
         return stars
     ra_c, dec_c = tile(ra, dec)
@@ -244,16 +252,14 @@ def field_catalog(ra: float, dec: float, cache_dir: Path, timeout_s: float = 120
     if path in _fetching:
         return None
     _fetching.add(path)
-    url = VIZIER.format(ra=ra_c, dec=dec_c, r=TILE_RADIUS_DEG, g=CATALOG_G)
+    cone = {"ra": ra_c, "dec": dec_c, "r": TILE_RADIUS_DEG, "g": CATALOG_G}
     try:
-        with urllib.request.urlopen(url, timeout=timeout_s) as r:
-            stars = parse_tsv(r.read().decode("utf-8", "replace"))
-    except OSError as e:  # offline, or VizieR slow or down: Align falls back to the drift
-        log.warning("gaia fetch failed", extra={"data": {"tile": [ra_c, dec_c], "error": str(e)}})
-        return None
+        stars = _download(ESA_TAP + urllib.parse.quote(ESA_ADQL.format(**cone)), timeout_s)
+        if stars is None:
+            stars = _download(VIZIER.format(**cone), timeout_s)
     finally:
         _fetching.discard(path)
-    if len(stars) == 0:
+    if stars is None or len(stars) == 0:
         return None
     cache_dir.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp.npy")
@@ -261,3 +267,12 @@ def field_catalog(ra: float, dec: float, cache_dir: Path, timeout_s: float = 120
     tmp.replace(path)  # a half-written file never passes for the cache
     log.info("gaia fetched", extra={"data": {"tile": [ra_c, dec_c], "stars": len(stars)}})
     return stars
+
+
+def _download(url: str, timeout_s: float) -> np.ndarray | None:
+    try:
+        with urllib.request.urlopen(url, timeout=timeout_s) as r:
+            return parse_rows(r.read().decode("utf-8", "replace"))
+    except OSError as e:  # offline, or the archive slow or down: Align falls back to the drift
+        log.warning("gaia fetch failed", extra={"data": {"url": url[:60], "error": str(e)}})
+        return None

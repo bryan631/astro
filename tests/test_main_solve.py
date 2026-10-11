@@ -15,7 +15,7 @@ from astro.pointing.main_solve import (
     _untangent,
     detect_stars,
     field_catalog,
-    parse_tsv,
+    parse_rows,
     solve_main,
     tile,
 )
@@ -148,4 +148,4 @@ def test_tiles_cover_the_search_radius():
         ra_c, dec_c = tile(ra, dec)
         x, y = gnomonic(ra_c, dec_c, ra, dec)
         assert np.hypot(x, y) + main_solve.SEARCH_DEG + 0.3 < main_solve.TILE_RADIUS_DEG
-    assert parse_tsv("").shape == (0, 3)
+    assert parse_rows("").shape == (0, 3)
