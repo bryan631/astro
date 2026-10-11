@@ -99,3 +99,13 @@ def test_partial_walk_says_it_guessed_the_rest():
         s.handle("mark")
     said = texts(s.handle("done"))[0]
     assert "only go about 90 degrees around" in said
+
+
+def test_the_page_shows_a_walks_buttons_while_it_runs():
+    """The page's Mark and Done buttons appear from the session's mode (and send these words)."""
+    s, _ = walk_session([])
+    assert s.mode is None
+    s.handle("start horizon walk")  # the More sheet's Horizon walk button
+    assert s.mode == "horizon"
+    s.handle("done")
+    assert s.mode is None

@@ -1186,6 +1186,15 @@ class Session:
     def wizard_active(self) -> bool:
         return self.wizard is not None and self.wizard.active
 
+    @property
+    def mode(self) -> str | None:
+        """A guided mode in progress, for the page's buttons: setup, horizon or collimation."""
+        if self.wizard_active:
+            return "setup"
+        if self._horizon is not None:
+            return "horizon"
+        return "collimation" if self._collimation is not None else None
+
     def _wizard_command(self, name: str) -> list[dict]:
         if name == "setup":
             if self._collimation is not None:

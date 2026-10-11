@@ -219,7 +219,6 @@ main camera; the box orange in day mode.
   focus numbers with many stars; a metered Jupiter or Saturn video; check that the names stay
   on their stars while the scope moves.
 - Check the encoders on the sky: counts follow the scope, and the model holds after a restart.
-- Buttons for the setup wizard, horizon walk and collimation (still worded for voice).
 - Recordings for test data: a focus sweep and a wiggle.
 - "Go to <object>" by voice in the app (typed box done; the keyboard mic dictates into it) (2026-10-10).
 - From the 2026-10-10 night (raw frames in data/night-20261010/): check the night colors and

@@ -128,6 +128,7 @@
     <button id="goto">Go to</button><button id="align">Align</button><button id="focus">Focus</button>
     <button id="capture">Capture</button><button id="recenter">Recenter</button>
     <button id="pics">Pictures</button><button id="more">More</button>
+    <span id="modebtns" hidden></span>
     <span class="grow"></span><button id="stop">STOP</button>
   </div>
 
@@ -143,6 +144,9 @@
   <div class="sheet" id="s-more" hidden><div class="top"><b>More</b><button data-close>Close</button></div>
     <p><button id="mode">Day mode</button> <button id="sync">Sync now</button>
        <button data-text="barlow in">Barlow in</button> <button data-text="barlow out">Barlow out</button></p>
+    <p><button data-text="set up the telescope" data-shut>Set up the telescope</button>
+       <button data-text="start horizon walk" data-shut>Horizon walk</button>
+       <button data-text="collimate" data-shut>Collimation</button></p>
     <p><label id="checks" hidden><input type="checkbox" id="checksoff"> Skip safety checks (daytime)</label></p>
     <p><a href="/tonight">Tonight at each spot</a> · <a href="/treeline.html">Record a treeline</a></p>
     <pre id="debugbox"></pre></div>
@@ -363,7 +367,10 @@ $("focus").onclick = () => { const on = document.body.classList.toggle("focusing
   $("focus").classList.toggle("on", on);
   if (on) { for (const v of Object.values(views)) v.focus = []; action("focus"); } };  // a fresh best and graph
 $("sync").onclick = () => action("sync");
-document.querySelectorAll("[data-text]").forEach(b => b.onclick = () => sendText(b.dataset.text));
+document.querySelectorAll("[data-text]").forEach(b => b.onclick = () => {
+  sendText(b.dataset.text);
+  if ("shut" in b.dataset) close(b);  // a mode starts: back to the cameras
+});
 const open = id => { $(id).hidden = false; }, close = el => { el.closest(".sheet").hidden = true; };
 document.querySelectorAll("[data-close]").forEach(b => b.onclick = () => close(b));
 msgEl.onclick = () => { $("log").textContent = logLines.slice().reverse().join("\n") || "No messages yet."; open("s-log"); };
@@ -458,7 +465,21 @@ async function pollStatus() {
     item("Telescope", s.main), item("Encoders", s.encoders), item("Internet", s.internet),
     s.claude ? item("Claude", s.claude === "ok", s.claude === "ok" ? "" : `(${s.claude})`) : ""].filter(Boolean).join("");
   if (link) $("align").classList.toggle("on", !!s.aligning);
+  if (link) showMode(s.mode);
   $("checks").hidden = !s.daytime; $("checksoff").checked = !!s.checks_off;
+}
+// A guided mode's own buttons next to the main ones (the voice words still work): setup waits for
+// "ready" or "skip"; a horizon walk marks points until "done"; collimation ends with STOP.
+const MODE_BUTTONS = {setup: [["Ready", "ready"], ["Skip", "skip"]], horizon: [["Mark", "mark"], ["Done", "done"]],
+                      collimation: []};
+let shownMode;
+function showMode(mode) {
+  if (mode === shownMode) return;
+  shownMode = mode;
+  const box = $("modebtns"), buttons = MODE_BUTTONS[mode] || [];
+  box.innerHTML = buttons.map(([label, text]) => `<button class="on" data-say="${text}">${label}</button>`).join("");
+  box.querySelectorAll("button").forEach(b => b.onclick = () => sendText(b.dataset.say));
+  box.hidden = !buttons.length;
 }
 $("checksoff").onchange = e => wsSend(JSON.stringify({type: "checks", off: e.target.checked}));
 setInterval(pollStatus, 5000); setTimeout(pollStatus, 1000);
