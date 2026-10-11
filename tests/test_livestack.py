@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 from scipy import ndimage
 
+from astro.capture import live_stacker
 from astro.process import livestack
 from astro.process.livestack import LiveStack, stretch
 from astro.process.planet import _LAYOUT
@@ -116,3 +117,68 @@ def test_four_stars_anchor_the_stack_three_do_not(monkeypatch):
     for stars, anchored in [(3, False), (4, True)]:
         monkeypatch.setattr(livestack, "check_focus", lambda lum, n=stars: SimpleNamespace(stars=n))
         assert LiveStack("GRBG").add(frame) is anchored  # a double star plus two field stars
+
+
+class MeterCamera:
+    """A camera whose sky brightens 10x per 200 gain steps (0.1 dB), with a star field that
+    saturates in a patch above `burns_at`."""
+
+    def __init__(self, sky_at_300=2.4, burns_at=None):
+        self.gain, self.sky_at_300, self.burns_at = 300, sky_at_300, burns_at
+
+    def set_gain(self, gain):
+        self.gain = gain
+
+    def capture(self):
+        rng = np.random.default_rng(self.gain)
+        sky = self.sky_at_300 * 10 ** ((self.gain - 300) / 200)
+        raw = rng.poisson(sky, (400, 400)).clip(0, 255).astype(np.uint8)
+        if self.burns_at is not None and self.gain > self.burns_at:
+            raw[:20, :20] = 255  # a bright core
+        return raw
+
+
+def test_gain_is_metered_to_put_the_sky_above_black():
+    """2026-10-10: at gain 300 the stacks' sky sat at ~2 of 255. The meter raises it to ~12."""
+    cam = MeterCamera()
+    gain, _ = live_stacker.meter_gain(cam, 300)
+    assert cam.gain == gain and abs(gain - 440) <= 25  # 300 + 200 log10(12 / 2.4)
+    assert 9 < cam.sky_at_300 * 10 ** ((gain - 300) / 200) < 16
+
+
+def test_meter_backs_off_when_a_core_burns_out():
+    cam = MeterCamera(burns_at=360)
+    gain, _ = live_stacker.meter_gain(cam, 300)
+    assert gain <= 360
+
+
+def test_stack_waits_through_a_drift_out_and_keeps_adding_after_the_nudge(tmp_path, monkeypatch):
+    """2026-10-10: stacks stopped at "lost the stars" after ~1.5 minutes of drift. Now the
+    stack asks for a nudge and adds to the same picture once the field is back."""
+    rng = np.random.default_rng(5)
+    scene = sky_scene(rng)
+    cloud = (20 + rng.normal(0, 8, (SIZE, SIZE))).clip(0, 255).astype(np.uint8)
+    frames = [observe(scene, 0, (i, 0), rng) for i in range(3)] + [cloud] * 12 + \
+             [observe(scene, 0, (-5 + i, 2), rng) for i in range(3)]
+    adrift = []
+
+    class Cam:
+        bayer, exposure_s, gain = "GRBG", 0.2, 300
+
+        def set_roi(self, roi): pass
+        def set_exposure(self, s): pass
+        def set_gain(self, g): pass
+
+        def capture(self):
+            adrift.append(stacker.current.adrift)
+            if not frames:
+                stacker.stop()
+                return cloud
+            return frames.pop(0)
+
+    monkeypatch.setattr(live_stacker, "meter_gain", lambda cam, gain: (gain, 12.0))
+    stacker = live_stacker.LiveStacker(Cam(), tmp_path / "gallery", tmp_path / "live")
+    live = stacker.start("M99", 60)
+    assert live.done.wait(30)
+    assert live.frames == 6 and not live.error and live.picture.exists()
+    assert True in adrift and not live.adrift  # it asked for a nudge, then found the field again

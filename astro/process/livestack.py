@@ -11,13 +11,14 @@ import logging
 from dataclasses import dataclass
 
 import astroalign
+import cv2
 import numpy as np
-from scipy import ndimage
+from scipy import fft
 from skimage.transform import SimilarityTransform
 
 from astro.pointing.finder_sync import check_focus
 from astro.process.planet import superpixel_rgb
-from astro.process.view import remove_hot_pixels
+from astro.process.view import HOT_SIGMA
 
 # astroalign matches star triangles (3 minimum); 4 keeps a margin without rejecting double
 # stars (PL2), whose short frames show the pair plus only a few field stars.
@@ -28,6 +29,7 @@ MAX_CONTROL_POINTS = 40  # brightest stars used for matching
 STAR_SMOOTH_PX = 2.0  # stars are wider than this; pixel noise isn't
 HIGHPASS_PX = 10  # the sky's glow and gradients are smoother than this; stars much smaller
 MIN_PEAK_SIGMA = 16.0  # a real pair peaked at 23; noise and an unrelated field at 8-10 (2026-10-10)
+RING = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]], np.uint8)  # a pixel's eight neighbors
 log = logging.getLogger(__name__)
 
 
@@ -41,6 +43,8 @@ class LiveStack:
     def __init__(self, bayer: str):
         self.bayer = bayer
         self._ref_lum: np.ndarray | None = None
+        self._ref_spectrum: np.ndarray | None = None  # for the shift fallback, made once
+        self._ref_stars: np.ndarray | None = None  # the reference's stars, found once
         self._sum: np.ndarray | None = None
         self._weight: np.ndarray | None = None  # pixels covered (edges shrink as frames rotate)
         self.status = StackStatus(0, 0)
@@ -57,25 +61,29 @@ class LiveStack:
                 log.info("stack: first frame skipped", extra={"data": {"stars": stars}})
                 return False
             self._ref_lum, self._sum = lum, rgb.copy()
+            self._ref_spectrum = spectrum(lum)
+            self._ref_stars = astroalign._find_sources(lum)[:MAX_CONTROL_POINTS]
             self._weight = np.ones(lum.shape, np.float32)
             self.status.frames_added = 1
             self._last_tf = None
             return True
         try:
-            tf, _ = astroalign.find_transform(lum, self._ref_lum,
+            tf, _ = astroalign.find_transform(lum, self._ref_stars,
                                               max_control_points=MAX_CONTROL_POINTS)
         except (astroalign.MaxIterError, ValueError) as e:  # too few / unmatched stars
-            shift, strength = measure_shift(lum, self._ref_lum)
+            shift, strength = measure_shift(lum, self._ref_spectrum)
             if strength < MIN_PEAK_SIGMA:
                 self.status.frames_skipped += 1
                 log.info("stack: frame skipped", extra={"data": {"why": str(e), "shift_peak": round(strength, 1)}})
                 return False
             tf = SimilarityTransform(translation=shift)
         self._last_tf = tf
-        warped = [astroalign.apply_transform(tf, rgb[..., c], self._ref_lum) for c in range(3)]
-        channels = [image for image, _ in warped]
-        covered = ~warped[0][1]  # footprint (same for every channel): True where no data landed
-        self._sum += np.stack(channels, axis=-1) * covered[..., None]
+        # OpenCV: ~15x faster than astroalign's warps (250 ms a frame kept 1 in 10, 2026-10-11)
+        h, w = lum.shape
+        warped = cv2.warpAffine(rgb, tf.params[:2], (w, h), flags=cv2.INTER_LINEAR,
+                                borderMode=cv2.BORDER_CONSTANT, borderValue=(np.nan,) * 3)
+        covered = ~np.isnan(warped[..., 0])  # where this frame landed
+        self._sum += np.nan_to_num(warped)
         self._weight += covered
         self.status.frames_added += 1
         return True
@@ -115,19 +123,30 @@ def stretch(img: np.ndarray, black_pct: float = 25, white_pct: float = 99.8,
 
 
 def _highpass(lum: np.ndarray) -> np.ndarray:
-    """Stars on black: hot pixels out and the pixel noise smoothed (the sensor's fixed pattern
-    matched at zero shift over the faint stars, 2026-10-10), the smooth sky off, and nothing
-    below it (noise and dark lanes)."""
-    lum = ndimage.gaussian_filter(remove_hot_pixels(lum[..., None])[..., 0], STAR_SMOOTH_PX)
-    img = lum - ndimage.gaussian_filter(lum, HIGHPASS_PX)
+    """Stars on black: hot pixels out (a pixel far above all eight neighbors gets the
+    brightest of them) and the pixel noise smoothed (the sensor's fixed pattern matched at zero
+    shift over the faint stars, 2026-10-10), the smooth sky off, and nothing below it (noise
+    and dark lanes). OpenCV filters: scipy's took 0.4 s a frame."""
+    lum = lum.astype(np.float32)
+    neighbors = cv2.dilate(lum, RING)
+    lum = np.where(lum - neighbors > HOT_SIGMA * (np.std(lum[::8, ::8]) + 1e-6), neighbors, lum)
+    lum = cv2.GaussianBlur(lum, (0, 0), STAR_SMOOTH_PX)
+    img = lum - cv2.GaussianBlur(lum, (0, 0), HIGHPASS_PX)
     return np.clip(img, 0, np.percentile(img, 99.9))  # one bright star can't decide alone
 
 
+def spectrum(lum: np.ndarray) -> np.ndarray:
+    """A frame's high-passed spectrum for measure_shift (the reference's is made once)."""
+    return fft.rfft2(_highpass(lum), workers=-1)
+
+
 def measure_shift(lum: np.ndarray, ref: np.ndarray) -> tuple[tuple[float, float], float]:
-    """(dx, dy) that moves `lum` onto `ref` (a feature at p in lum sits at p + shift in ref),
-    by phase correlation, and the peak's height in noise sigmas (low: no real match)."""
-    cross = np.fft.rfft2(_highpass(ref)) * np.conj(np.fft.rfft2(_highpass(lum)))
-    surface = np.fft.irfft2(cross / np.maximum(np.abs(cross), 1e-9), s=ref.shape)
+    """(dx, dy) that moves `lum` onto `ref` (a frame, or its spectrum()) (a feature at p in lum
+    sits at p + shift in ref), by phase correlation, and the peak's height in noise sigmas
+    (low: no real match)."""
+    ref = spectrum(ref) if np.isrealobj(ref) else ref
+    cross = ref * np.conj(spectrum(lum))
+    surface = fft.irfft2(cross / np.maximum(np.abs(cross), 1e-9), s=lum.shape, workers=-1)
     iy, ix = np.unravel_index(np.argmax(surface), surface.shape)
     strength = float((surface[iy, ix] - surface.mean()) / max(float(surface.std()), 1e-12))
     h, w = surface.shape

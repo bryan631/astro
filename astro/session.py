@@ -159,6 +159,7 @@ class Session:
                         if main_camera else None)
         self._stack_done_announced = True
         self._preview_seen = 0
+        self._adrift_said = False  # told the user the stack lost its field
         self._processor = ThreadPoolExecutor(max_workers=1)  # one stacking job at a time
         self._holding = False  # asked the user to hold still for a fresh fix
         self._jobs: list[tuple[str, Future[StackResult]]] = []  # pictures being made, in order
@@ -414,7 +415,7 @@ class Session:
         if video:
             self._announced_done = False
             return [say("Recording. Tap Stop capture when it nears the edge of the picture.")]
-        self._stack_done_announced, self._preview_seen = False, 0
+        self._stack_done_announced, self._preview_seen, self._adrift_said = False, 0, False
         return [say(f"Stacking short pictures of {choice}. Watch it build up on the screen. "
                     "Try not to touch the telescope.")]
 
@@ -740,6 +741,10 @@ class Session:
         if self._jobs and self._jobs[0][1].done():
             return self._announce_picture()
         if (live := self.stacker.current if self.stacker else None) is not None:
+            if live.adrift != self._adrift_said and not live.done.is_set():
+                self._adrift_said = live.adrift
+                return [say(f"I lost {live.name}. Nudge the scope back onto it, and I'll keep adding "
+                            "to the same picture." if live.adrift else f"Back on {live.name}. Stacking again.")]
             if live.preview_version > self._preview_seen:  # tablet refreshes the live view
                 self._preview_seen = live.preview_version
                 if not live.done.is_set():
