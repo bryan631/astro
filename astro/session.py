@@ -163,6 +163,7 @@ class Session:
         self._stack_done_announced = True
         self._preview_seen = 0
         self._adrift_said = False  # told the user the stack lost its field
+        self._auto_logged: tuple | None = None  # the last auto solve outcome logged
         self._processor = ThreadPoolExecutor(max_workers=1)  # one stacking job at a time
         self._holding = False  # asked the user to hold still for a fresh fix
         self._jobs: list[tuple[str, Future[StackResult]]] = []  # pictures being made, in order
@@ -745,7 +746,9 @@ class Session:
             return
         finally:
             self._solving = False
-        log.info("auto solve", extra={"data": {"ok": ok, "why": why}})
+        if (ok, why) != self._auto_logged:  # ~1 a second: log changes only (each good solve logs itself)
+            self._auto_logged = (ok, why)
+            log.info("auto solve", extra={"data": {"ok": ok, "why": why}})
         if ok and not was_synced:
             with self._lock:  # tick swaps the list under it
                 self._said_later.append(say("Found where the scope points (plate solve)."))
