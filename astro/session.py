@@ -830,6 +830,10 @@ class Session:
         if word:
             self._direction_probe = (word, az, t)
 
+    @property
+    def aligning(self) -> bool:
+        return self._align is not None
+
     def align(self) -> list[dict]:
         """Align (Phase 3b): with a bright star in the main view, watch it drift in both cameras
         for ALIGN_S, then fit where the main camera's view sits on the finder's."""

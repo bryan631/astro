@@ -34,7 +34,9 @@ log = logging.getLogger(__name__)
 MIN_DRIFT_PX = 50.0  # main-camera pixels the star must move for a rotation (~2 s of sidereal drift)
 MIN_SAMPLES = 5
 BRIGHTER_BY = 3.0  # the chosen finder star must outshine every other candidate by this much
-SEARCH_RADIUS_PX = 250  # finder pixels (~2 degrees): "nearly aligned"
+# Binned finder pixels (~60 per degree): the nearest ring with one clear star decides. One wide
+# circle took a brighter star 3.5 degrees out over the right one near the center (2026-10-10).
+SEARCH_RADII_PX = (60, 120, 250)
 DETECT_SIGMA = 8.0
 
 
@@ -84,10 +86,11 @@ def fit_main_in_finder(finder_t, finder_xy, main_t, main_xy) -> MainInFinder | N
     return MainInFinder(a, center, residual)
 
 
-def pick_star(gray: np.ndarray, near: tuple[float, float], radius: float = SEARCH_RADIUS_PX
+def pick_star(gray: np.ndarray, near: tuple[float, float], radii: tuple = SEARCH_RADII_PX
               ) -> tuple[float, float] | None:
-    """The bright star near `near` (finder gray-frame pixels): the brightest within `radius`,
-    if it outshines every other candidate by BRIGHTER_BY; None if none or ambiguous."""
+    """The bright star near `near` (finder gray-frame pixels): within the smallest of `radii`
+    that has candidates, the brightest, if it outshines the others there by BRIGHTER_BY; None if
+    there are none or the nearest ring with any is ambiguous."""
     img = flatten_sky(gray.astype(np.float32))  # cloud glow's gradient would hide the star
     bg = float(np.median(img))
     noise = max(1.4826 * float(np.median(np.abs(img - bg))), 0.5)
@@ -97,9 +100,11 @@ def pick_star(gray: np.ndarray, near: tuple[float, float], radius: float = SEARC
     ids = np.arange(1, n + 1)
     flux = ndimage.sum_labels(img - bg, labels, ids)
     centers = np.array(ndimage.center_of_mass(img - bg, labels, ids))[:, ::-1]  # (x, y)
-    close = np.hypot(*(centers - near).T) <= radius
-    if not close.any():
+    dist = np.hypot(*(centers - near).T)
+    radius = next((r for r in radii if (dist <= r).any()), None)
+    if radius is None:
         return None
+    close = dist <= radius
     order = np.argsort(-flux[close])
     if len(order) > 1 and flux[close][order[0]] < BRIGHTER_BY * flux[close][order[1]]:
         return None

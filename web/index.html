@@ -324,7 +324,9 @@ function choose(options) {
 // --- buttons
 $("capture").onclick = () => { action("capture"); if (!capturing) showView("main"); };
 $("stop").onclick = () => action("stop");
-$("align").onclick = () => action("align");
+$("align").onclick = () => {  // lit while Align watches the star (the status says when it's done)
+  action("align"); $("align").classList.add("on"); setTimeout(pollStatus, 11500);
+};
 $("recenter").onclick = () => { action("recenter"); showView("finder"); };
 $("focus").onclick = () => { const on = document.body.classList.toggle("focusing");
   $("focus").classList.toggle("on", on);
@@ -402,6 +404,7 @@ async function pollStatus() {
   $("status").innerHTML = [item("Tablet link", link, link ? "" : "reconnecting"), item("Finder", s.finder),
     item("Telescope", s.main), item("Encoders", s.encoders), item("Internet", s.internet),
     s.claude ? item("Claude", s.claude === "ok", s.claude === "ok" ? "" : `(${s.claude})`) : ""].filter(Boolean).join("");
+  if (link) $("align").classList.toggle("on", !!s.aligning);
   $("checks").hidden = !s.daytime; $("checksoff").checked = !!s.checks_off;
 }
 $("checksoff").onchange = e => wsSend(JSON.stringify({type: "checks", off: e.target.checked}));

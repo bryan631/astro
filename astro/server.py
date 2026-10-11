@@ -474,7 +474,7 @@ def api_status() -> dict:
     return {**hub.session.connections(), "internet": internet_ok(), "claude": hub.agent.status(),
             "daytime": hub.session.daytime(), "checks_off": hub.session.override,
             "build": web_build(),  # the page reloads itself when this changes
-            "main_box": hub.session.main_box}
+            "main_box": hub.session.main_box, "aligning": hub.session.aligning}
 
 
 @app.get("/api/targets")

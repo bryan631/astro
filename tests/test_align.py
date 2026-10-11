@@ -67,6 +67,14 @@ def test_pick_star_wants_one_clear_winner_near_the_expected_place():
     assert pick_star(ambiguous, near) is None
 
 
+def test_pick_star_prefers_a_clear_star_close_by_over_a_brighter_one_far_out():
+    """2026-10-10: one wide circle took a star 3.5 degrees out, 3x brighter than the right one
+    near the center, three Aligns in a row."""
+    field = star_field([(350, 260, 4000), (480, 120, 15000)])  # ~35 px vs ~200 px out
+    assert pick_star(field, (320, 240)) == pytest.approx((350, 260), abs=0.5)
+    assert pick_star(star_field([(480, 120, 15000)]), (320, 240)) == pytest.approx((480, 120), abs=0.5)
+
+
 def test_pick_star_sees_through_a_cloud_glow_gradient():
     """2026-10-10: cloud glow made the finder's bottom ~2.5x brighter than its top; one sky
     level for the frame put the threshold above the stars."""
