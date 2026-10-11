@@ -167,6 +167,25 @@ def test_recorder_recenters_on_drift(tmp_path, monkeypatch):
     assert frames[-1].max() > 200  # planet still in the last frame after drifting past the ROI
 
 
+def test_recenter_pause_shows_the_field_at_live_settings_and_resume_goes_back(tmp_path, monkeypatch):
+    """2026-10-10: paused at the planet's exposure the field was black, so Recenter looked stuck."""
+    monkeypatch.setattr("astro.capture.recorder.ROI_PX", 128)
+    cam = DriftingPlanet()
+    cam.exposure_s, cam.gain = 0.25, 480  # the live view's
+    recorder = Recorder(cam, (800, 600), tmp_path)
+    rec = recorder.start("Saturn", 2.0)
+    planet = (cam.exposure_s, cam.gain)
+    recorder.pause()
+    time.sleep(0.2)
+    assert cam.roi is None and (cam.exposure_s, cam.gain) == (0.25, 480) and recorder.roi is not None
+    frames = rec.frames
+    recorder.resume()
+    time.sleep(0.2)
+    assert (cam.exposure_s, cam.gain) == planet and cam.roi is not None and rec.frames > frames
+    recorder.stop()
+    rec.done.wait(5)
+
+
 def test_second_capture_is_refused_while_recording(tmp_path):
     s, _ = make_session(tmp_path)
     s.main_focus_ok, s.record_seconds = True, 2
