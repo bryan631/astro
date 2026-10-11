@@ -229,6 +229,7 @@ main camera; the box orange in day mode.
 - Battery remaining: the battery's USB data (HID UPS) or the 12 V line measured by the Nano.
 - Auto solve logs every failed solve (~1 per second): log only when the reason changes.
 - Number the pictures in the gallery (2026-10-11).
+- Names on the main view come through Align's box (finder accuracy, ~1'); use a main plate solve when one is fresh. Check the outlines' sizes and angles on the sky (2026-10-11).
 - Live stack keeps ~1 in 10 frames (~2 s to register each 0.2 s frame): Andromeda got 40 frames, 8 s of light. Register faster (binned, or the shift with occasional rotation) (2026-10-11).
 - Live stack stops when the target drifts out ("lost the stars"): pause instead, and keep adding to the same stack after the user nudges the scope back (2026-10-11).
 - Crop the live stack's edges where few frames overlap (noisy color bands) (2026-10-11).

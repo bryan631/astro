@@ -549,10 +549,10 @@ class Session:
         full[[y, y + 1, y + roi.height - 2, y + roi.height - 1], x:x + roi.width] = 255  # frame
         return full, bayer, age
 
-    def finder_labels(self) -> list[list]:
+    def finder_labels(self, level: int = 2) -> list[list]:
         """Names on the finder view, [[name, kind, x, y], ...] with x, y as fractions from the
         view's center (kind: star, target or planet), from the last plate solve's map and where
-        the finder points now (astro/pointing/labels.py). The map is saved, so names come back
+        the finder points now (astro/pointing/labels.py); level 1 names only the bright stars. The map is saved, so names come back
         after a restart without a new solve; empty until the first solve ever."""
         sol = getattr(self.finder, "last_solution", None)
         frame = self.camera_frame("finder")
@@ -562,11 +562,32 @@ class Session:
         if frame is None:
             return []
         h, w = frame[0].shape
-        found, new_map = self.labels.labels(sol, (w, h), self.finder.position(), self.site,
-                                            self.clock(), time.monotonic(), ROTATE["finder"])
+        where = getattr(self.finder, "label_position", self.finder.position)  # solve-anchored
+        found, new_map = self.labels.labels(sol, (w, h), where(), self.site, self.clock(),
+                                            time.monotonic(), ROTATE["finder"], level)
         if new_map:
             self._save_calibration()
         return found
+
+    def main_labels(self, level: int = 2) -> list[list]:
+        """The finder's names that fall on the main camera, moved onto the main view through
+        Align's box (its corners on the finder view are the main frame's corners), outlines
+        too. Empty before the first Align. As exact as the finder's names and the box."""
+        if not self.main_box:
+            return []
+        box = np.array(self.main_box)  # main frame's top-left, top-right, bottom-right, bottom-left
+        view = np.array([[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]])
+        if ROTATE["main"] == 180:
+            view = -view
+        a, *_ = np.linalg.lstsq(np.c_[box, np.ones(4)], view, rcond=None)  # finder -> main view
+        out = []
+        for name, kind, x, y, *outline in self.finder_labels(level):
+            mx, my = np.array([x, y, 1.0]) @ a
+            if abs(mx) < 0.6 and abs(my) < 0.6:
+                if outline:
+                    outline = [*np.round(np.array(outline[:2]) @ a[:2], 4).tolist(), outline[2]]
+                out.append([name, kind, round(float(mx), 4), round(float(my), 4), *outline])
+        return out
 
     def adjust_camera(self, name: str, zoom: int | None = None) -> None:
         """The page's digital zoom for a camera view (brightness is the page's own)."""

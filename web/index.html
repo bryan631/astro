@@ -51,9 +51,15 @@
   .ctl { position: absolute; right: 6px; bottom: 6px; display: flex; gap: 6px; }
   .ctl button { padding: 4px 10px; font-size: 16px; border-radius: 8px; }
   .names { position: absolute; inset: 0; }  /* star names beside the stars (Names button) */
-  .names span { position: absolute; transform: translate(7px, -50%); font-size: 13px; white-space: nowrap;
+  .names span { position: absolute; transform: translate(10px, -50%); font-size: 13px; white-space: nowrap;
                 opacity: .8; text-shadow: 0 0 3px #000, 0 0 3px #000; }
+  /* a ring on the star itself, so a name in a dense field points at one star (like a map pin) */
+  .names span::before { content: ""; position: absolute; left: -17px; top: calc(50% - 7px); width: 14px; height: 14px;
+                        box-sizing: border-box; border: 1.5px solid currentColor; border-radius: 50%; }
   .names .target, .names .planet { color: var(--hi); font-weight: bold; opacity: 1; }
+  .names span.big { transform: translate(-50%, -50%); }
+  .names span.big::before { display: none; }
+  .names i { position: absolute; box-sizing: border-box; border: 1.5px dashed currentColor; border-radius: 50%; }  /* outline */
   #arrow { position: absolute; font-size: 140px; line-height: 1; opacity: .85; pointer-events: none;
            transition: transform .2s; text-shadow: 0 0 8px #000; }
   #dist { position: absolute; bottom: 40px; font-size: 32px; text-shadow: 0 0 6px #000; }
@@ -108,7 +114,7 @@
     </div>
     <div class="view" id="v-main">
       <img class="cam" alt="telescope camera">
-      <div class="frame"><div id="field" hidden></div></div>
+      <div class="frame"><div class="names"></div><div id="field" hidden></div></div>
       <div class="label">Telescope<span class="swap"> ⇄</span></div><div class="focus"><b></b><small></small><canvas width="160" height="40"></canvas></div>
       <div id="capinfo"></div><img id="inset" hidden alt="live stack">
       <div class="cap"></div>
@@ -196,20 +202,20 @@ async function viewLoop(name) {
   let seq = 0;
   for (;;) {
     try {
-      const labels = name === "finder" && namesOn ? "&labels=1" : "";
+      const labels = namesOn ? `&labels=${namesOn}` : "";
       const r = await fetch(`/api/camera/${name}.jpg?after=${seq}${labels}`, {cache: "no-store"});
       const age = Number(r.headers.get("X-Frame-Age"));
       if (r.status === 200) {
         seq = Number(r.headers.get("X-Seq")) || seq;
         const zc = (r.headers.get("X-Zoom-Center") || "0,0").split(",").map(Number);
-        if (name === "finder" && zc.join() !== v.zc.join()) { v.zc = zc; drawMainBox(); }
+        if (zc.join() !== v.zc.join()) { v.zc = zc; if (name === "finder") drawMainBox(); }
         const url = URL.createObjectURL(await r.blob());
         img.onload = () => { fit(name); URL.revokeObjectURL(url); };
         img.src = url;
         showFocus(name, r.headers.get("X-Focus"), r.headers.get("X-Stars"), r.headers.get("X-Focus-Mode"));
         // only a request made with names on, and only while they still are: a frame already on its
         // way when Names was tapped redrew the old state (names flickered off, on, off)
-        if (labels && namesOn) drawNames(JSON.parse(r.headers.get("X-Labels") || "[]"));
+        if (labels && labels === `&labels=${namesOn}`) drawNames(name, JSON.parse(r.headers.get("X-Labels") || "[]"));
         cap.textContent = age > 3 ? `frame ${age.toFixed(0)} s old` : "";
       } else if (r.status === 204) {
         cap.textContent = `no new frame for ${age.toFixed(0)} s`;
@@ -256,22 +262,33 @@ document.querySelectorAll(".view").forEach(el => {
 });
 
 // Star, planet and target names on the finder view, from the last plate solve and the encoders
-// (Session.finder_labels): [name, kind, x, y], x and y fractions from the view's center.
-let namesOn = false;
+// (Session.finder_labels, main_labels): [name, kind, x, y], x and y fractions from the view's
+// center, and for a target with a size [..., ex, ey, ratio]: its outline's semi-major axis.
+// The Names button steps through off, the bright stars (1) and all named stars (2).
+let namesOn = 0;
 const esc = t => t.replace(/[&<>]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;"})[c]);
-function drawNames(labels) {
-  const z = views.finder.zoom, [cx, cy] = views.finder.zc;
-  views.finder.el.querySelector(".names").innerHTML = labels
-    .map(([n, kind, x, y]) => [n, kind, (x - cx) * z, (y - cy) * z]).filter(([, , x, y]) => Math.abs(x) < .5 && Math.abs(y) < .5)
-    .map(([n, kind, x, y]) => `<span class="${kind}" style="left:${(x + .5) * 100}%;top:${(y + .5) * 100}%">${esc(n)}</span>`).join("");
+function drawNames(name, labels) {
+  const v = views[name], z = v.zoom, [cx, cy] = v.zc, box = v.el.querySelector(".names");
+  const W = box.clientWidth, H = box.clientHeight;
+  box.innerHTML = labels.map(([n, kind, x, y, ex, ey, ratio]) => {
+    x = (x - cx) * z; y = (y - cy) * z;
+    const a = ex === undefined ? 0 : Math.hypot(ex * W, ey * H) * z;  // semi-major, screen px
+    if (Math.abs(x) > (a ? .5 + a / W : .5) || Math.abs(y) > (a ? .5 + a / H : .5)) return "";
+    const at = `left:${(x + .5) * 100}%;top:${(y + .5) * 100}%`;
+    if (a < 12) return `<span class="${kind}" style="${at}">${esc(n)}</span>`;  // small: a ring
+    const t = Math.atan2(ey * H, ex * W), b = a * ratio, below = Math.hypot(a * Math.sin(t), b * Math.cos(t));
+    return `<i class="${kind}" style="${at};width:${2 * a}px;height:${2 * b}px;transform:translate(-50%,-50%) rotate(${t}rad)"></i>` +
+      `<span class="${kind} big" style="${at};margin-top:${below + 9}px">${esc(n)}</span>`;  // name under it
+  }).join("");
 }
-function setNames(on) {  // remembered on this tablet
-  namesOn = on; $("names").classList.toggle("on", on);
-  if (!on) drawNames([]);
-  try { localStorage.setItem("names", on ? "1" : ""); } catch {}
+function setNames(level) {  // remembered on this tablet
+  namesOn = level; $("names").classList.toggle("on", level > 0);
+  $("names").textContent = level === 2 ? "Names+" : "Names";
+  if (!level) { drawNames("finder", []); drawNames("main", []); }
+  try { localStorage.setItem("names", level ? String(level) : ""); } catch {}
 }
-$("names").onclick = () => setNames(!namesOn);
-try { if (localStorage.getItem("names")) setNames(true); } catch {}
+$("names").onclick = () => setNames((namesOn + 1) % 3);
+try { const n = parseInt(localStorage.getItem("names")); if (n === 1 || n === 2) setNames(n); } catch {}
 
 // The main camera's field on the finder view (Align measures it), scaled with the finder's zoom.
 let mainBox = null;

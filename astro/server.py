@@ -492,12 +492,12 @@ _rendered: dict[str, tuple[tuple, bytes, dict]] = {}  # per camera: (frame seq, 
 
 
 @app.get("/api/camera/{name}.jpg")
-async def api_camera(name: str, after: int = 0, labels: bool = False) -> Response:
+async def api_camera(name: str, after: int = 0, labels: int = 0) -> Response:
     """The camera's newest frame as a JPEG. `after`: the frame number the page already shows;
     the request waits (up to FRAME_WAIT_S) for a newer one, so each view is a simple loop of
     requests that never re-downloads a frame. Headers: X-Seq (frame number), X-Frame-Age (s),
     X-Focus (focus number, higher is sharper), X-Stars, X-Focus-Mode (stars or planet), X-Zoom-Center (the zoomed crop's middle, view fractions), and with
-    `labels` (finder) X-Labels: the names on the view (Session.finder_labels)."""
+    `labels` 1 or 2, X-Labels: the names on the view at that level (Session.finder_labels, main_labels)."""
     if name not in ("finder", "main"):
         raise HTTPException(404)
     session = running_hub().session
@@ -526,8 +526,9 @@ async def api_camera(name: str, after: int = 0, labels: bool = False) -> Respons
     _, data, metrics = cached
     cx, cy = metrics["center"]
     headers = {"X-Seq": str(key[0]), "X-Frame-Age": f"{age:.1f}", "X-Zoom-Center": f"{cx:.4f},{cy:.4f}"}
-    if name == "finder" and labels:  # names beside the stars (the page's Names button)
-        headers["X-Labels"] = json.dumps(await asyncio.to_thread(session.finder_labels), separators=(",", ":"))
+    if labels:  # names beside the stars (the page's Names button)
+        found = await asyncio.to_thread(session.finder_labels if name == "finder" else session.main_labels, labels)
+        headers["X-Labels"] = json.dumps(found, separators=(",", ":"))
     if metrics.get("focus") is not None:
         headers |= {"X-Focus": f"{metrics['focus']:.1f}", "X-Stars": str(metrics["stars"]),
                     "X-Focus-Mode": metrics["focus_mode"]}
