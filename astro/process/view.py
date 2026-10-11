@@ -5,7 +5,7 @@ import numpy as np
 from PIL import Image
 from scipy import ndimage
 
-from astro.capture.focus import measure_focus, sky_map
+from astro.capture.focus import MAD_SIGMA, measure_focus, sky_map
 from astro.process.planet import superpixel_rgb
 
 MAX_WIDTH = 960
@@ -14,6 +14,9 @@ MAX_WIDTH = 960
 ROTATE = {"finder": 180, "main": 0}
 DAY_MEDIAN = 50  # 8-bit: without the Sun to go by, a typical pixel this bright is no night sky
 HOT_SIGMA = 4  # this far above all its neighbors (in noise units) is a hot pixel, not a star
+COLOR_SIGMA = 10  # a pixel this far above the sky shows its full color
+MIN_STAR_PX = 20  # fewer clear star pixels than this: no color balance
+SATURATED_RAW = 250
 MIN_RANGE = 40  # 8-bit counts: a dark frame stays dark instead of stretching its noise to full scale
 
 
@@ -46,24 +49,38 @@ def render(raw: np.ndarray, bayer: str, zoom: int = 1, rotate: int = 180,
     metrics = {"focus": focus.score, "stars": focus.stars, "focus_mode": focus.mode}
     if night is None:
         night = lo <= DAY_MEDIAN
-    if night:  # glow and gradients off the brightness; each pixel keeps its own color (taking
-        # the sky off each color separately turned clouds green and the sky purple)
-        flat = lum - sky_map(lum)
-        rgb = flat[..., None] * (rgb / np.maximum(lum, 1.0)[..., None]).clip(0, 3)
-        lo = float(np.percentile(flat[::4, ::4], 50))
+    if night:
+        rgb = _night_stretch(rgb, lum)
     while rgb.shape[1] > 2 * MAX_WIDTH:  # display needs no more than this
         rgb = _bin2(rgb)
-    if not night:  # a room or daylight: show it as it is
-        img = Image.fromarray(rgb.clip(0, 255).astype(np.uint8))
-    else:
-        hi = max(float(np.percentile(rgb, 99.8)), lo + MIN_RANGE)
-        img = Image.fromarray((((rgb - lo) / (hi - lo)).clip(0, 1) ** 0.6 * 255).astype(np.uint8))
+    img = Image.fromarray(rgb.clip(0, 255).astype(np.uint8))  # by day: as it is
     img = img.rotate(rotate)
     width = min(MAX_WIDTH, w // 2)  # zoomed views are scaled up to the same size
     img = img.resize((width, round(img.height * width / img.width)))
     out = io.BytesIO()
     img.save(out, "JPEG", quality=80)
     return out.getvalue(), metrics
+
+
+def _night_stretch(rgb: np.ndarray, lum: np.ndarray) -> np.ndarray:
+    """Glow and gradients off the brightness, stretched on the brightness alone, and each star
+    colored by its own light (above each color's sky level): stretching each color separately
+    clipped every star to white, and the sky's purple cast colored the faint ones (2026-10-10).
+    Taking a sky *map* off each color turned clouds green, so the colors use one level each."""
+    flat = lum - sky_map(lum)
+    lo = float(np.percentile(flat[::4, ::4], 50))
+    noise = MAD_SIGMA * float(np.median(np.abs(flat[::4, ::4] - lo))) + 1e-6
+    hi = max(float(np.percentile(flat, 99.8)), lo + MIN_RANGE)
+    bright = ((flat - lo) / (hi - lo)).clip(0, 1) ** 0.6
+    excess = rgb - np.median(rgb[::4, ::4].reshape(-1, 3), axis=0)
+    sure = ((flat - lo) / (COLOR_SIGMA * noise)).clip(0, 1)[..., None]  # the sky's noise stays gray
+    stars = (sure[..., 0] >= 1) & (rgb.max(axis=2) < SATURATED_RAW)  # clear and not clipped
+    starlight = excess[stars].sum(axis=0)  # the sensors see more green: the average star is
+    if stars.sum() >= MIN_STAR_PX and (starlight > 0).all():  # made white, as in a finished picture
+        excess = excess * (starlight.mean() / starlight)
+    color = (excess / np.maximum(excess.mean(axis=2), 1e-6)[..., None]).clip(0, 3)
+    out = bright[..., None] * (1 + sure * (color - 1))
+    return out / np.maximum(out.max(axis=2), 1)[..., None] * 255  # a bright star keeps its hue
 
 
 def _bin2(rgb: np.ndarray) -> np.ndarray:
