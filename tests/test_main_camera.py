@@ -100,13 +100,15 @@ def test_what_to_capture_uses_the_pointing_when_synced(tmp_path):
     assert s._what_to_capture() == []
 
 
-def test_view_shows_the_whole_field_while_a_planet_records_its_roi(tmp_path):
+def test_view_shows_the_whole_field_and_the_live_roi_as_an_inset_while_recording(tmp_path):
     s, _ = make_session(tmp_path)
     s.recorder.background = np.zeros((1080, 1920), np.uint8)
     s.recorder.roi = Roi(100, 50, 512, 512)
     s.camera_frame = lambda name: (np.full((512, 512), 200, np.uint8), "GRBG", 0.1)
     full, _, _ = s.view_frame("main")
-    assert full.shape == (1080, 1920) and full[50:562, 100:612].min() == 200 and full[0, 0] == 0
+    assert full.shape == (1080, 1920) and full[50:562, 100:612].max() == 0  # the planet's place: as it was
+    inset = full[1080 - 512:, 1920 - 512:]  # the far corner from a planet at the top left
+    assert inset[2:-2, 2:-2].min() == 200 and inset[0].min() == 255  # live, in a white frame
 
 
 def test_barlow_change_requires_refocus(tmp_path):

@@ -496,8 +496,10 @@ class Session:
         return cam.last, cam.bayer, time.monotonic() - cam.last_at
 
     def view_frame(self, name: str):
-        """camera_frame for the page's view: while a planet records only its ROI, that ROI is
-        pasted into the full live view from just before, so the whole field stays on screen."""
+        """camera_frame for the page's view: while a planet records only its ROI, the full live
+        view from just before stays on screen with the live ROI as an inset in the corner away
+        from the planet, so the planet shows twice: pasted over itself, the recording hid where
+        it sat in the field (2026-10-10)."""
         frame = self.camera_frame(name)
         rec = self.recorder if name == "main" else None
         bg, roi = (rec.background, rec.roi) if rec else (None, None)  # once: the recorder clears them
@@ -509,7 +511,11 @@ class Session:
                 or roi.y + roi.height > bh:
             return frame  # paused (whole field), a frame from before the ROI changed, or no fit
         full = bg.copy()
-        full[roi.y:roi.y + roi.height, roi.x:roi.x + roi.width] = raw
+        x = 0 if roi.x + roi.width / 2 > bw / 2 else bw - roi.width  # the far corner (even: Bayer)
+        y = 0 if roi.y + roi.height / 2 > bh / 2 else bh - roi.height
+        full[y:y + roi.height, x:x + roi.width] = raw
+        full[y:y + roi.height, [x, x + 1, x + roi.width - 2, x + roi.width - 1]] = 255  # a white
+        full[[y, y + 1, y + roi.height - 2, y + roi.height - 1], x:x + roi.width] = 255  # frame
         return full, bayer, age
 
     def finder_labels(self) -> list[list]:

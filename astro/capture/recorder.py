@@ -189,17 +189,25 @@ class Recorder:
     def _run(self, rec: Recording, roi: Roi | None, seconds: float) -> None:
         end = time.monotonic() + seconds
         size = (roi.height, roi.width)  # every frame in the file has the ROI's size
+        planet = None  # the planet's (exposure, gain) while paused
         try:
             with SerWriter(rec.path, roi.width, roi.height, bayer=self.camera.bayer) as ser:
                 while time.monotonic() < end and not self._stop.is_set():
-                    if rec.paused.is_set():  # recentering: the whole field on the main view
-                        if roi is not None:
-                            self.camera.set_roi(None)
+                    if rec.paused.is_set():  # recentering: the whole field on the main view, at
+                        if roi is not None:  # the live view's settings (the planet's showed a black
+                            planet = (self.camera.exposure_s, self.camera.gain)  # field, 2026-10-10)
+                            self.camera.set_roi(None)  # keeps self.roi: resume uses its size
+                            self.camera.set_exposure(self._restore[0])
+                            self.camera.set_gain(self._restore[1])
                             roi = None
                             rec.edge.reset()
                         self._stop.wait(PAUSED_WAIT_S)
                         continue
-                    if roi is None:  # resumed: find the planet again and follow it
+                    if roi is None:  # resumed: the planet's settings, find it again and follow it
+                        if planet is not None:
+                            self.camera.set_exposure(planet[0])
+                            self.camera.set_gain(planet[1])
+                            planet = None
                         blob = brightest_blob(self.camera.capture())
                         if blob is None:
                             self._stop.wait(PAUSED_WAIT_S)
