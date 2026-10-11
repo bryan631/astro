@@ -74,16 +74,22 @@ def measure_focus(lum: np.ndarray) -> FocusMeasure:
     """The focus number for a frame (8-bit scale gray, hot pixels already removed)."""
     raw = lum.astype(np.float32)
     img = flatten_sky(raw)
-    bg, noise = _sky(img)
+    smooth = ndimage.gaussian_filter(img, 1.0)
+    # The thresholds use the smoothed frame's own noise: the unsmoothed noise is ~1.6x higher on
+    # the main camera at night and hid half its few stars (2026-10-10).
+    bg, noise = _sky(smooth)
     above = bg + DETECT_SIGMA * noise
-    labels, n = ndimage.label(ndimage.gaussian_filter(img, 1.0) > above)
+    labels, n = ndimage.label(smooth > above)
+    raw_above = bg + DETECT_SIGMA * _sky(img)[1]  # a star's own pixels: a hot pixel stays 1 px
     if n == 0:
         return FocusMeasure(None, 0, None, "none")
     ids = np.arange(1, n + 1)
     on = labels > 0  # the per-star sums below look only at star pixels (a full frame is slow)
     lab = labels[on]
-    areas = ndimage.sum_labels(img[on] > above, lab, ids)  # unsmoothed: a hot pixel stays 1 px
-    peaks = ndimage.maximum(img[on], lab, ids)
+    areas = ndimage.sum_labels(img[on] > raw_above, lab, ids)
+    # Smoothed peaks: a noise spike on a faint star's top moved where its profile is cut, and
+    # with the main camera's ~8 stars the number jumped 66-83 on a still scope (2026-10-10).
+    peaks = ndimage.maximum(smooth[on], lab, ids)
     clipped = ndimage.maximum(raw[on], lab, ids) >= SATURATED
     usable = ids[(areas >= MIN_AREA_PX) & (areas <= MAX_AREA_PX) & ~clipped
                  & (peaks > bg + MEASURE_SIGMA * noise)]

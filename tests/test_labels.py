@@ -20,10 +20,11 @@ def solved():
     return frame, FinderSolver().solve(frame, binned=2)
 
 
-def test_star_list_is_bright_first_with_names_and_designations():
+def test_star_list_is_bright_first_with_names_and_greek_letters():
     names, ra, dec = load_stars()
-    assert names[:2] == ["Sirius", "Canopus"] and len(names) > 3000
-    assert {"Vega", "Albireo", "ζ Cyg", "72 Psc"} <= set(names)
+    assert names[:2] == ["Sirius", "Canopus"] and len(names) > 1500
+    assert {"Vega", "Albireo", "ζ Cyg"} <= set(names)
+    assert not any(n[0].isdigit() for n in names)  # no "72 Psc": numbers say nothing on the view
     assert ((ra >= 0) & (ra < 360)).all() and (abs(dec) <= 90).all()
 
 
@@ -61,7 +62,7 @@ def test_names_land_on_the_stars_in_a_real_finder_frame(solved, altitude):
     _, ra, dec = load_stars()
     x, y, on = place(*altaz_now(ra, dec, site, t), center, tube_map(sol, w, site, t), (w, h))
     d = misses(detected_stars(frame), x[on], y[on])
-    assert len(d) >= 5 and max(d) < 6  # finder pixels (~1.5 arcmin)
+    assert len(d) >= 2 and max(d) < 6  # finder pixels (~1.5 arcmin); two named stars in this field
 
 
 def test_session_names_sit_on_the_stars_and_come_back_after_a_restart(solved, tmp_path):
@@ -87,6 +88,6 @@ def test_session_names_sit_on_the_stars_and_come_back_after_a_restart(solved, tm
     x = [(sign * fx + 0.5) * w for *_, fx, _ in stars]
     y = [(sign * fy + 0.5) * h for *_, fy in stars]
     d = misses(detected_stars(frame), x, y)
-    assert len(d) >= 5 and max(d) < 6
+    assert len(d) >= 2 and max(d) < 6
     assert saved[-1]["finder_map"] is not None
     assert session(None, saved[-1]).finder_labels() == labels

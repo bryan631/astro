@@ -17,7 +17,9 @@ import logging
 import math
 import os
 import socket
+import statistics
 import time
+from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 
@@ -52,6 +54,8 @@ SIM = os.environ.get("ASTRO_SIM") == "1"
 OFFLINE = os.environ.get("ASTRO_OFFLINE") == "1"  # no forecast fetches (tests, field hotspot)
 TICK_S = 0.1
 FRAME_WAIT_S = 3.0  # a view's request waits this long for a frame newer than the one it has
+FOCUS_FRAMES = 5  # the focus number is the median of this many frames: seeing and the main
+# camera's few stars make one frame's number jump
 THINKING_AFTER_S = 1.0  # say "Let me think." if an answer takes longer than this
 SORRY = "Sorry, something went wrong. Please try that again."
 
@@ -515,6 +519,7 @@ async def api_camera(name: str, after: int = 0, labels: bool = False) -> Respons
     if cached is None or cached[0] != key:
         data, metrics = await asyncio.to_thread(render, raw, bayer, session.zoom[name], ROTATE[name],
                                              session.dark())
+        metrics = _steady_focus(name, metrics)
         cached = _rendered[name] = (key, data, metrics)
     _, data, metrics = cached
     headers = {"X-Seq": str(key[0]), "X-Frame-Age": f"{age:.1f}"}
@@ -537,6 +542,22 @@ def api_camera_raw(name: str) -> Response:
     np.save(out, frame[0])
     return Response(out.getvalue(), media_type="application/octet-stream",
                     headers={"X-Bayer": frame[1]})
+
+
+_recent_focus: dict[str, deque] = {}  # per camera: (mode, focus) of its last FOCUS_FRAMES frames
+
+
+def _steady_focus(name: str, metrics: dict) -> dict:
+    """The metrics with the focus number as the median of the recent frames in the same mode
+    (stars or planet); a frame with nothing to judge keeps showing the recent number."""
+    recent = _recent_focus.setdefault(name, deque(maxlen=FOCUS_FRAMES))
+    if metrics.get("focus") is not None:
+        recent.append((metrics["focus_mode"], metrics["focus"]))
+    if not recent:
+        return metrics
+    mode = recent[-1][0]
+    return metrics | {"focus": statistics.median(f for m, f in recent if m == mode), "focus_mode": mode,
+                      "stars": metrics["stars"]}
 
 
 def _seq(cam) -> int:
