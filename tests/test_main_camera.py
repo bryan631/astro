@@ -278,7 +278,7 @@ def test_recording_becomes_a_gallery_picture(tmp_path):
     s.recorder.current.done.wait(5)
     assert "making your picture" in texts(s.tick(100.0))[0]
     out = []
-    for i in range(100):
+    for i in range(600):  # the stacker takes ~10 s on the simulator's whole-frame crop
         out = s.tick(101.0 + i)
         if out:
             break
@@ -297,7 +297,7 @@ def test_picture_keeps_capture_time_name_and_every_job_is_announced(tmp_path):
         s.target = "Mars"  # user moved on before the recording finished
         s.recorder.current.done.wait(5)
         said += texts(s.tick(0.0))
-    for _ in range(200):
+    for _ in range(1200):  # two pictures, ~10 s each on the simulator
         said += texts(s.tick(1.0))
         if sum("is ready" in x for x in said) == 2:
             break

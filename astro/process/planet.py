@@ -40,6 +40,7 @@ QUALITY_SIGMA = 1.5  # smoothing (raw px) before scoring sharpness: seeing detai
 # Wavelet sharpening on the 2x output: per-layer gains (finest first) and noise thresholds
 # in units of each layer's noise. Layer 1 is mostly noise at 2x; layers 2-4 hold the bands,
 # ring edges and shadows (tuned by eye on the 2026-10-10 Saturn videos).
+B3_KERNEL = np.array([1, 4, 6, 4, 1], np.float32) / 16
 WAVELET_GAINS = (1.0, 4.0, 3.0, 1.5)
 WAVELET_NOISE = (3.0, 2.0, 1.0, 0.0)
 
@@ -338,18 +339,24 @@ def white_balance(img: np.ndarray) -> np.ndarray:
 def wavelet_sharpen(img: np.ndarray) -> np.ndarray:
     """A trous (B3 spline) wavelet sharpening, like Registax: boost the layers that carry
     detail, soft-thresholding each by its noise so the boost doesn't amplify grain."""
-    kernel = np.array([1, 4, 6, 4, 1], np.float32) / 16
     smooth, out = img, np.zeros_like(img)
     for level, (gain, k) in enumerate(zip(WAVELET_GAINS, WAVELET_NOISE, strict=True)):
-        holes = np.zeros(4 * 2**level + 1, np.float32)
-        holes[::2**level] = kernel  # the kernel dilated for this level
-        coarser = ndimage.convolve1d(ndimage.convolve1d(smooth, holes, axis=0, mode="reflect"),
-                                     holes, axis=1, mode="reflect")
+        coarser = _atrous(_atrous(smooth, 2**level, 0), 2**level, 1)
         layer = smooth - coarser
         noise = 1.4826 * np.median(np.abs(layer), axis=(0, 1))  # robust, per channel
         out += gain * np.sign(layer) * np.maximum(np.abs(layer) - k * noise, 0)
         smooth = coarser
     return out + smooth
+
+
+def _atrous(a: np.ndarray, step: int, axis: int) -> np.ndarray:
+    """The B3 spline kernel with `step - 1` holes between its taps, along one axis: only the 5
+    taps are added (convolving the dilated kernel, mostly zeros, took 37 s on a big crop)."""
+    pad = min(2 * step, a.shape[axis] - 1)
+    p = np.pad(a, [(pad, pad) if ax == axis else (0, 0) for ax in range(a.ndim)], mode="symmetric")
+    n = a.shape[axis]
+    return sum(w * np.take(p, np.clip(np.arange(n) + pad + (i - 2) * step, 0, n + 2 * pad - 1), axis=axis)
+               for i, w in enumerate(B3_KERNEL))
 
 
 def finish(img: np.ndarray, clipped: np.ndarray) -> np.ndarray:
