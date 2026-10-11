@@ -84,7 +84,9 @@
   #targets button.down { opacity: .5; }
   #targets small { display: block; font-size: 15px; opacity: .8; }
   #pictures { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
-  #pictures button { padding: 0; border: 0; } #pictures img { width: 100%; border-radius: 8px; }
+  #pictures button { padding: 0; border: 0; position: relative; } #pictures img { width: 100%; border-radius: 8px; }
+  #pictures button span { position: absolute; left: 6px; top: 6px; padding: 1px 7px; border-radius: 6px; font-size: 14px;
+                          background: rgba(0, 0, 0, .65); color: #fff; }  /* the picture's number */
   #viewer { display: flex; flex-direction: column; }
   #viewer .pic { flex: 1; overflow: hidden; display: flex; align-items: center; justify-content: center; }
   #viewer img { max-width: 100%; max-height: 100%; transform-origin: center; }
@@ -135,7 +137,7 @@
   <div class="sheet" id="s-pics" hidden><div class="top"><b>Pictures</b><button data-close>Close</button></div><div id="pictures"></div></div>
   <div class="sheet" id="viewer" hidden><div class="top"><span>
       <button data-vb="-">−</button> <button data-vb="+">+</button> <button data-vz="1">1x</button> <button data-vz="2">2x</button> <button data-vz="4">4x</button></span>
-      <button data-close>Close</button></div><div class="pic"><img alt="picture"></div></div>
+      <b id="piccap"></b><button data-close>Close</button></div><div class="pic"><img alt="picture"></div></div>
   <div class="sheet" id="s-choose" hidden><div class="top"><b>Capture which one?</b><button data-close>Close</button></div><div id="choices"></div></div>
   <div class="sheet" id="s-log" hidden><div class="top"><b>Messages</b><button data-close>Close</button></div><div id="log"></div></div>
   <div class="sheet" id="s-more" hidden><div class="top"><b>More</b><button data-close>Close</button></div>
@@ -266,7 +268,7 @@ document.querySelectorAll(".view").forEach(el => {
 // center, and for a target with a size [..., ex, ey, ratio]: its outline's semi-major axis.
 // The Names button steps through off, the bright stars (1) and all named stars (2).
 let namesOn = 0;
-const esc = t => t.replace(/[&<>]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;"})[c]);
+const esc = t => t.replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"})[c]);
 function drawNames(name, labels) {
   const v = views[name], z = v.zoom, [cx, cy] = v.zc, box = v.el.querySelector(".names");
   const W = box.clientWidth, H = box.clientHeight;
@@ -404,15 +406,26 @@ try { if (localStorage.getItem("day")) setDay(true); } catch {}
 // --- pictures: a grid; tapping one opens it in the viewer (a new window crashed the installed app).
 const demo = new URLSearchParams(location.search).get("demo");
 const DEMO_PICTURES = ["m42", "m31", "m45", "jupiter", "saturn", "moon"].map(n => `/demo/${n}.jpg`);
+// Numbered oldest first, so a picture keeps its number as new ones arrive ("picture 3").
+function caption(url, n) {  // "#3 Andromeda Galaxy, Oct 11 3:22 AM" from 20261011_032227_..._Andromeda_Galaxy_v2.png
+  const m = url.split("/").pop().match(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})_\d+_(.+?)(_v\d+)?\.\w+$/);
+  if (!m) return `#${n}`;
+  const when = new Date(Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]));
+  const at = when.toLocaleString([], {month: "short", day: "numeric", hour: "numeric", minute: "2-digit"});
+  return `#${n} ${m[7].replace(/_/g, " ")}, ${at}`;
+}
 async function showPictures() {
   const urls = demo ? DEMO_PICTURES : (await (await fetch("/gallery")).json()).map(f => `/pictures/${f}`);
-  $("pictures").innerHTML = urls.length ? urls.map(u => `<button><img src="${u}" alt="${u}"></button>`).join("") : "No pictures yet.";
+  $("pictures").innerHTML = urls.length ? urls.map((u, i) =>
+    `<button data-cap="${esc(caption(u, urls.length - i))}"><span>${urls.length - i}</span><img src="${u}" alt="${u}"></button>`).join("") : "No pictures yet.";
 }
 $("pics").onclick = () => { open("s-pics"); showPictures(); };
 let viewerB = 1;
-$("pictures").onclick = e => { const img = e.target.closest("button")?.querySelector("img"); if (img) openViewer(img.src); };
+$("pictures").onclick = e => { const b = e.target.closest("button"); if (b?.querySelector("img")) openViewer(b.querySelector("img").src, b.dataset.cap); };
 inset.onclick = () => openViewer(inset.src);
-function openViewer(src) { const img = $("viewer").querySelector("img"); img.src = src; img.style.transform = ""; open("viewer"); }
+function openViewer(src, cap = "") {
+  const img = $("viewer").querySelector("img"); img.src = src; img.style.transform = ""; $("piccap").textContent = cap; open("viewer");
+}
 document.querySelectorAll("[data-vb]").forEach(b => b.onclick = () => {
   viewerB = Math.min(4, Math.max(0.25, viewerB * (b.dataset.vb === "+" ? 1.4 : 1 / 1.4)));
   $("viewer").querySelector("img").style.setProperty("--b", (document.body.classList.contains("day") ? 1 : .6) * viewerB);
