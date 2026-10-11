@@ -221,6 +221,7 @@ main camera; the box orange in day mode.
 - Check the encoders on the sky: counts follow the scope, and the model holds after a restart.
 - Buttons for the setup wizard, horizon walk and collimation (still worded for voice).
 - Recordings for test data: a focus sweep and a wiggle.
+- Capture with nothing recognized and no stars in the telescope view: ask what to capture ("Just this frame" saves the frame as a picture, or stack anyway) instead of stacking "the field" blindly (2026-10-10).
 - Finder zoom: center the zoomed finder view on the main camera's box, not the frame center (2026-10-10).
 - Names button: turning names on or off flickers twice, as if tapped extra times (2026-10-10).
 - From the 2026-10-10 night (raw frames in data/night-20261010/): check the night colors and
