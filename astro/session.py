@@ -145,6 +145,7 @@ class Session:
         self.record_seconds = RECORD_SECONDS
         self.recorder = (Recorder(main_camera, main_sensor, data_dir / "captures") if main_camera else None)
         self._announced_done = True
+        self.data_dir = data_dir
         self.gallery_dir = data_dir / "gallery"
         self.stack_seconds = STACK_SECONDS
         self.stacker = (LiveStacker(main_camera, self.gallery_dir,
@@ -860,6 +861,9 @@ class Session:
             return []
         self._align = None
         fit = run.result()
+        stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+        threading.Thread(target=self._save_align, args=(run, self.data_dir / "align" / f"{stamp}.npz"),
+                         daemon=True).start()
         if isinstance(fit, str):
             return [say(fit)]
         w, h = run.finder_size
@@ -876,6 +880,13 @@ class Session:
         return [say(f"Aligned. The telescope points {np.hypot(east, north) * 60:.0f} arcminutes "
                     f"from the finder's center, turned {fit.rotation_deg:.0f} degrees. Its box is "
                     "on the finder view.")]
+
+    @staticmethod
+    def _save_align(run: AlignRun, path: Path) -> None:
+        try:
+            run.save(path)
+        except (OSError, ValueError):
+            log.exception("align: frames not saved")
 
     def _guide_to(self, alt: float, az: float) -> Guide:
         return Guide(*self._aim(alt, az), tolerance_arcmin=self._tolerance_arcmin(),

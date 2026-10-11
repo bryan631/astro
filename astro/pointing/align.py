@@ -17,6 +17,7 @@ import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 from scipy import ndimage
@@ -38,6 +39,7 @@ BRIGHTER_BY = 3.0  # the chosen finder star must outshine every other candidate 
 # circle took a brighter star 3.5 degrees out over the right one near the center (2026-10-10).
 SEARCH_RADII_PX = (60, 120, 250)
 DETECT_SIGMA = 8.0
+KEEP_RUNS = 20  # saved Align runs (~20 MB each)
 
 
 @dataclass(frozen=True)
@@ -160,12 +162,17 @@ class AlignRun:
         self.main_size: tuple[int, int] | None = None
         self.seen: dict[str, int | None] = {"finder": None, "main": None}  # newest frame used
         self.no_star = 0  # finder frames without one clear star near `near`
+        self.frames: dict[str, list] = {"finder": [], "main": []}  # (t, frame), for save()
 
     def add(self, name: str, got: tuple[np.ndarray, int, float] | None) -> None:
         """A camera's newest (frame, frame number, mid-exposure time), once per frame."""
         if got is None or got[1] == self.seen[name]:
             return
         frame, self.seen[name], t_mid = got
+        kept = self.frames[name]
+        if name == "main" and len(kept) > 1:  # main frames are 8 MB: the first and the latest
+            kept.pop()
+        kept.append((t_mid, frame.copy()))
         if name == "finder":
             star = pick_star(finder_gray(frame), tuple(self.near / 2))  # binned 2x2
             if star is None:
@@ -176,6 +183,16 @@ class AlignRun:
             h, w = frame.shape
             self.main_size = (w, h)
             self.main.append((t_mid, blob[0] - w / 2, blob[1] - h / 2))
+
+    def save(self, path: Path) -> None:
+        """The run's frames and tracks, to look at a failed Align later (np.load)."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        f, m = self.frames["finder"], self.frames["main"]
+        np.savez(path, finder=np.array([fr for _, fr in f]), finder_t=[t for t, _ in f],
+                 main=np.array([fr for _, fr in m]), main_t=[t for t, _ in m], near=self.near,
+                 finder_track=np.array(self.finder).reshape(-1, 3), main_track=np.array(self.main).reshape(-1, 3))
+        for old in sorted(path.parent.glob("*.npz"))[:-KEEP_RUNS]:
+            old.unlink(missing_ok=True)
 
     def result(self) -> MainInFinder | str:
         """The fit, or what went wrong, said to the user (the old box stays)."""

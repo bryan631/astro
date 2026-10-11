@@ -10,6 +10,7 @@ from scipy import ndimage
 from astro.devices.stream import ThreadStream
 from astro.pointing import align
 from astro.pointing.align import (
+    AlignRun,
     box_on_finder_view,
     finder_offset_to_sky,
     fit_main_in_finder,
@@ -245,3 +246,13 @@ def test_align_failures_keep_the_old_box(monkeypatch, tmp_path, main_cls, scale,
     assert said and said[0].startswith(expected), said
     assert s.main_box == old_box and s.main_in_finder is None and s._align is None
     finder_cam.close(), main_cam.close()
+
+
+def test_align_run_saves_its_frames_and_tracks(tmp_path):
+    run = AlignRun(np.array([640.0, 480.0]), (1280, 960), None)
+    for i in range(4):
+        run.add("finder", (np.zeros((96, 128), np.uint8), i, float(i)))
+        run.add("main", (np.full((40, 60), i, np.uint8), i, float(i)))
+    run.save(tmp_path / "a.npz")
+    got = np.load(tmp_path / "a.npz")
+    assert got["finder"].shape == (4, 96, 128) and got["main"][:, 0, 0].tolist() == [0, 3]
