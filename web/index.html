@@ -183,7 +183,9 @@ function handle(m) {
 
 // --- camera views: always live. Each view asks for a frame newer than the one it shows; the
 // server waits for it, so nothing stays open and nothing is downloaded twice.
-const views = {finder: {el: $("v-finder"), b: 1, zoom: 1, focus: []}, main: {el: $("v-main"), b: 1, zoom: 1, focus: []}};
+// zc: the middle of the zoomed crop (view fractions; the finder zooms in on the main camera's box)
+const views = {finder: {el: $("v-finder"), b: 1, zoom: 1, zc: [0, 0], focus: []},
+               main: {el: $("v-main"), b: 1, zoom: 1, zc: [0, 0], focus: []}};
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function viewLoop(name) {
   const v = views[name], img = v.el.querySelector("img.cam"), cap = v.el.querySelector(".cap");
@@ -195,11 +197,15 @@ async function viewLoop(name) {
       const age = Number(r.headers.get("X-Frame-Age"));
       if (r.status === 200) {
         seq = Number(r.headers.get("X-Seq")) || seq;
+        const zc = (r.headers.get("X-Zoom-Center") || "0,0").split(",").map(Number);
+        if (name === "finder" && zc.join() !== v.zc.join()) { v.zc = zc; drawMainBox(); }
         const url = URL.createObjectURL(await r.blob());
         img.onload = () => { fit(name); URL.revokeObjectURL(url); };
         img.src = url;
         showFocus(name, r.headers.get("X-Focus"), r.headers.get("X-Stars"), r.headers.get("X-Focus-Mode"));
-        if (name === "finder") drawNames(JSON.parse(r.headers.get("X-Labels") || "[]"));
+        // only a request made with names on, and only while they still are: a frame already on its
+        // way when Names was tapped redrew the old state (names flickered off, on, off)
+        if (labels && namesOn) drawNames(JSON.parse(r.headers.get("X-Labels") || "[]"));
         cap.textContent = age > 3 ? `frame ${age.toFixed(0)} s old` : "";
       } else if (r.status === 204) {
         cap.textContent = `no new frame for ${age.toFixed(0)} s`;
@@ -250,9 +256,9 @@ document.querySelectorAll(".view").forEach(el => {
 let namesOn = false;
 const esc = t => t.replace(/[&<>]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;"})[c]);
 function drawNames(labels) {
-  const z = views.finder.zoom;
+  const z = views.finder.zoom, [cx, cy] = views.finder.zc;
   views.finder.el.querySelector(".names").innerHTML = labels
-    .map(([n, kind, x, y]) => [n, kind, x * z, y * z]).filter(([, , x, y]) => Math.abs(x) < .5 && Math.abs(y) < .5)
+    .map(([n, kind, x, y]) => [n, kind, (x - cx) * z, (y - cy) * z]).filter(([, , x, y]) => Math.abs(x) < .5 && Math.abs(y) < .5)
     .map(([n, kind, x, y]) => `<span class="${kind}" style="left:${(x + .5) * 100}%;top:${(y + .5) * 100}%">${esc(n)}</span>`).join("");
 }
 function setNames(on) {  // remembered on this tablet
@@ -266,8 +272,8 @@ try { if (localStorage.getItem("names")) setNames(true); } catch {}
 // The main camera's field on the finder view (Align measures it), scaled with the finder's zoom.
 let mainBox = null;
 function drawMainBox() {
-  const poly = $("mainbox"), z = views.finder.zoom;
-  poly.setAttribute("points", mainBox ? mainBox.map(([x, y]) => `${x * z},${y * z}`).join(" ") : "");
+  const poly = $("mainbox"), z = views.finder.zoom, [cx, cy] = views.finder.zc;
+  poly.setAttribute("points", mainBox ? mainBox.map(([x, y]) => `${(x - cx) * z},${(y - cy) * z}`).join(" ") : "");
 }
 
 // --- pointing: the arrow on the finder view says which way to push; distance below it.

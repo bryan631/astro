@@ -31,22 +31,27 @@ def remove_hot_pixels(rgb: np.ndarray) -> np.ndarray:
 
 
 def render(raw: np.ndarray, bayer: str, zoom: int = 1, rotate: int = 180,
-           night: bool | None = None) -> tuple[bytes, dict]:
+           night: bool | None = None, center: tuple[float, float] = (0.0, 0.0)) -> tuple[bytes, dict]:
     """A raw frame as a JPEG for a camera view, and its numbers: focus (higher is sharper, see
     astro/capture/focus.py measure_focus), stars measured, focus_mode (stars, planet, none).
 
     Turned by `rotate` degrees (ROTATE: each camera as mounted) so the page shows it upright;
-    `zoom` crops the center. At `night` (None: guess from the brightness) the sky's glow is
+    `zoom` crops around `center` (view fractions from the middle, e.g. the main camera's box on
+    the finder), kept inside the frame; metrics["center"] is where the crop really is. At `night` (None: guess from the brightness) the sky's glow is
     taken off and the stars stretched; by day the view is as it is. Big frames are
     binned before the display work (the main camera's full frame cost ~0.4 s per frame)."""
     h, w = raw.shape[0] // 2 * 2, raw.shape[1] // 2 * 2
     ch, cw = h // zoom // 2 * 2, w // zoom // 2 * 2
-    y, x = (h - ch) // 4 * 2, (w - cw) // 4 * 2  # even offsets keep the Bayer pattern
+    sx, sy = (-c for c in center) if rotate == 180 else center  # view -> sensor fractions
+    x = int(np.clip(w / 2 + sx * w - cw / 2, 0, w - cw)) // 2 * 2  # even offsets keep the Bayer
+    y = int(np.clip(h / 2 + sy * h - ch / 2, 0, h - ch)) // 2 * 2  # pattern
+    used = ((x + cw / 2) / w - 0.5, (y + ch / 2) / h - 0.5)
     rgb = remove_hot_pixels(superpixel_rgb(raw[y:y + ch, x:x + cw], bayer).astype(np.float32))
     lum = rgb.mean(axis=2)
     lo = float(np.percentile(lum, 50))  # the sky background is the typical pixel
     focus = measure_focus(lum)  # also through bright cloud glow (it measures from the sky level)
-    metrics = {"focus": focus.score, "stars": focus.stars, "focus_mode": focus.mode}
+    metrics = {"focus": focus.score, "stars": focus.stars, "focus_mode": focus.mode,
+               "center": tuple(-c for c in used) if rotate == 180 else used}
     if night is None:
         night = lo <= DAY_MEDIAN
     if night:

@@ -496,7 +496,7 @@ async def api_camera(name: str, after: int = 0, labels: bool = False) -> Respons
     """The camera's newest frame as a JPEG. `after`: the frame number the page already shows;
     the request waits (up to FRAME_WAIT_S) for a newer one, so each view is a simple loop of
     requests that never re-downloads a frame. Headers: X-Seq (frame number), X-Frame-Age (s),
-    X-Focus (focus number, higher is sharper), X-Stars, X-Focus-Mode (stars or planet), and with
+    X-Focus (focus number, higher is sharper), X-Stars, X-Focus-Mode (stars or planet), X-Zoom-Center (the zoomed crop's middle, view fractions), and with
     `labels` (finder) X-Labels: the names on the view (Session.finder_labels)."""
     if name not in ("finder", "main"):
         raise HTTPException(404)
@@ -514,15 +514,18 @@ async def api_camera(name: str, after: int = 0, labels: bool = False) -> Respons
     raw, bayer, age = frame
     if _seq(cam) <= after:  # nothing newer: the page keeps its picture and shows the age
         return Response(status_code=204, headers={"X-Seq": str(after), "X-Frame-Age": f"{age:.1f}"})
-    key = (_seq(cam), session.zoom[name])
+    box = session.main_box if name == "finder" and session.zoom[name] > 1 else None
+    center = tuple(np.mean(box, axis=0)) if box else (0.0, 0.0)  # finder zoom: on the main camera's field
+    key = (_seq(cam), session.zoom[name], center)
     cached = _rendered.get(name)
     if cached is None or cached[0] != key:
         data, metrics = await asyncio.to_thread(render, raw, bayer, session.zoom[name], ROTATE[name],
-                                             session.dark())
+                                             session.dark(), center)
         metrics = _steady_focus(name, metrics)
         cached = _rendered[name] = (key, data, metrics)
     _, data, metrics = cached
-    headers = {"X-Seq": str(key[0]), "X-Frame-Age": f"{age:.1f}"}
+    cx, cy = metrics["center"]
+    headers = {"X-Seq": str(key[0]), "X-Frame-Age": f"{age:.1f}", "X-Zoom-Center": f"{cx:.4f},{cy:.4f}"}
     if name == "finder" and labels:  # names beside the stars (the page's Names button)
         headers["X-Labels"] = json.dumps(await asyncio.to_thread(session.finder_labels), separators=(",", ":"))
     if metrics.get("focus") is not None:
