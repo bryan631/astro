@@ -292,7 +292,7 @@ def test_recording_becomes_a_gallery_picture(tmp_path):
     s.recorder.current.done.wait(5)
     assert "making your picture" in texts(s.tick(100.0))[0]
     out = []
-    for i in range(600):  # the stacker takes ~10 s on the simulator's whole-frame crop
+    for i in range(600):  # the stacker takes ~1 s
         out = s.tick(101.0 + i)
         if out:
             break

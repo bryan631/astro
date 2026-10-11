@@ -226,7 +226,9 @@ def test_camera_views_are_always_live_and_never_resend_a_frame():
         assert seq > 0 and "x-frame-age" in r.headers
         again = client.get(f"/api/camera/finder.jpg?after={seq}")  # the next frame, or 204
         assert again.status_code in (200, 204) and int(again.headers["x-seq"]) >= seq
-        assert client.get("/api/camera/main.jpg").headers.get("x-focus") is not None  # night sim sky
+        main = client.get("/api/camera/main.jpg")
+        if not server.get_hub().session.daytime():  # by day the main view is at 4 ms: no stars
+            assert main.headers.get("x-focus") is not None
         assert client.get("/api/camera/other.jpg").status_code == 404
         info = client.get("/api/debug").json()
         assert {"time", "site", "pointing", "finder_camera", "guidance", "system"} <= info.keys()
