@@ -36,14 +36,13 @@ from astro.planner.horizon import HorizonMask
 from astro.planner.sky import MOON_FEATURES, Sky, by_category_text, tonight_text
 from astro.planner.tonight import PLANETS
 from astro.pointing.align import (
-    ALIGN_S,
+    MAX_SOLVES,
     SOLVE_WAIT_S,
     AlignRun,
     MainInFinder,
     box_on_finder_view,
     finder_offset_to_sky,
     radec_offset_to_altaz,
-    sky_offset_to_altaz,
 )
 from astro.pointing.coords import Site, altaz_to_radec, body_altaz, radec_to_altaz
 from astro.pointing.finder_sync import FinderSync
@@ -864,10 +863,7 @@ class Session:
             sol = self.finder.last_solution
             threading.Thread(target=field_catalog, args=(sol.ra_deg, sol.dec_deg, self.data_dir / "gaia"),
                              daemon=True).start()
-        box_only = "" if solved else (" The finder can't plate-solve right now (clouds?), so this "
-                                      "moves the box only; Go to keeps its old aim.")
-        return [say(f"Aligning: keep the bright star in the telescope view and don't touch the scope "
-                    f"for {ALIGN_S:.0f} seconds.{box_only}")]
+        return [say("Aligning from the stars in both cameras. Don't touch the scope for a few seconds.")]
 
     def _align_step(self) -> list[dict]:
         run = self._align
@@ -875,10 +871,10 @@ class Session:
             run.add(name, frame_with_time(self.camera(name)))
         if (solver := getattr(self.finder, "solver", None)) is not None:
             run.start_solve(solver, self.data_dir / "gaia")
-        solving = run.solving is not None and run.solving.is_alive()
-        if run.solved is None and (time.monotonic() < run.until
-                                   or solving and time.monotonic() < run.until + SOLVE_WAIT_S):
-            return []  # a plate solve beats the drift: wait for one still running (a download)
+        solving, now = run.solving is not None and run.solving.is_alive(), time.monotonic()
+        if run.solved is None and (solving and now < run.until + SOLVE_WAIT_S  # e.g. a download
+                                   or not solving and run.attempts < MAX_SOLVES and now < run.until):
+            return []
         self._align = None
         stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         threading.Thread(target=self._save_align, args=(run, self.data_dir / "align" / f"{stamp}.npz"),
@@ -894,27 +890,9 @@ class Session:
             return [say(f"Aligned from the stars in both cameras. The telescope points "
                         f"{np.hypot(east, north) * 60:.0f} arcminutes from the finder's center, turned "
                         f"{fit.rotation_deg:.0f} degrees. Its box is on the finder view.")]
-        if self.main_solved:  # the drift picked wrong stars 4 times in a row and replaced good
-            # plate-solved alignments (2026-10-10): only a new plate solve replaces one
-            return [say("I couldn't plate-solve the telescope view this time, so I kept the "
-                        "alignment from the stars. Put a few stars in the telescope view and tap "
-                        "Align again.")]
-        fit = run.result()
-        if isinstance(fit, str):
-            return [say(fit)]
-        self.main_box = box_on_finder_view(fit, run.main_size, (w, h), ROTATE["finder"])
-        self.main_in_finder = fit
-        if run.sol is None:  # no solve: the box from the drift alone, Go to's aim unchanged
-            self._save_calibration()
-            return [say(f"Box moved: the telescope's view is on the finder view, turned "
-                        f"{fit.rotation_deg:.0f} degrees. Go to keeps its old aim until an Align "
-                        "with the finder seeing clear sky.")]
-        east, north = finder_offset_to_sky(fit.center[0] - w / 2, fit.center[1] - h / 2, run.sol, w)
-        self.centerer.offset = sky_offset_to_altaz(run.sol, east, north, self.site, self.clock())
-        self._save_calibration()
-        return [say(f"Aligned. The telescope points {np.hypot(east, north) * 60:.0f} arcminutes "
-                    f"from the finder's center, turned {fit.rotation_deg:.0f} degrees. Its box is "
-                    "on the finder view.")]
+        # Plate solves only: the drift fit needed the same star in both cameras and picked wrong
+        # ones that replaced good alignments, five times on 2026-10-10.
+        return [say(run.why)]
 
     @staticmethod
     def _save_align(run: AlignRun, path: Path) -> None:

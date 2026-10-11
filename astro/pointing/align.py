@@ -197,6 +197,8 @@ class AlignRun:
         self.frames: dict[str, list] = {"finder": [], "main": []}  # (t, frame), for save()
         self.solving: threading.Thread | None = None
         self.attempts, self._solved_upto = 0, 0.0  # plate solves tried; the newest main frame tried
+        self.why = ("I couldn't get a picture from both cameras at once, so I kept the alignment. "
+                    "Tap Align again.")  # said when no plate solve worked (the last attempt's reason)
         self.solved: tuple[MainInFinder, Solution, MainSolution] | None = None  # plate-solve path
 
     def add(self, name: str, got: tuple[np.ndarray, int, float] | None) -> None:
@@ -250,6 +252,15 @@ class AlignRun:
             "rotation": fit and fit.rotation_deg, "residual": fit and fit.residual_px}})
         if fit is not None and ALIGN_SCALE[0] <= fit.scale <= ALIGN_SCALE[1]:
             self.solved = (fit, sol, msol)
+        elif sol is None:
+            self.why = ("The finder couldn't plate-solve (clouds, dew, or the finder out of focus?), "
+                        "so I kept the alignment. Tap Align again when the finder shows stars.")
+        elif stars is None:
+            self.why = ("I don't have the star catalog for this part of the sky, and couldn't download "
+                        "it (no internet?), so I kept the alignment.")
+        else:
+            self.why = ("I couldn't plate-solve the telescope view (too few stars, or out of focus?), "
+                        "so I kept the alignment. Try a part of the sky with more stars and tap Align.")
 
     def save(self, path: Path) -> None:
         """The run's frames and tracks, to look at a failed Align later (np.load)."""
