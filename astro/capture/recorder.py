@@ -157,10 +157,13 @@ class Recorder:
 
     def _meter(self) -> None:
         """Exposure for the disk: its brightest pixels (0.1% of the ROI, inside the disk) in
-        PLANET_PEAK, so the video keeps detail instead of a white disk (2026-10-10)."""
+        PLANET_PEAK, so the video keeps detail instead of a white disk (2026-10-10). Per color
+        (each 2x2 Bayer position), the brightest decides: metered on all pixels together, red
+        (a quarter of them) clipped over most of Saturn's disk (2026-10-10)."""
         exposure = PLANET_EXPOSURE_S
         for _ in range(6):
-            peak = float(np.percentile(self.camera.capture(), 99.9))
+            frame = self.camera.capture()
+            peak = max(float(np.percentile(frame[y::2, x::2], 99.9)) for y in (0, 1) for x in (0, 1))
             if PLANET_PEAK[0] <= peak <= PLANET_PEAK[1]:
                 return
             exposure *= 0.25 if peak >= 250 else sum(PLANET_PEAK) / 2 / max(peak, 1.0)
