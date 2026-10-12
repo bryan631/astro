@@ -83,10 +83,10 @@ def test_a_noisy_sky_with_few_stars_stays_dark():
 
 def test_stars_keep_their_colors_and_a_clipped_one_is_white():
     """Stars differ by R/B ~0.6-1.5 (2026-10-10 frames): shown boosted. A clipped core's color
-    is lost (it reads the sky's backwards, green here): white."""
+    is lost: white."""
     rng = np.random.default_rng(2)
     white = [(y, x, (90, 90, 90)) for y, x in rng.integers(20, 220, (30, 2))]
-    orange, blue, burnt = (100, 100, (90, 80, 70)), (100, 200, (70, 80, 90)), (180, 160, (400, 400, 400))
+    orange, blue, burnt = (100, 100, (90, 80, 70)), (100, 200, (70, 80, 90)), (180, 160, (400, 300, 150))  # red clipped, blue not
     view = night_view(star_field(2, [*white, orange, blue, burnt]))
     r, _, b = view[orange[:2]]
     assert r > 1.5 * b  # R/B 1.3: brought out

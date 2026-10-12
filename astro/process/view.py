@@ -73,7 +73,7 @@ def render(raw: np.ndarray, bayer: str, zoom: int = 1, rotate: int = 180,
     width = min(MAX_WIDTH, w // 2)  # zoomed views are scaled up to the same size
     img = img.resize((width, round(img.height * width / img.width)))
     out = io.BytesIO()
-    img.save(out, "JPEG", quality=80, subsampling=0)  # full-resolution color: stars are tiny  # full-resolution color: stars are tiny
+    img.save(out, "JPEG", quality=80, subsampling=0)  # full-resolution color: stars are tiny
     return out.getvalue(), metrics
 
 
