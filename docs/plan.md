@@ -224,6 +224,8 @@ JPEG keeps full-resolution color, and the telescope view's sky stays dark at hig
 - Clear night: Align on a bright star with a clear finder (scale ~58, Go to's aim updates);
   focus numbers with many stars; a metered Jupiter or Saturn video; check that the names stay
   on their stars while the scope moves.
+- Clear night: Align with the Barlow measures its power. The first one is slow: each wrong power
+  tried costs a full search (~5 s on the laptop, maybe 10 s on the Mele) (2026-10-11).
 - Check the encoders on the sky: counts follow the scope, and the model holds after a restart.
 - Recordings for test data: a focus sweep and a wiggle.
 - Clear night: the Go to sheet's Say button (check whisper.cpp is installed on the Mele: scripts/install-voice.sh) (2026-10-11).
