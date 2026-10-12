@@ -276,7 +276,8 @@ def test_align_with_the_barlow_measures_its_power(monkeypatch, tmp_path):
     finder_cam.capture(), main_cam.capture()
     s.action("align")
     said = []
-    while not said and time.monotonic() - start < 30:
+    while not said and time.monotonic() - start < 60:  # ~19 s on a laptop, slower on CI: each
+        # wrong power tried costs a full search (~5 s)
         said = [m["text"] for m in s.tick(0.0) if m["type"] == "say"]
         time.sleep(0.05)
     assert said and "The Barlow magnifies 2.5 times" in said[0], said  # 2.45, said to a tenth

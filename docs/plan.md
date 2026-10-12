@@ -214,15 +214,21 @@ disk, with the exposure metered on the disk; dawn auto-exposure for both cameras
 takes the sky's glow off; encoder board no longer resets on an app restart; "Telescope" for the
 main camera; the box orange in day mode.
 
+**Checked on the 2026-10-10 frames (2026-10-11, data/night-20261010/):** the focus number,
+as the median of 5 frames, holds within 2-5% with 6 or more stars (10% on the finder with 3-5).
+The night view's colors: stars now show their red-blue color (boosted 2x; green and magenta
+dropped as lens and Bayer error), each star colored by all its light, clipped stars white, the
+JPEG keeps full-resolution color, and the telescope view's sky stays dark at high gain.
+
 **To do**
 - Clear night: Align on a bright star with a clear finder (scale ~58, Go to's aim updates);
   focus numbers with many stars; a metered Jupiter or Saturn video; check that the names stay
   on their stars while the scope moves.
+- Clear night: Align with the Barlow measures its power. The first one is slow: each wrong power
+  tried costs a full search (~5 s on the laptop, maybe 10 s on the Mele) (2026-10-11).
 - Check the encoders on the sky: counts follow the scope, and the model holds after a restart.
 - Recordings for test data: a focus sweep and a wiggle.
 - Clear night: the Go to sheet's Say button (check whisper.cpp is installed on the Mele: scripts/install-voice.sh) (2026-10-11).
-- From the 2026-10-10 night (raw frames in data/night-20261010/): check the night colors and
-  the focus number's steadiness on them.
 - Check the outlines' sizes and angles on the sky, and the telescope view's names from its own plate solves (2026-10-11).
 - Clear night: check the live stack's frames/missed/gain in the "stacking done" log (the Mele stacks 0.26 s a frame against 0.2 s frames; the finder's solves compete for the CPU) and the nudge-back prompt (2026-10-11).
 

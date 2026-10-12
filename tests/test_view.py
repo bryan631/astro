@@ -49,3 +49,47 @@ def test_zoom_crops_around_a_center_kept_inside_the_frame():
     assert m["center"] == pytest.approx((-0.25, 0.25), abs=0.02)
     img = np.asarray(Image.open(io.BytesIO(data)))
     assert img.mean() > 150  # turned 180, the view's top-left is the sensor's bright top-right
+
+
+def mosaic(rgb):
+    """An RGB image as a GRBG raw frame, one superpixel per pixel."""
+    h, w, _ = rgb.shape
+    raw = np.empty((2 * h, 2 * w), np.uint8)
+    raw[0::2, 0::2] = raw[1::2, 1::2] = rgb[..., 1]
+    raw[0::2, 1::2], raw[1::2, 0::2] = rgb[..., 0], rgb[..., 2]
+    return raw
+
+
+def star_field(noise, stars, size=(240, 320)):
+    """A sky with the given noise and stars: (y, x, (r, g, b) peak above the sky), Gaussian.
+    Red and blue ~1.7x green, as the main camera's sky."""
+    rng = np.random.default_rng(1)
+    rgb = rng.normal((75, 45, 75), noise, (*size, 3))
+    yy, xx = np.mgrid[:size[0], :size[1]]
+    for y, x, peak in stars:
+        rgb += np.exp(-((yy - y) ** 2 + (xx - x) ** 2) / 2)[..., None] * np.array(peak)
+    return mosaic(rgb.clip(0, 255).astype(np.uint8))
+
+
+def night_view(raw):
+    return np.asarray(Image.open(io.BytesIO(render(raw, "GRBG", rotate=0, night=True)[0]))).astype(float)
+
+
+def test_a_noisy_sky_with_few_stars_stays_dark():
+    """The main camera at high gain: few stars, so its noise used to be stretched gray."""
+    view = night_view(star_field(14, [(60, 80, (150,) * 3), (180, 250, (120,) * 3)]))
+    assert view.mean() < 32 and view.max() > 200  # was 42: a gray speckle
+
+
+def test_stars_keep_their_colors_and_a_clipped_one_is_white():
+    """Stars differ by R/B ~0.6-1.5 (2026-10-10 frames): shown boosted. A clipped core's color
+    is lost: white."""
+    rng = np.random.default_rng(2)
+    white = [(y, x, (90, 90, 90)) for y, x in rng.integers(20, 220, (30, 2))]
+    orange, blue, burnt = (100, 100, (90, 80, 70)), (100, 200, (70, 80, 90)), (180, 160, (400, 300, 150))  # red clipped, blue not
+    view = night_view(star_field(2, [*white, orange, blue, burnt]))
+    r, _, b = view[orange[:2]]
+    assert r > 1.5 * b  # R/B 1.3: brought out
+    r, _, b = view[blue[:2]]
+    assert b > 1.5 * r
+    assert view[burnt[:2]].min() > 0.9 * view[burnt[:2]].max()
