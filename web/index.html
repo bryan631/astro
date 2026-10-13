@@ -67,6 +67,9 @@
   #capinfo.warn { font-weight: bold; font-size: 28px; }
   #field { position: absolute; width: 40px; height: 40px; margin: -20px 0 0 -20px; border: 2px solid var(--hi);
            border-radius: 50%; }  /* where the stacked field is now (it drifts toward an edge) */
+  #inset.full { left: 0 !important; right: 0 !important; top: 0 !important; bottom: 0 !important; width: 100%; height: 100%;
+                object-fit: contain; border: none; background: var(--bg); }
+  #capx line { stroke: var(--hi); stroke-width: 0.006; }
   #inset { position: absolute; right: 8px; top: 120px; width: 34%; border: 2px solid var(--fg);
            border-radius: 8px; background: #000; }
   #msg { flex: 1; min-width: 0; padding: 6px 12px; font-size: 22px; min-height: 1.6em; white-space: nowrap; overflow: hidden;
@@ -109,7 +112,7 @@
   <div id="views">
     <div class="view" id="v-finder">
       <img class="cam" alt="finder camera">
-      <div class="frame"><div class="names"></div><svg viewBox="-0.5 -0.5 1 1" preserveAspectRatio="none"><polygon id="mainbox"/></svg></div>
+      <div class="frame"><div class="names"></div><svg viewBox="-0.5 -0.5 1 1" preserveAspectRatio="none"><polygon id="mainbox"/><g id="capx" hidden><line/><line/></g></svg></div>
       <div class="label">Finder<span class="swap"> ⇄</span></div><div class="focus"><b></b><small></small><canvas width="160" height="40"></canvas></div>
       <div id="arrow" hidden></div><div id="dist"></div>
       <div class="cap"></div>
@@ -304,6 +307,7 @@ let mainBox = null;
 function drawMainBox() {
   const poly = $("mainbox"), z = views.finder.zoom, [cx, cy] = views.finder.zc;
   poly.setAttribute("points", mainBox ? mainBox.map(([x, y]) => `${(x - cx) * z},${(y - cy) * z}`).join(" ") : "");
+  if (typeof drawCapX === "function") drawCapX();
 }
 
 // --- pointing: the arrow on the finder view says which way to push; distance below it.
@@ -338,15 +342,23 @@ function showCapture(m) {
     : m.state === "processing" ? `Saved ${m.frames} frames: making the picture…`
     : m.state === "done" ? "Picture ready (Pictures)" : "";
   $("capinfo").classList.toggle("warn", m.state === "recording" && m.edge_s !== null && m.edge_s <= 15);
-  const f = $("field"), xy = m.kind === "stack" && m.state === "recording" ? m.target_xy : null;
-  f.hidden = !xy;
-  const z = views.main.zoom;  // the view's zoom crops the center
-  if (xy) { f.style.left = `${(0.5 + (xy[0] - 0.5) * z) * 100}%`; f.style.top = `${(0.5 + (xy[1] - 0.5) * z) * 100}%`; }
-  if (xy) {  // the live stack sits in the corner away from the target, and jumps as it drifts
-    const left = xy[0] > .5, top = xy[1] > .5;
-    Object.assign($("inset").style, {left: left ? "8px" : "auto", right: left ? "auto" : "8px",
-                                     top: top ? "50px" : "auto", bottom: top ? "auto" : "90px"});  // clear of the capture line
-  }
+  // While capturing, the telescope view is the capture itself (the planet's live window, or the
+  // live stack filling it), and an X on the finder view shows where the target is in the field.
+  $("field").hidden = true;
+  inset.classList.toggle("full", capturing && m.kind === "stack");
+  capXY = capturing ? m.target_xy : null; drawCapX();
+}
+let capXY = null;  // the target in the main frame (fractions from its top-left), while capturing
+function drawCapX() {
+  const g = $("capx");
+  g.hidden = !(capXY && mainBox);
+  if (g.hidden) return;
+  const [u, v] = capXY, [tl, tr, br, bl] = mainBox, z = views.finder.zoom, [cx, cy] = views.finder.zc;
+  const p = [0, 1].map(k => tl[k] * (1 - u) * (1 - v) + tr[k] * u * (1 - v) + br[k] * u * v + bl[k] * (1 - u) * v);
+  const x = (p[0] - cx) * z, y = (p[1] - cy) * z, r = 0.025;
+  const [a, b] = g.querySelectorAll("line");
+  Object.entries({x1: x - r, y1: y - r, x2: x + r, y2: y + r}).forEach(([k, val]) => a.setAttribute(k, val));
+  Object.entries({x1: x - r, y1: y + r, x2: x + r, y2: y - r}).forEach(([k, val]) => b.setAttribute(k, val));
 }
 
 // More than one thing in the telescope view: the user picks what Capture records.

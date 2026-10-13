@@ -593,27 +593,10 @@ class Session:
         return cam.last, cam.bayer, time.monotonic() - cam.last_at
 
     def view_frame(self, name: str):
-        """camera_frame for the page's view: while a planet records only its ROI, the full live
-        view from just before stays on screen with the live ROI as an inset in the corner away
-        from the planet, so the planet shows twice: pasted over itself, the recording hid where
-        it sat in the field (2026-10-10)."""
-        frame = self.camera_frame(name)
-        rec = self.recorder if name == "main" else None
-        bg, roi = (rec.background, rec.roi) if rec else (None, None)  # once: the recorder clears them
-        if frame is None or bg is None or roi is None:
-            return frame
-        raw, bayer, age = frame
-        bh, bw = bg.shape
-        if raw.shape != (roi.height, roi.width) or raw.shape == (bh, bw) or roi.x + roi.width > bw \
-                or roi.y + roi.height > bh:
-            return frame  # paused (whole field), a frame from before the ROI changed, or no fit
-        full = bg.copy()
-        x = 0 if roi.x + roi.width / 2 > bw / 2 else bw - roi.width  # the far corner (even: Bayer)
-        y = 0 if roi.y + roi.height / 2 > bh / 2 else bh - roi.height
-        full[y:y + roi.height, x:x + roi.width] = raw
-        full[y:y + roi.height, [x, x + 1, x + roi.width - 2, x + roi.width - 1]] = 255  # a white
-        full[[y, y + 1, y + roi.height - 2, y + roi.height - 1], x:x + roi.width] = 255  # frame
-        return full, bayer, age
+        """camera_frame for the page's view: while a planet records, only its ROI is read, so the
+        view is the live ROI itself, filling the screen; the finder view marks where it is
+        (2026-10-12: a still field with the ROI as an inset looked frozen)."""
+        return self.camera_frame(name)
 
     def finder_labels(self, level: int = 2) -> list[list]:
         """Names on the finder view, [[name, kind, x, y], ...] with x, y as fractions from the
