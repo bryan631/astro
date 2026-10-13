@@ -33,6 +33,7 @@ from starlette.websockets import WebSocketState
 from astro import calibration_store, logs, site_store
 from astro import spots as spot_store
 from astro.agent import Agent
+from astro.capture.bahtinov import SCORE_PER_PX
 from astro.devices import config as devices
 from astro.devices.sim.finder import SimFinderCamera
 from astro.devices.sim.main_cam import SimMainCamera
@@ -57,6 +58,9 @@ SIM = os.environ.get("ASTRO_SIM") == "1"
 OFFLINE = os.environ.get("ASTRO_OFFLINE") == "1"  # no forecast fetches (tests, field hotspot)
 TICK_S = 0.1
 FRAME_WAIT_S = 3.0  # a view's request waits this long for a frame newer than the one it has
+MASK_FRAMES = 7  # the mask's number: median of this many misses (one frame scatters ~0.7 px, 2026-10-12)
+MASK_STICKY_S = 10.0  # after a mask frame, frames that miss it don't switch the number away
+FOCUS_STALE_S = 5.0  # nothing measured this long: the number goes blank
 FOCUS_FRAMES = 5  # the focus number is the median of this many frames: seeing and the main
 # camera's few stars make one frame's number jump
 THINKING_AFTER_S = 1.0  # say "Let me think." if an answer takes longer than this
@@ -595,17 +599,26 @@ def _save_focus_frame(folder: Path, name: str, raw: np.ndarray, cam, barlow: boo
         f.write(json.dumps(row, default=float) + "\n")
 
 
-def _steady_focus(name: str, metrics: dict) -> dict:
-    """The metrics with the focus number as the median of the recent frames in the same mode
-    (stars or planet); a frame with nothing to judge keeps showing the recent number."""
-    recent = _recent_focus.setdefault(name, deque(maxlen=FOCUS_FRAMES))
+def _steady_focus(name: str, metrics: dict, now: float | None = None) -> dict:
+    """The metrics with a steadied focus number: the median of the recent frames in the newest
+    mode; with the mask, the median of its signed misses over MASK_FRAMES, and frames that miss
+    the mask skipped for MASK_STICKY_S (they flipped the number to the star or planet one and
+    back, 2026-10-12). Nothing measured for FOCUS_STALE_S: no number, not an old one."""
+    now = time.monotonic() if now is None else now
+    recent = _recent_focus.setdefault(name, deque(maxlen=MASK_FRAMES))
     if metrics.get("focus") is not None:
-        recent.append((metrics["focus_mode"], metrics["focus"]))
-    if not recent:
-        return metrics
-    mode = recent[-1][0]
-    return metrics | {"focus": statistics.median(f for m, f in recent if m == mode), "focus_mode": mode,
-                      "stars": metrics["stars"]}
+        mask_lately = any(m == "bahtinov" and now - t < MASK_STICKY_S for t, m, _, _ in recent)
+        if metrics["focus_mode"] == "bahtinov" or not mask_lately:
+            recent.append((now, metrics["focus_mode"], metrics["focus"], metrics.get("mask_offset")))
+    if not recent or now - recent[-1][0] > FOCUS_STALE_S:
+        return metrics | {"focus": None}
+    mode = recent[-1][1]
+    if mode == "bahtinov":
+        miss = statistics.median(o for _, m, _, o in recent if m == mode)
+        return metrics | {"focus": max(0.0, 100.0 - SCORE_PER_PX * abs(miss)), "focus_mode": mode,
+                          "mask_offset": round(miss, 2)}
+    same = [f for _, m, f, _ in list(recent)[-FOCUS_FRAMES:] if m == mode]
+    return metrics | {"focus": statistics.median(same), "focus_mode": mode, "stars": metrics["stars"]}
 
 
 def _seq(cam) -> int:
