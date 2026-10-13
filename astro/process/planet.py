@@ -36,6 +36,9 @@ DISK_THRESHOLD = 0.3  # fraction of the brightest level that counts as "planet" 
 EXTENT_THRESHOLD = 0.08  # fraction of the brightest level that still counts (dim ring tips)
 CROP_PAD = 1.25  # crop the picture to this many times the planet's (ring) extent
 MOON_PAD = 0.3  # ... grown to keep each moon, with this many planet extents around it
+SKY_TOLERANCE = 1e-3  # frames whose sky (off the planet) is brighter than usual by this fraction of
+# the planet's peak are garbage: 2026-10-12, ~90 of 840 Barlow frames had horizontal stripes right
+# of the planet (sky 0.01 -> 8 DN) and, the stripes passing for detail, ranked sharpest
 QUALITY_SIGMA = 1.5  # smoothing (raw px) before scoring sharpness: seeing detail, not noise
 # Wavelet sharpening on the 2x output: per-layer gains (finest first) and noise thresholds
 # in units of each layer's noise. Layer 1 is mostly noise at 2x; layers 2-4 hold the bands,
@@ -137,17 +140,30 @@ def crop(frame: np.ndarray, center: np.ndarray, half: int) -> tuple[np.ndarray, 
     return frame[y0:y0 + 2 * half + 2, x0:x0 + 2 * half + 2], y0, x0
 
 
+def sky_levels(small: np.ndarray, centers: np.ndarray, half: float) -> np.ndarray:
+    """Mean of each (n, h, w) frame outside the box of half-size `half` around its center."""
+    ys, xs = np.arange(small.shape[1]), np.arange(small.shape[2])
+    off_y = np.abs(ys[None, :] - centers[:, :1]) > half
+    off_x = np.abs(xs[None, :] - centers[:, 1:]) > half
+    sky = off_y[:, :, None] | off_x[:, None, :]
+    return (small * sky).sum(axis=(1, 2)) / np.maximum(sky.sum(axis=(1, 2)), 1)
+
+
 def measure(frames: np.ndarray, half: int) -> tuple[np.ndarray, np.ndarray]:
     """Pass 1: per-frame planet center (raw px) and sharpness; -inf for unusable frames
-    (planet missing, or cut by the ROI edge as it drifts out of a non-tracking scope)."""
+    (planet missing, cut by the ROI edge as it drifts out of a non-tracking scope, or
+    garbage off the planet)."""
     n = len(frames)
     centers, quality = np.zeros((n, 2)), np.full(n, -np.inf)
-    peak = np.zeros(n)
+    peak, sky = np.zeros(n), np.zeros(n)
     for i in range(0, n, BATCH):
         small = ndimage.gaussian_filter(binned(frames, i, i + BATCH), (0, 1, 1))
-        centers[i:i + len(small)] = planet_centers(small) * BIN + (BIN - 1) / 2
+        at = planet_centers(small)
+        centers[i:i + len(small)] = at * BIN + (BIN - 1) / 2
         peak[i:i + len(small)] = small.max(axis=(1, 2))
+        sky[i:i + len(small)] = sky_levels(small, at, half / BIN)
     present = peak > 0.3 * np.median(peak)
+    present &= sky - np.median(sky[present]) < SKY_TOLERANCE * np.median(peak[present])
     for i in np.flatnonzero(present):
         cut = crop(frames[i], centers[i], half)
         if cut is not None:
