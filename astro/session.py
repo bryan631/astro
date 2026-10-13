@@ -954,6 +954,8 @@ class Session:
             if _km_between(lat, lon, self.site) <= SITE_MOVE_KM:  # same place, same encoder counts: no re-sync needed
                 self.finder.model = calibration_store.model_from_dict(mount)
                 self.finder.synced = True
+                if a := mount.get("anchor"):  # names from the last solve, not the model alone
+                    self.finder._anchor = ((a[0], a[1]), a[2], a[3])
                 self._model_site = replace(self.site, lat_deg=lat, lon_deg=lon)  # its origin
 
     def _learn_direction(self, az: float, t: float) -> list[dict]:

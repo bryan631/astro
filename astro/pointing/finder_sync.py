@@ -176,8 +176,9 @@ class FinderSync:
 
     def model_dict(self) -> dict:
         """The mount model for the calibration file, never half refitted."""
-        with self._model_lock:
-            return model_to_dict(self.model)
+        with self._model_lock:  # the last solve too: names start from it after a restart
+            anchor = None if self._anchor is None else [*map(float, self._anchor[0]), *self._anchor[1:]]
+            return model_to_dict(self.model) | {"anchor": anchor}
 
     def sync(self, fresh: bool = True, replace_near_deg: float | None = None) -> tuple[bool, str]:
         """Solve the current finder view and refine the mount model. Returns (ok, message).
