@@ -119,11 +119,12 @@ def moon():
 
 def planet_picture(name, truth, frames=40):
     """Seeing-blurred, jittered, noisy frames -> the app's planet finish."""
-    stack = np.zeros_like(truth)
-    for _ in range(frames):
+    halves = [np.zeros_like(truth), np.zeros_like(truth)]  # alternate frames: the noise
+    for i in range(frames):
         f = ndimage.shift(ndimage.gaussian_filter(truth, (2.5, 2.5, 0)), (*rng.normal(0, 3, 2), 0), order=1)
-        stack += f + rng.normal(0, 0.05, truth.shape)
-    Image.fromarray(planet.finish(stack / frames, np.zeros_like(truth))).save(OUT / f"{name}.jpg", quality=90)
+        halves[i % 2] += f + rng.normal(0, 0.05, truth.shape)
+    stack, noise = (halves[0] + halves[1]) / frames, (halves[0] - halves[1]) / frames
+    Image.fromarray(planet.finish(stack, np.zeros_like(truth), noise)).save(OUT / f"{name}.jpg", quality=90)
 
 
 if __name__ == "__main__":

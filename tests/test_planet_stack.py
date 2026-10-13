@@ -110,7 +110,7 @@ def test_drizzle_rebuilds_the_scene_at_twice_the_resolution():
 
 def test_stack_is_sharp_and_cleaner_than_a_single_frame():
     frames = seeing_frames()
-    result, _, used = stack(frames, "GRBG")
+    result, _, _, used = stack(frames, "GRBG")
     g = result[..., 1]
     assert used == 8 and result.shape[0] > 2 * 40  # 20% of the frames; 2x the planet's size
     single = superpixel_rgb(frames[0], "GRBG")[..., 1]
