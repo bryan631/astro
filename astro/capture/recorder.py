@@ -164,6 +164,8 @@ class Recorder:
         for _ in range(6):
             frame = self.camera.capture()
             peak = max(float(np.percentile(frame[y::2, x::2], 99.9)) for y in (0, 1) for x in (0, 1))
+            log.info("metering", extra={"data": {"exposure_s": exposure, "peak": peak, "shape": list(frame.shape),
+                                                 "max": int(frame.max()), "roi": self.roi and vars(self.roi)}})
             if PLANET_PEAK[0] <= peak <= PLANET_PEAK[1]:
                 return
             exposure *= 0.25 if peak >= 250 else sum(PLANET_PEAK) / 2 / max(peak, 1.0)
