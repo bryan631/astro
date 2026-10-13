@@ -18,9 +18,10 @@ from astro.devices.base import Camera, Roi
 
 log = logging.getLogger(__name__)
 
-ROI_PX = 512  # the smallest planet ROI, sensor pixels (room for the seeing and the drift)
+ROI_PX = 768  # the smallest planet ROI, sensor pixels: room for the drift between recenters (with the
+# Barlow, 512 let Saturn reach the edge and the stack striped where frames missed, 2026-10-12)
 MOON_REACH_PX = 1400  # moons this far from the planet join the ROI (Callisto: ~10' at 0.5"/px)
-MAX_ROI_PIXELS = 2048 * 640  # the farthest moons drop out past this (disk space, frame rate)
+MAX_ROI_PIXELS = 2560 * 900  # the farthest moons drop out past this (disk space, frame rate)
 RECENTER_EVERY = 10  # frames between drift checks: with the Barlow the planet drifts ~60 px/s,
 # and every 50 frames (~4 s) lost it (2026-10-12)
 RECENTER_FRACTION = 0.25  # re-center when the planet drifts this far from the ROI center
