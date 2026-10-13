@@ -21,7 +21,8 @@ log = logging.getLogger(__name__)
 ROI_PX = 512  # the smallest planet ROI, sensor pixels (room for the seeing and the drift)
 MOON_REACH_PX = 1400  # moons this far from the planet join the ROI (Callisto: ~10' at 0.5"/px)
 MAX_ROI_PIXELS = 2048 * 640  # the farthest moons drop out past this (disk space, frame rate)
-RECENTER_EVERY = 50  # frames between drift checks
+RECENTER_EVERY = 10  # frames between drift checks: with the Barlow the planet drifts ~60 px/s,
+# and every 50 frames (~4 s) lost it (2026-10-12)
 RECENTER_FRACTION = 0.25  # re-center when the planet drifts this far from the ROI center
 EDGE_EVERY = 10  # frames between planet positions for the edge clock (a blob search is cheap)
 PAUSED_WAIT_S = 0.1
@@ -110,18 +111,18 @@ class Recorder:
             # 0.25 s gave white blobs (2026-10-10).
             self.camera.set_exposure(PLANET_EXPOSURE_S)
             self.camera.set_gain(PLANET_GAIN)
+            # Metered on the whole frame, the ROI placed last: each setting reopens the camera
+            # (~1.5 s), and with the Barlow the planet drifted out of an ROI placed before
+            # metering, ~8 s earlier (2026-10-12).
+            self._meter()
             full = self.camera.capture()
             center = brightest_blob(full)
-        except (RuntimeError, OSError) as e:  # SDK gave up after its retry
-            raise CaptureRefused(f"The telescope camera isn't responding: {e}") from e
-        if center is None:
-            raise CaptureRefused("I don't see anything bright in the telescope view. "
-                                 "Let's center it first.")
-        roi = self._roi_with_moons(center, companions(full, center, MOON_REACH_PX))
-        try:
+            if center is None:
+                raise CaptureRefused("I don't see anything bright in the telescope view. "
+                                     "Let's center it first.")
+            roi = self._roi_with_moons(center, companions(full, center, MOON_REACH_PX))
             self._set_roi(roi)
-            self._meter()
-        except (RuntimeError, OSError) as e:
+        except (RuntimeError, OSError) as e:  # SDK gave up after its retry
             raise CaptureRefused(f"The telescope camera isn't responding: {e}") from e
         return roi
 
@@ -163,6 +164,9 @@ class Recorder:
         exposure = PLANET_EXPOSURE_S
         for _ in range(6):
             frame = self.camera.capture()
+            if (blob := brightest_blob(frame)) is not None:  # the disk's surroundings, wherever it is now
+                x0, y0 = (max(int(c) - ROI_PX // 2, 0) // 2 * 2 for c in blob)
+                frame = frame[y0:y0 + ROI_PX, x0:x0 + ROI_PX]
             peak = max(float(np.percentile(frame[y::2, x::2], 99.9)) for y in (0, 1) for x in (0, 1))
             log.info("metering", extra={"data": {"exposure_s": exposure, "peak": peak, "shape": list(frame.shape),
                                                  "max": int(frame.max()), "roi": self.roi and vars(self.roi)}})
