@@ -11,7 +11,7 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class Intent:
     name: str  # goto, stop, next, tonight, capture, stop_capture, focus, finder_focus, sync,
-    # where, barlow_on, barlow_off, location, horizon_start, horizon_mark, setup, ready, skip,
+    # where, barlow_on, barlow_off, moons_on, moons_off, location, horizon_start, horizon_mark, setup, ready, skip,
     # describe, collimate, view_finder, view_main, view_debug, view_hide,
     # video_finder, video_main, video_stop, centered
     target: str | None = None
@@ -28,6 +28,8 @@ _PATTERNS = [
     ("ready", r"^(ready|i'?m ready|go ahead|ok(ay)?|done pointing)\b"),
     ("skip", r"^(skip|skip it|next step|not now)\b"),
     ("stop_capture", r"\b(stop|end|finish) (the )?(capture|recording|pictures?)\b"),
+    ("moons_off", r"\b(planet only|just the planet|no moons|without (the )?moons|moons (are )?off)\b"),
+    ("moons_on", r"\b(with (the )?moons|moons (are )?on|(and|plus) (its |the )?moons)\b"),
     ("barlow_on", r"\b(barlow (is )?(on|in)|(put|added?) (in )?the barlow)\b"),
     ("barlow_off", r"\b(barlow (is )?(off|out)|(took|take|removed?) (out )?the barlow)\b"),
     ("stop", r"^(stop|halt|hold|freeze|that's it|done)\b"),

@@ -482,7 +482,7 @@ def api_status() -> dict:
             "daytime": hub.session.daytime(), "checks_off": hub.session.override,
             "build": web_build(),  # the page reloads itself when this changes
             "main_box": hub.session.main_box, "aligning": hub.session.aligning,
-            "mode": hub.session.mode, "barlow": hub.session.barlow}  # setup, horizon or collimation: the page shows its buttons
+            "mode": hub.session.mode, "barlow": hub.session.barlow, "moons": hub.session.moons}  # setup, horizon or collimation: the page shows its buttons
 
 
 @functools.cache

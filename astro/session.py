@@ -163,6 +163,7 @@ class Session:
         self.main_camera, self.main_sensor = main_camera, main_sensor
         self.zoom = {"finder": 1, "main": 1}  # the page's digital zoom per camera view
         self.barlow = False
+        self.moons = True  # planet captures take in Jupiter's and Saturn's moons
         self.barlow_power = BARLOW_GUESS  # replaced by the measured power at the first Barlow Align
         self.main_size = main_sensor  # main frame (w, h), for the box
         self.record_seconds = RECORD_SECONDS
@@ -334,6 +335,10 @@ class Session:
             return self._goto_named(intent.target or "")
         if intent.name == "describe":
             return self.describe(intent.target or "")
+        if intent.name in ("moons_on", "moons_off"):
+            self.moons = intent.name == "moons_on"
+            self._save_calibration()
+            return [say("Planet captures will take in the moons." if self.moons else "Planet captures will be the planet only.")]
         if intent.name in ("barlow_on", "barlow_off"):
             return self._set_barlow(intent.name == "barlow_on")
         command = {
@@ -472,6 +477,7 @@ class Session:
         video = not stack and (target in EXTENDED_TARGETS or choice == UNNAMED_PLANET)  # planets, Moon
         try:
             if video:
+                self.recorder.moons = self.moons
                 self.recorder.start(choice, self.record_seconds)
             else:
                 self.stacker.start(choice, self.stack_seconds,  # deep-sky: live stack short subs
@@ -928,7 +934,7 @@ class Session:
             "main_box": self.main_box,
             "finder_map": self.labels.map.tolist() if self.labels.map is not None else None,
             "main_solved": self.main_solved,
-            "barlow": self.barlow, "barlow_power": self.barlow_power,
+            "barlow": self.barlow, "barlow_power": self.barlow_power, "moons": self.moons,
             "main_in_finder": ({"a": self.main_in_finder.a.tolist(),
                                 "center": self.main_in_finder.center.tolist(),
                                 "residual_px": self.main_in_finder.residual_px}
@@ -950,6 +956,7 @@ class Session:
         self.main_box = data.get("main_box")  # main field corners on the finder view
         self.barlow = bool(data.get("barlow"))  # it stays in the focuser across a restart
         self.barlow_power = data.get("barlow_power") or BARLOW_GUESS
+        self.moons = data.get("moons", True)
         if data.get("finder_map") is not None:
             self.labels.map = np.array(data["finder_map"])
         if (mif := data.get("main_in_finder")) is not None:

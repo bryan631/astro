@@ -2,6 +2,9 @@ import numpy as np
 
 from astro.capture.recorder import MAX_ROI_PIXELS, Recorder
 from astro.capture.roi import companions, roi_around
+from astro.intents import parse
+from astro.pointing.coords import Site
+from astro.session import Session
 
 
 def jupiter_and_moons():
@@ -54,3 +57,13 @@ def test_a_hot_pixel_is_no_moon():
     frame, _ = jupiter_and_moons()
     frame[1500, 2500] = 255  # one hot pixel within reach
     assert all(abs(x - 2500) > 5 for x, _ in companions(frame, (1900, 1000), reach=1400))
+
+
+def test_planet_only_or_with_moons_by_voice_and_kept_across_a_restart(tmp_path):
+    """Saturn or Jupiter alone (a small, fast window) or with the moons: said or tapped, and kept."""
+    s = Session(Site(40.0, -75.0), data_dir=tmp_path)
+    assert s.moons and parse("planet only").name == "moons_off" and parse("with the moons").name == "moons_on"
+    s.handle("just the planet")
+    assert not s.moons and Session(Site(40.0, -75.0), data_dir=tmp_path, calibration=s.calibration()).moons is False
+    s.handle("capture jupiter and its moons")
+    assert s.moons

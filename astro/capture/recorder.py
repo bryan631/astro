@@ -73,6 +73,7 @@ class Recorder:
         self.roi: Roi | None = None  # the ROI being recorded (the main view pastes it in place)
         self.background: np.ndarray | None = None  # the full live view from just before recording
         self._planet_in_roi = (ROI_PX / 2, ROI_PX / 2)  # where the planet sits in the ROI
+        self.moons = True  # False: the planet only (a smaller window, a faster frame rate)
 
     @property
     def busy(self) -> bool:
@@ -125,7 +126,7 @@ class Recorder:
             if center is None:
                 raise CaptureRefused("I don't see anything bright in the telescope view. "
                                      "Let's center it first.")
-            roi = self._roi_with_moons(center, companions(full, center, MOON_REACH_PX))
+            roi = self._roi_with_moons(center, companions(full, center, MOON_REACH_PX) if self.moons else [])
             self._set_roi(roi)
         except (RuntimeError, OSError) as e:  # SDK gave up after its retry
             raise CaptureRefused(f"The telescope camera isn't responding: {e}") from e
