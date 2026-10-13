@@ -69,6 +69,10 @@ def model_to_dict(model: MountModel) -> dict:
 
 
 def model_from_dict(d: dict) -> MountModel:
-    return MountModel(float(d["az_offset_deg"]), float(d["alt_offset_deg"]),
-                      float(d["tilt_n_deg"]), float(d["tilt_e_deg"]),
-                      [Sync(**{k: float(v) for k, v in s.items()}) for s in d["syncs"]])
+    """Refitted from its syncs: a saved fit can be from an older, looser fit (259 degree tilt)."""
+    model = MountModel(float(d["az_offset_deg"]), float(d["alt_offset_deg"]),
+                       float(d["tilt_n_deg"]), float(d["tilt_e_deg"]),
+                       [Sync(**{k: float(v) for k, v in s.items()}) for s in d["syncs"]])
+    if model.syncs:
+        model.fit()
+    return model

@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy.optimize import least_squares
 
+MAX_TILT_DEG = 10.0  # a Dob base on the ground tilts a few degrees; two syncs fitted 259 (2026-10-12)
+TILT_SYNCS = 3  # fewer: offsets only (four numbers from two syncs are anything)
 MAX_SYNCS = 12  # newest kept: an old sync can't outvote a bumped base forever
 OUTLIER_X = 3.0  # a sync this many times worse than the median (and over 30') is dropped
 OUTLIER_MIN_ARCMIN = 30.0
@@ -89,18 +91,26 @@ class MountModel:
             self.az_offset_deg = (s.true_az_deg - s.enc_az_deg) % 360
             self.tilt_n_deg = self.tilt_e_deg = 0.0
             return 0.0
-        x0 = [self.az_offset_deg, self.alt_offset_deg, self.tilt_n_deg, self.tilt_e_deg]
+        tilt = len(self.syncs) >= TILT_SYNCS
+        if not tilt:
+            self.tilt_n_deg = self.tilt_e_deg = 0.0
+        s = self.syncs[-1]  # started at the newest sync's exact offsets: from the old fit's, two
+        # syncs that agreed to 0.2 degrees landed on the "flipped over the zenith" one (2026-10-12)
+        x0 = [(s.true_az_deg - s.enc_az_deg) % 360, s.true_alt_deg - s.enc_alt_deg,
+              *np.clip([self.tilt_n_deg, self.tilt_e_deg], -MAX_TILT_DEG, MAX_TILT_DEG)][:4 if tilt else 2]
         targets = [_vec(s.true_alt_deg, s.true_az_deg) for s in self.syncs]
 
         def residuals(x: np.ndarray) -> np.ndarray:
-            self._set(x)
+            self._set(np.r_[x, 0.0, 0.0][:4])
             return np.concatenate(
                 [_vec(*self.to_sky(s.enc_alt_deg, s.enc_az_deg)) - t for s, t in zip(self.syncs, targets, strict=True)]
             )
 
         # Robust loss: one bad sync can't drag the fit, so it stands out to be dropped.
-        result = least_squares(residuals, x0, loss="soft_l1", f_scale=np.radians(0.5))
-        self._set(result.x)
+        bound = [np.inf, np.inf, MAX_TILT_DEG, MAX_TILT_DEG][:len(x0)]
+        result = least_squares(residuals, x0, loss="soft_l1", f_scale=np.radians(0.5),
+                               bounds=(np.negative(bound), bound))
+        self._set(np.r_[result.x, 0.0, 0.0][:4])
         # Chord length ~ angle (radians) for small errors: RMS of the per-sync angular error.
         rms_rad = np.sqrt(np.sum(result.fun**2) / len(self.syncs))
         return float(np.degrees(rms_rad) * 60)
