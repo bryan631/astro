@@ -238,6 +238,9 @@ JPEG keeps full-resolution color, and the telescope view's sky stays dark at hig
   on Vega (data/night-20261012/); Barlow Align at the measured 2.08x.
 - Planet stacks: sharpen (wavelets, as RegiStax/AstroSurface), tried on data/night-20261012/saturn3.ser
   (Barlow, 15 ms, 1080 frames): sharp disk and ring edges, no ringing (2026-10-12).
+- Barlow Align in sparse sky (Pisces, 2026-10-12): the G<12.5 catalog has ~1 star per 13'x8' field,
+  so 60 pairs over 2 min all failed. A deeper catalog (G 14) and longer main exposures during Align.
+  Meanwhile: Align in the Milky Way, then go to the target (the fit holds while the Barlow stays in).
 - Check the encoders on the sky: counts follow the scope, and the model holds after a restart.
 - Recordings for test data: a focus sweep and a wiggle.
 - Clear night: the Go to sheet's Say button (check whisper.cpp is installed on the Mele: scripts/install-voice.sh) (2026-10-11).
