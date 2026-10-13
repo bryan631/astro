@@ -56,18 +56,20 @@ def render(raw: np.ndarray, bayer: str, zoom: int = 1, rotate: int = 180,
     rgb = remove_hot_pixels(superpixel_rgb(raw[y:y + ch, x:x + cw], bayer).astype(np.float32))
     lum = rgb.mean(axis=2)
     lo = float(np.percentile(lum, 50))  # the sky background is the typical pixel
-    focus = measure_focus(lum)  # also through bright cloud glow (it measures from the sky level)
-    metrics = {"focus": focus.score, "stars": focus.stars, "focus_mode": focus.mode,
-               "center": tuple(-c for c in used) if rotate == 180 else used}
-    if mask and (found := measure_bahtinov(lum)) is not None:  # the mask's on: it decides
-        metrics |= {"focus": focus_number(found), "focus_mode": "bahtinov",
+    metrics = {"center": tuple(-c for c in used) if rotate == 180 else used}
+    # The mask first (0.1 s on the Mele): when it's on it decides, and the star fits (~1 s) wait.
+    if mask and (found := measure_bahtinov(lum)) is not None:
+        metrics |= {"focus": focus_number(found), "stars": 0, "focus_mode": "bahtinov",
                     "mask_offset": round(found.offset_px, 2)}
+    else:
+        focus = measure_focus(lum)  # also through bright cloud glow (it measures from the sky level)
+        metrics |= {"focus": focus.score, "stars": focus.stars, "focus_mode": focus.mode}
     if night is None:
         night = lo <= DAY_MEDIAN
+    while rgb.shape[1] > 2 * MAX_WIDTH:  # display needs no more than this; binned first, the
+        rgb = _bin2(rgb)  # night stretch took 1.2 s of the Mele's 2.7 s telescope frame (2026-10-12)
     if night:
-        rgb = _night_stretch(rgb, lum)
-    while rgb.shape[1] > 2 * MAX_WIDTH:  # display needs no more than this
-        rgb = _bin2(rgb)
+        rgb = _night_stretch(rgb, rgb.mean(axis=2))
     img = Image.fromarray(rgb.clip(0, 255).astype(np.uint8))  # by day: as it is
     img = img.rotate(rotate)
     width = min(MAX_WIDTH, w // 2)  # zoomed views are scaled up to the same size
