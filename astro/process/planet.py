@@ -6,7 +6,7 @@ recording (~3,000 frames, ~1 GB) never has to fit in memory:
 2. register: the sharpest frames' planet crops are aligned to a reference, subpixel;
 3. drizzle: those frames' raw Bayer pixels are dropped onto a 2x output grid at their
    registered positions (no demosaic blur; the drift dithers the samples);
-4. finish: colors aligned and balanced, wavelet-sharpened, cropped, stretched.
+4. finish: colors aligned and balanced, denoised and deconvolved, cropped, stretched.
 
 2026-10-10 field notes (Saturn, 8" Dob at prime focus, 0.50"/px, non-tracking): the old
 stacker worked on half-resolution superpixels, cropped the rings' tips off, clipped the
@@ -36,13 +36,18 @@ DISK_THRESHOLD = 0.3  # fraction of the brightest level that counts as "planet" 
 EXTENT_THRESHOLD = 0.08  # fraction of the brightest level that still counts (dim ring tips)
 CROP_PAD = 1.25  # crop the picture to this many times the planet's (ring) extent
 MOON_PAD = 0.3  # ... grown to keep each moon, with this many planet extents around it
+STREAK_TOLERANCE = 1e-3  # frames with a sky row beside the planet brighter than usual by this
+# fraction of its peak are garbage: 2026-10-12, the sensor streaked the planet's rows to its right
+# (up to 8 DN, in ~90 of 840 Barlow frames), and the streaks, passing for detail, ranked sharpest
 QUALITY_SIGMA = 1.5  # smoothing (raw px) before scoring sharpness: seeing detail, not noise
-# Wavelet sharpening on the 2x output: per-layer gains (finest first) and noise thresholds
-# in units of each layer's noise. Layer 1 is mostly noise at 2x; layers 2-4 hold the bands,
-# ring edges and shadows (tuned by eye on the 2026-10-10 Saturn videos).
+# Sharpening: wavelet denoising, then Richardson-Lucy deconvolution by the measured blur.
+# 2026-10-12 Barlow Saturn: wavelet boosts (RegiStax-style gains 1, 4, 3, 1.5) haloed 4-6% below
+# the sky (20% at prime focus) and doubled the grain; RL is positive, so the sky can't go below
+# black, and it brought the Cassini division out at the ansae.
 B3_KERNEL = np.array([1, 4, 6, 4, 1], np.float32) / 16
-WAVELET_GAINS = (1.0, 4.0, 3.0, 1.5)
-WAVELET_NOISE = (3.0, 2.0, 1.0, 0.0)
+WAVELET_NOISE = (3.0, 3.0, 2.0)  # soft thresholds per layer (finest first), in units of its noise
+NOISE_SIGMA = 4  # px (x 2 per layer): the window over which a layer's noise level is measured
+DECONV_ITERATIONS = 25  # more cut the edges finer but rimmed the limb (and the grain grew)
 
 # Position of R, G1, G2, B within each 2x2 Bayer cell, as (row, col).
 _LAYOUT = {
@@ -107,9 +112,10 @@ def sharpness(lum: np.ndarray) -> np.ndarray:
 def binned(frames: np.ndarray, start: int, stop: int) -> np.ndarray:
     """Frames start..stop summed over BIN x BIN blocks: cheap to search for the planet."""
     raw = np.asarray(frames[start:stop])
-    n, h, w = raw.shape
-    h, w = h // BIN * BIN, w // BIN * BIN
-    return raw[:, :h, :w].reshape(n, h // BIN, BIN, w // BIN, BIN).sum(axis=(2, 4), dtype=np.float32)
+    h, w = raw.shape[1] // BIN * BIN, raw.shape[2] // BIN * BIN
+    # Strided adds in uint16 (16 x 255 fits): 4x faster than a reshaped sum on big ROIs.
+    rows = sum(raw[:, i:h:BIN, :w].astype(np.uint16) for i in range(BIN))
+    return sum(rows[:, :, i::BIN] for i in range(BIN)).astype(np.float32)
 
 
 def planet_extent(frames: np.ndarray) -> int:
@@ -137,17 +143,30 @@ def crop(frame: np.ndarray, center: np.ndarray, half: int) -> tuple[np.ndarray, 
     return frame[y0:y0 + 2 * half + 2, x0:x0 + 2 * half + 2], y0, x0
 
 
+def streak_level(img: np.ndarray, center: np.ndarray, half: int) -> float:
+    """The brightest row of the sky beside the planet, left or right, by its median: a
+    streak along the planet's rows counts, a moon doesn't."""
+    y, x = np.round(center).astype(int)
+    band = img[max(y - half, 0):y + half + 1]
+    sides = (band[:, :max(x - half, 0)], band[:, x + half + 1:])
+    return max((float(np.median(s, axis=1).max()) for s in sides if s.shape[1] >= 8), default=0.0)
+
+
 def measure(frames: np.ndarray, half: int) -> tuple[np.ndarray, np.ndarray]:
     """Pass 1: per-frame planet center (raw px) and sharpness; -inf for unusable frames
-    (planet missing, or cut by the ROI edge as it drifts out of a non-tracking scope)."""
+    (planet missing, cut by the ROI edge as it drifts out of a non-tracking scope, or
+    garbage off the planet)."""
     n = len(frames)
     centers, quality = np.zeros((n, 2)), np.full(n, -np.inf)
-    peak = np.zeros(n)
+    peak, streak = np.zeros(n), np.zeros(n)
     for i in range(0, n, BATCH):
         small = ndimage.gaussian_filter(binned(frames, i, i + BATCH), (0, 1, 1))
-        centers[i:i + len(small)] = planet_centers(small) * BIN + (BIN - 1) / 2
+        at = planet_centers(small)
+        centers[i:i + len(small)] = at * BIN + (BIN - 1) / 2
         peak[i:i + len(small)] = small.max(axis=(1, 2))
+        streak[i:i + len(small)] = [streak_level(s, c, half // BIN) for s, c in zip(small, at, strict=True)]
     present = peak > 0.3 * np.median(peak)
+    present &= streak - np.median(streak[present]) < STREAK_TOLERANCE * np.median(peak[present])
     for i in np.flatnonzero(present):
         cut = crop(frames[i], centers[i], half)
         if cut is not None:
@@ -259,10 +278,13 @@ def normalize(acc: np.ndarray, wgt: np.ndarray) -> np.ndarray:
     return out.transpose(1, 2, 0)
 
 
-def stack(frames: np.ndarray, bayer: str) -> tuple[np.ndarray, np.ndarray, int]:
+def stack(frames: np.ndarray, bayer: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
     """Pick the sharpest frames, register them and drizzle them. `frames` may be a memmap.
     Returns float RGB at SCALE x the raw resolution cropped around the planet, the fraction
-    of each pixel's samples that were saturated, and the number of frames used."""
+    of each pixel's samples that were saturated, its noise and the number of frames used.
+    The noise is half the difference of two stacks of alternate frames: the stack's own
+    noise, with its level on the disk and its texture (drizzle, shot noise), without the
+    planet's detail, which both halves share."""
     half = planet_extent(frames)
     centers, quality = measure(frames, half)
     usable = np.flatnonzero(np.isfinite(quality))
@@ -278,8 +300,10 @@ def stack(frames: np.ndarray, bayer: str) -> tuple[np.ndarray, np.ndarray, int]:
     top, left, bottom, right = moon_margin(frames, keep[0], centers[keep[0]], reach)
     corner = center - reach - (top, left)
     shape = (int((2 * reach + top + bottom) * SCALE), int((2 * reach + left + right) * SCALE))
-    acc, clipped, wgt = drizzle(frames, keep, origins + corner, bayer, shape)
-    return normalize(acc, wgt), normalize(clipped, wgt), len(keep)
+    halves = [drizzle(frames, keep[k::2], origins[k::2] + corner, bayer, shape) for k in (0, 1)]
+    acc, clipped, wgt = (a + b for a, b in zip(*halves, strict=True))
+    noise = (normalize(*halves[0][::2]) - normalize(*halves[1][::2])) / 2
+    return normalize(acc, wgt), normalize(clipped, wgt), noise, len(keep)
 
 
 def moon_margin(frames: np.ndarray, best: int, center: np.ndarray, reach: float
@@ -328,25 +352,48 @@ def repair_clipping(img: np.ndarray, clipped: np.ndarray) -> np.ndarray:
 
 
 def white_balance(img: np.ndarray) -> np.ndarray:
-    """Scale R and B so the planet's median color is neutral: the raw sensor colors (no
-    color correction) made Saturn pink."""
+    """Per-channel factors that make the planet's median color neutral: the raw sensor
+    colors (no color correction) made Saturn pink."""
     lum = img.mean(axis=2)
     disk = lum > DISK_THRESHOLD * lum.max()
     med = np.median(img[disk], axis=0)
-    return img * (med[1] / np.maximum(med, 1e-6))
+    return med[1] / np.maximum(med, 1e-6)
 
 
-def wavelet_sharpen(img: np.ndarray) -> np.ndarray:
-    """A trous (B3 spline) wavelet sharpening, like Registax: boost the layers that carry
-    detail, soft-thresholding each by its noise so the boost doesn't amplify grain."""
-    smooth, out = img, np.zeros_like(img)
-    for level, (gain, k) in enumerate(zip(WAVELET_GAINS, WAVELET_NOISE, strict=True)):
-        coarser = _atrous(_atrous(smooth, 2**level, 0), 2**level, 1)
-        layer = smooth - coarser
-        noise = 1.4826 * np.median(np.abs(layer), axis=(0, 1))  # robust, per channel
-        out += gain * np.sign(layer) * np.maximum(np.abs(layer) - k * noise, 0)
-        smooth = coarser
+def denoise(lum: np.ndarray, noise: np.ndarray) -> np.ndarray:
+    """A trous (B3 spline) wavelet denoising: each fine layer soft-thresholded by the local
+    level of its noise (the same layer of the noise image)."""
+    smooth, nsmooth, out = lum, noise, np.zeros_like(lum)
+    for level, k in enumerate(WAVELET_NOISE):
+        coarser, ncoarser = (_atrous(_atrous(a, 2**level, 0), 2**level, 1) for a in (smooth, nsmooth))
+        layer, nlayer = smooth - coarser, nsmooth - ncoarser
+        sigma = np.sqrt(ndimage.gaussian_filter(nlayer**2, NOISE_SIGMA * 2**level))
+        out += np.sign(layer) * np.maximum(np.abs(layer) - k * sigma, 0)
+        smooth, nsmooth = coarser, ncoarser
     return out + smooth
+
+
+def blur_sigma(lum: np.ndarray) -> float:
+    """Gaussian blur (px) of the picture, from its steepest edges (the limb, the rings): a
+    blurred step's height over its steepest gradient is sigma * sqrt(2 pi)."""
+    grad = np.hypot(*np.gradient(lum))
+    top = grad > np.percentile(grad, 99.5)
+    sigma = 4.0
+    for _ in range(3):  # the step's height is measured across a few sigma
+        size = int(6 * sigma) | 1
+        height = ndimage.maximum_filter(lum, size) - ndimage.minimum_filter(lum, size)
+        sigma = float(np.clip(np.median(height[top] / grad[top]) / np.sqrt(2 * np.pi), 0.5, 10))
+    return sigma
+
+
+def sharpen(lum: np.ndarray, noise: np.ndarray) -> np.ndarray:
+    """Denoise, then Richardson-Lucy deconvolution by a Gaussian of the measured blur."""
+    data = np.maximum(denoise(lum, noise), 1e-3)
+    sigma = blur_sigma(data)
+    est = data.copy()
+    for _ in range(DECONV_ITERATIONS):
+        est *= ndimage.gaussian_filter(data / np.maximum(ndimage.gaussian_filter(est, sigma), 1e-6), sigma)
+    return est
 
 
 def _atrous(a: np.ndarray, step: int, axis: int) -> np.ndarray:
@@ -359,13 +406,18 @@ def _atrous(a: np.ndarray, step: int, axis: int) -> np.ndarray:
                for i, w in enumerate(B3_KERNEL))
 
 
-def finish(img: np.ndarray, clipped: np.ndarray) -> np.ndarray:
+def finish(img: np.ndarray, clipped: np.ndarray, noise: np.ndarray) -> np.ndarray:
     """Align colors, repair clipping, balance, sharpen, stretch to 8-bit without clipping
-    the disk."""
-    img = wavelet_sharpen(white_balance(repair_clipping(*align_channels(img, clipped))))
+    the disk. Only the luminance is sharpened, its detail added to every color: color noise
+    (blue's most) isn't amplified."""
+    img = repair_clipping(*align_channels(img, clipped))
+    balance = white_balance(img)
+    img, lum_noise = img * balance, (noise * balance).mean(axis=2)
+    lum = img.mean(axis=2)
+    img = img + (sharpen(lum, lum_noise) - lum)[..., None]
     lum = ndimage.gaussian_filter(img.mean(axis=2), SCALE)
     edge = np.concatenate([lum[:4].ravel(), lum[-4:].ravel(), lum[:, :4].ravel(), lum[:, -4:].ravel()])
-    lo = np.median(edge)  # the sky at the picture's edge is black (sharpening halos go below)
+    lo = np.median(edge)  # the sky at the picture's edge is black
     hi = lum.max()  # the smoothed disk's brightest level stays just below white
     return ((img - lo) / max(hi - lo, 1e-6) * 240).clip(0, 255).astype(np.uint8)
 
@@ -380,6 +432,6 @@ def process_ser(ser: Path, out_dir: Path) -> StackResult:
         raise ValueError(f"only {len(frames)} frames; need at least {MIN_FRAMES}")
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / (ser.stem + ".png")
-    img, clipped, used = stack(frames, bayer)
-    Image.fromarray(finish(img, clipped)).save(path)
+    img, clipped, noise, used = stack(frames, bayer)
+    Image.fromarray(finish(img, clipped, noise)).save(path)
     return StackResult(path, len(frames), used)
