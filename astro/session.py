@@ -88,6 +88,7 @@ PLANET_NEAR_DEG = 3.0  # ... and it's the planet within this of where the scope 
 MAIN_SOLVE_EVERY_S = 8.0  # telescope-view plate solves for exact names on it, while names show
 MAIN_FIX_S = 30.0  # such a solve places names this long...
 MAIN_FIX_MOVE_DEG = 2 / 60  # ...while the scope stays within this of where it was
+FOCUS_RECORD_S = 900  # Focus left on: stop saving its frames after this
 AUTO_SOLVE_EVERY_S = 5.0  # background plate solves at night (back to back while not synced)
 AUTO_SOLVE_NEAR_DEG = 5.0  # a background solve replaces model syncs this close (keeps the spread)
 DARK_SUN_ALT_DEG = -10.0  # Sun lower than this: the views get the night stretch (twilight: as is)
@@ -168,6 +169,8 @@ class Session:
         self.recorder = (Recorder(main_camera, main_sensor, data_dir / "captures") if main_camera else None)
         self._announced_done = True
         self.data_dir = data_dir
+        self.focus_dir: Path | None = None  # Focus on: its frames and numbers are saved here
+        self.focus_until = 0.0
         self.gallery_dir = data_dir / "gallery"
         self.stack_seconds = STACK_SECONDS
         self.stacker = (LiveStacker(main_camera, self.gallery_dir,
@@ -272,7 +275,7 @@ class Session:
             if do == "capture" and target:  # picked from "which one?": never a stop
                 return self.capture(target) if not self._camera_busy() else [notice("Already capturing.")]
             handler = {"capture": self._toggle_capture, "stop": self._stop, "sync": self.sync,
-                       "focus": self.focus_hint, "recenter": self._recenter,
+                       "focus": self.focus_hint, "focus_off": self.focus_off, "recenter": self._recenter,
                        "align": self.align}.get(do)
             return handler() if handler else [notice(f"{do.capitalize()} isn't ready yet.")]
 
@@ -420,10 +423,21 @@ class Session:
         return [say(self.finder.sync()[1])]
 
     def focus_hint(self) -> list[dict]:
-        """Focus is visual: the number on each camera view (higher is sharper). No coach."""
+        """Focus is visual: the number on each camera view (higher is sharper). No coach. While
+        Focus is on, the server saves every view frame with its numbers (focus_dir)."""
+        self.focus_dir = self.data_dir / "focus" / datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+        self.focus_until = time.monotonic() + FOCUS_RECORD_S
         return [say("Turn the focus knob to make the focus number on the camera view as high "
                     "as you can. With the Bahtinov mask on a bright star, the number reads the mask: "
                     "100 is in focus.")]
+
+    def focus_off(self) -> list[dict]:
+        self.focus_dir = None
+        return []
+
+    def focus_recording(self) -> Path | None:
+        """Where the Focus frames go, or None when Focus is off (or on longer than FOCUS_RECORD_S)."""
+        return self.focus_dir if self.focus_dir and time.monotonic() < self.focus_until else None
 
     def capture(self, choice: str | None = None) -> list[dict]:
         """Record or stack what's in the telescope view (_what_to_capture), or `choice` when

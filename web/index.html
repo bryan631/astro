@@ -379,7 +379,7 @@ $("align").onclick = () => {  // lit while Align watches the star (the status sa
 $("recenter").onclick = () => { action("recenter"); showView("finder"); };
 $("focus").onclick = () => { const on = document.body.classList.toggle("focusing");
   $("focus").classList.toggle("on", on);
-  if (on) { for (const v of Object.values(views)) v.focus = []; action("focus"); } };  // a fresh best and graph
+  if (on) { for (const v of Object.values(views)) v.focus = []; action("focus"); } else action("focus_off"); };  // a fresh best and graph
 $("sync").onclick = () => action("sync");
 let barlowIn = false;  // from the status; the button shows it and switches it
 $("barlow").onclick = () => { barlowIn = !barlowIn; $("barlow").textContent = `Barlow: ${barlowIn ? "in" : "out"}`;

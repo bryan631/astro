@@ -21,6 +21,7 @@ import statistics
 import time
 from collections import deque
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -545,7 +546,10 @@ async def api_camera(name: str, after: int = 0, labels: int = 0) -> Response:
     if cached is None or cached[0] != key:
         data, metrics = await asyncio.to_thread(render, raw, bayer, session.zoom[name], ROTATE[name],
                                              session.dark(), center, name == "main")
-        metrics = _steady_focus(name, metrics)
+        shown = _steady_focus(name, metrics)
+        if (folder := session.focus_recording()) is not None:  # Focus on: keep the frame and its numbers
+            await asyncio.to_thread(_save_focus_frame, folder, name, raw, cam, session.barlow, metrics, shown)
+        metrics = shown
         cached = _rendered[name] = (key, data, metrics)
     _, data, metrics = cached
     cx, cy = metrics["center"]
@@ -575,6 +579,20 @@ def api_camera_raw(name: str) -> Response:
 
 
 _recent_focus: dict[str, deque] = {}  # per camera: (mode, focus) of its last FOCUS_FRAMES frames
+
+
+def _save_focus_frame(folder: Path, name: str, raw: np.ndarray, cam, barlow: bool, metrics: dict,
+                      shown: dict) -> None:
+    """One view frame while Focus is on: the raw frame and a line of its numbers (the frame's
+    own and the steadied ones the page showed), for tuning the focus number on real sky."""
+    folder.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(UTC).strftime("%H%M%S_%f")
+    np.save(folder / f"{stamp}_{name}.npy", raw)
+    row = {"t": datetime.now(UTC).isoformat(), "file": f"{stamp}_{name}.npy", "camera": name,
+           "exposure_s": getattr(cam, "exposure_s", None), "gain": getattr(cam, "gain", None),
+           "barlow": barlow, "frame": metrics, "shown": shown}
+    with open(folder / "frames.jsonl", "a") as f:
+        f.write(json.dumps(row, default=float) + "\n")
 
 
 def _steady_focus(name: str, metrics: dict) -> dict:
