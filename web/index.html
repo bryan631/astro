@@ -18,7 +18,7 @@
          display: grid; grid-template-rows: minmax(0, 1fr) auto auto; height: 100vh; }  /* no overflow: hidden: it stops pull-to-refresh */
   button { font: inherit; color: var(--fg); background: var(--bg); border: 2px solid var(--dim);
            border-radius: 12px; padding: 10px 16px; touch-action: manipulation; }
-  button.on { border-color: var(--fg); border-width: 4px; }
+  button.on { border-color: var(--fg); border-width: 4px; font-weight: bold; background: var(--dim); }
   #bar { display: flex; align-items: center; gap: 14px; min-width: 0; }
   #status { font-size: 16px; padding-right: 12px; display: flex; gap: 14px; white-space: nowrap; }
   #status .bad { text-decoration: underline; font-weight: bold; }
@@ -360,8 +360,9 @@ function choose(options) {
 // --- buttons
 $("capture").onclick = () => { action("capture"); if (!capturing) showView("main"); };
 $("stop").onclick = () => action("stop");
+let alignAt = 0;  // a status from before the tap mustn't unlight it
 $("align").onclick = () => {  // lit while Align watches the star (the status says when it's done)
-  action("align"); $("align").classList.add("on"); setTimeout(pollStatus, 11500);
+  alignAt = Date.now(); action("align"); $("align").classList.add("on"); setTimeout(pollStatus, 11500);
 };
 $("recenter").onclick = () => { action("recenter"); showView("finder"); };
 $("focus").onclick = () => { const on = document.body.classList.toggle("focusing");
@@ -495,7 +496,7 @@ async function pollStatus() {
   $("status").innerHTML = [item("Tablet link", link, link ? "" : "reconnecting"), item("Finder", s.finder),
     item("Telescope", s.main), item("Encoders", s.encoders), item("Internet", s.internet),
     s.claude ? item("Claude", s.claude === "ok", s.claude === "ok" ? "" : `(${s.claude})`) : ""].filter(Boolean).join("");
-  if (link) $("align").classList.toggle("on", !!s.aligning);
+  if (link) $("align").classList.toggle("on", !!s.aligning || Date.now() - alignAt < 3000);
   if (link) showMode(s.mode);
   if (link) { barlowIn = !!s.barlow; $("barlow").textContent = `Barlow: ${barlowIn ? "in" : "out"}`; $("barlow").classList.toggle("on", barlowIn); }
   $("checks").hidden = !s.daytime; $("checksoff").checked = !!s.checks_off;
