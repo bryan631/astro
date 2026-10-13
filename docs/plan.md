@@ -236,8 +236,11 @@ JPEG keeps full-resolution color, and the telescope view's sky stays dark at hig
   model with two real syncs (flipped-over-the-zenith fit, 259 degree tilt); Go to a named star
   and "pizza" not matching Izar; the Barlow toggle's state; the mask missed on a faint star and
   on Vega (data/night-20261012/); Barlow Align at the measured 2.08x.
-- Planet stacks: sharpen (wavelets, as RegiStax/AstroSurface), tried on data/night-20261012/saturn3.ser
-  (Barlow, 15 ms, 1080 frames): sharp disk and ring edges, no ringing (2026-10-12).
+- Planet stacks: done on branch planet-sharpen (denoise + Richardson-Lucy, streaked frames dropped);
+  check it on the sky. Open: the SV705C streaks the planet's rows to its right (0.5-1 DN in every
+  2026-10-13 Barlow frame, up to 8 DN in bursts). The stack drops the bursts, but the faint streak
+  stays (hidden by the stretch). Its cause is unknown: not gain (356 both nights). Maybe a near-clipped
+  ansa (max 248 vs 226 on the clean recording).
 - Check the encoders on the sky: counts follow the scope, and the model holds after a restart.
 - Recordings for test data: a focus sweep and a wiggle.
 - Clear night: the Go to sheet's Say button (check whisper.cpp is installed on the Mele: scripts/install-voice.sh) (2026-10-11).
