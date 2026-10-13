@@ -6,7 +6,7 @@ recording (~3,000 frames, ~1 GB) never has to fit in memory:
 2. register: the sharpest frames' planet crops are aligned to a reference, subpixel;
 3. drizzle: those frames' raw Bayer pixels are dropped onto a 2x output grid at their
    registered positions (no demosaic blur; the drift dithers the samples);
-4. finish: colors aligned and balanced, wavelet-sharpened, cropped, stretched.
+4. finish: colors aligned and balanced, denoised and deconvolved, cropped, stretched.
 
 2026-10-10 field notes (Saturn, 8" Dob at prime focus, 0.50"/px, non-tracking): the old
 stacker worked on half-resolution superpixels, cropped the rings' tips off, clipped the
@@ -40,13 +40,14 @@ STREAK_TOLERANCE = 1e-3  # frames with a sky row beside the planet brighter than
 # fraction of its peak are garbage: 2026-10-12, the sensor streaked the planet's rows to its right
 # (up to 8 DN, in ~90 of 840 Barlow frames), and the streaks, passing for detail, ranked sharpest
 QUALITY_SIGMA = 1.5  # smoothing (raw px) before scoring sharpness: seeing detail, not noise
-# Wavelet sharpening on the 2x output: per-layer gains (finest first) and noise thresholds
-# in units of each layer's noise. Layer 1 is mostly noise at 2x; layers 2-4 hold the bands,
-# ring edges and shadows (tuned by eye on the 2026-10-10 Saturn videos).
+# Sharpening: wavelet denoising, then Richardson-Lucy deconvolution by the measured blur.
+# 2026-10-12 Barlow Saturn: wavelet boosts (RegiStax-style gains 1, 4, 3, 1.5) haloed 4-6% below
+# the sky (20% at prime focus) and doubled the grain; RL is positive, so the sky can't go below
+# black, and it brought the Cassini division out at the ansae.
 B3_KERNEL = np.array([1, 4, 6, 4, 1], np.float32) / 16
-WAVELET_GAINS = (1.0, 4.0, 3.0, 1.5)
-WAVELET_NOISE = (3.0, 2.0, 1.0, 0.0)
+WAVELET_NOISE = (3.0, 3.0, 2.0)  # soft thresholds per layer (finest first), in units of its noise
 NOISE_SIGMA = 4  # px (x 2 per layer): the window over which a layer's noise level is measured
+DECONV_ITERATIONS = 25  # more cut the edges finer but rimmed the limb (and the grain grew)
 
 # Position of R, G1, G2, B within each 2x2 Bayer cell, as (row, col).
 _LAYOUT = {
@@ -359,18 +360,40 @@ def white_balance(img: np.ndarray) -> np.ndarray:
     return med[1] / np.maximum(med, 1e-6)
 
 
-def wavelet_sharpen(lum: np.ndarray, noise: np.ndarray) -> np.ndarray:
-    """A trous (B3 spline) wavelet sharpening, like Registax: boost the layers that carry
-    detail, soft-thresholding each by the local level of its noise (the same layer of the
-    noise image) so the boost doesn't amplify grain."""
+def denoise(lum: np.ndarray, noise: np.ndarray) -> np.ndarray:
+    """A trous (B3 spline) wavelet denoising: each fine layer soft-thresholded by the local
+    level of its noise (the same layer of the noise image)."""
     smooth, nsmooth, out = lum, noise, np.zeros_like(lum)
-    for level, (gain, k) in enumerate(zip(WAVELET_GAINS, WAVELET_NOISE, strict=True)):
+    for level, k in enumerate(WAVELET_NOISE):
         coarser, ncoarser = (_atrous(_atrous(a, 2**level, 0), 2**level, 1) for a in (smooth, nsmooth))
         layer, nlayer = smooth - coarser, nsmooth - ncoarser
         sigma = np.sqrt(ndimage.gaussian_filter(nlayer**2, NOISE_SIGMA * 2**level))
-        out += gain * np.sign(layer) * np.maximum(np.abs(layer) - k * sigma, 0)
+        out += np.sign(layer) * np.maximum(np.abs(layer) - k * sigma, 0)
         smooth, nsmooth = coarser, ncoarser
     return out + smooth
+
+
+def blur_sigma(lum: np.ndarray) -> float:
+    """Gaussian blur (px) of the picture, from its steepest edges (the limb, the rings): a
+    blurred step's height over its steepest gradient is sigma * sqrt(2 pi)."""
+    grad = np.hypot(*np.gradient(lum))
+    top = grad > np.percentile(grad, 99.5)
+    sigma = 4.0
+    for _ in range(3):  # the step's height is measured across a few sigma
+        size = int(6 * sigma) | 1
+        height = ndimage.maximum_filter(lum, size) - ndimage.minimum_filter(lum, size)
+        sigma = float(np.clip(np.median(height[top] / grad[top]) / np.sqrt(2 * np.pi), 0.5, 10))
+    return sigma
+
+
+def sharpen(lum: np.ndarray, noise: np.ndarray) -> np.ndarray:
+    """Denoise, then Richardson-Lucy deconvolution by a Gaussian of the measured blur."""
+    data = np.maximum(denoise(lum, noise), 1e-3)
+    sigma = blur_sigma(data)
+    est = data.copy()
+    for _ in range(DECONV_ITERATIONS):
+        est *= ndimage.gaussian_filter(data / np.maximum(ndimage.gaussian_filter(est, sigma), 1e-6), sigma)
+    return est
 
 
 def _atrous(a: np.ndarray, step: int, axis: int) -> np.ndarray:
@@ -391,10 +414,10 @@ def finish(img: np.ndarray, clipped: np.ndarray, noise: np.ndarray) -> np.ndarra
     balance = white_balance(img)
     img, lum_noise = img * balance, (noise * balance).mean(axis=2)
     lum = img.mean(axis=2)
-    img = img + (wavelet_sharpen(lum, lum_noise) - lum)[..., None]
+    img = img + (sharpen(lum, lum_noise) - lum)[..., None]
     lum = ndimage.gaussian_filter(img.mean(axis=2), SCALE)
     edge = np.concatenate([lum[:4].ravel(), lum[-4:].ravel(), lum[:, :4].ravel(), lum[:, -4:].ravel()])
-    lo = np.median(edge)  # the sky at the picture's edge is black (sharpening halos go below)
+    lo = np.median(edge)  # the sky at the picture's edge is black
     hi = lum.max()  # the smoothed disk's brightest level stays just below white
     return ((img - lo) / max(hi - lo, 1e-6) * 240).clip(0, 255).astype(np.uint8)
 

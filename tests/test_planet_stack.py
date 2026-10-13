@@ -8,13 +8,17 @@ from astro.process.planet import (
     SCALE,
     align_channels,
     bayer_lum,
+    blur_sigma,
     drizzle,
+    measure,
     moon_margin,
     normalize,
     planet_center,
+    planet_extent,
     process_ser,
     register,
     repair_clipping,
+    sharpen,
     sharpness,
     shift_images,
     stack,
@@ -110,13 +114,48 @@ def test_drizzle_rebuilds_the_scene_at_twice_the_resolution():
 
 def test_stack_is_sharp_and_cleaner_than_a_single_frame():
     frames = seeing_frames()
-    result, _, _, used = stack(frames, "GRBG")
+    result, _, noise, used = stack(frames, "GRBG")
     g = result[..., 1]
+    assert np.abs(noise[..., 1]).mean() < 0.02 * g.max()  # noise only: the planet cancels out
     assert used == 8 and result.shape[0] > 2 * 40  # 20% of the frames; 2x the planet's size
     single = superpixel_rgb(frames[0], "GRBG")[..., 1]
     assert g[4:24, 4:24].std() < single[2:12, 2:12].std() / 2  # averaging cuts the sky's noise
     assert abs(planet_center(g)[0] - g.shape[0] / 2) < 3  # planet centered in the crop
     assert np.abs(np.diff(g, axis=0)).max() > 0.2 * g.max()  # bands and limb stay crisp
+
+
+def test_streaked_frames_are_dropped():
+    """2026-10-12: the sensor streaked the planet's rows to its right in some frames, and the
+    streaks, passing for detail, ranked sharpest."""
+    rng = np.random.default_rng(3)
+    scenes = blur(planet_scenes(np.full(10, 128.0), np.full(10, 128.0), size=256), np.full(10, 2.0))
+    frames = mosaic(scenes) + rng.normal(8, 3, (10, 256, 256))
+    frames[:3, 120:136, 160:] += (np.arange(96) % 16 < 8) * 10.0  # blocks along the planet's rows
+    frames = frames.clip(0, 255).astype(np.uint8)
+    _, quality = measure(frames, planet_extent(frames))
+    assert np.isinf(quality[:3]).all() and np.isfinite(quality[3:]).all()
+
+
+def test_blur_sigma_measures_the_blur():
+    for sigma in (1.5, 4.0):
+        lum = blur(planet_scenes([64], [64]), [sigma])[0].mean(axis=-1)
+        assert abs(blur_sigma(lum) - sigma) < 0.2 * sigma
+
+
+def test_sharpen_restores_detail_without_halos_or_grain():
+    """Two half-stacks of a blurred, noisy planet: sharpening brings it closer to the truth,
+    the sky stays black (no halo below it) and its noise isn't amplified."""
+    rng = np.random.default_rng(4)
+    truth = planet_scenes([64], [64])[0].mean(axis=-1)
+    blurred = blur(truth[None, ..., None], [3.0])[0, ..., 0]
+    a, b = (blurred + rng.normal(0, 2, truth.shape) for _ in range(2))
+    lum, noise = (a + b) / 2, (a - b) / 2
+    out = sharpen(lum, noise)
+    disk = ndimage.binary_dilation(truth > 0, iterations=4)
+    assert np.abs(out - truth)[disk].mean() < 0.8 * np.abs(lum - truth)[disk].mean()
+    assert out.min() >= 0
+    sky = ~ndimage.binary_dilation(truth > 0, iterations=12)
+    assert out[sky].std() < lum[sky].std()
 
 
 def test_align_channels_removes_color_offset():
