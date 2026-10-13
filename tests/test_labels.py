@@ -25,12 +25,13 @@ def solved():
     return frame, FinderSolver().solve(frame, binned=2)
 
 
-def test_star_list_is_bright_first_with_proper_names_only():
+def test_star_list_is_bright_first_with_proper_names_and_bright_greek_letters():
     names, ra, dec, mag = load_stars()
     assert names[:2] == ["Sirius", "Canopus"] and len(names) > 300 and (np.diff(mag) >= 0).all()
     assert {"Vega", "Albireo", "Deneb"} <= set(names)
-    # no "72 Psc" or "δ Cyg": numbers and letters say nothing on the view (2026-10-10, -11)
-    assert not any(n[0].isdigit() or n[0] in "αβγδεζηθικλμνξοπρστυφχψω" for n in names)
+    # no "72 Psc"; Greek letters only for the unnamed stars to 4.5 (η Cyg blazes, 2026-10-12)
+    greek = np.array([n[0] in "αβγδεζηθικλμνξοπρστυφχψω" for n in names])
+    assert "η Cyg" in names and not any(n[0].isdigit() for n in names) and (mag[greek] <= 4.5).all()
     assert ((ra >= 0) & (ra < 360)).all() and (abs(dec) <= 90).all()
 
 
