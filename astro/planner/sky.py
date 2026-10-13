@@ -11,13 +11,12 @@ from astropy.coordinates import SkyCoord, get_body
 from astro.intents import match_name
 from astro.planner.almanac import compass, target_text
 from astro.planner.catalog import Target, load_targets
-from astro.pointing.labels import load_stars
 from astro.planner.horizon import HorizonMask
 from astro.planner.moon_features import FEATURES
 from astro.planner.tonight import PLANET_NOTES, PLANETS, next_dark, plan
 from astro.pointing.coords import Site, body_altaz, radec_to_altaz
 from astro.pointing.geometry import separation_deg
-from astro.pointing.labels import altaz_now
+from astro.pointing.labels import altaz_now, load_stars
 
 MOON_FEATURES = {f.name: f for f in FEATURES}  # pointing at one means pointing at the Moon
 CLOUD_CACHE_S = 15 * 60  # Open-Meteo is hourly; don't ask on every request
