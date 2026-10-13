@@ -81,12 +81,13 @@ def parse(text: str) -> Intent | None:
     return None
 
 
-def match_name(spoken: str, names: list[str], cutoff: float = 0.6) -> str | None:
-    """Fuzzy-match a spoken target ('the ring nebula', 'm 57') to a known name."""
+def match_name(spoken: str, names: list[str], cutoff: float = 0.6, exact: frozenset = frozenset()) -> str | None:
+    """Fuzzy-match a spoken target ('the ring nebula', 'm 57') to a known name; names in `exact`
+    (the ~170 star names) only match exactly: "pizza" came out as Izar (2026-10-12)."""
     s = re.sub(r"\bmessier\b", "m", spoken.lower())
     s = re.sub(r"\bm[\s-]*(\d+)", r"m\1", s).removeprefix("the ").strip()
     lower = {n.lower(): n for n in names}
     if s in lower:
         return lower[s]
-    best = difflib.get_close_matches(s, list(lower), n=1, cutoff=cutoff)
+    best = difflib.get_close_matches(s, [k for k, n in lower.items() if n not in exact], n=1, cutoff=cutoff)
     return lower[best[0]] if best else None

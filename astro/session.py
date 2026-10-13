@@ -542,7 +542,7 @@ class Session:
         return any(job is not None and job.busy for job in (self.recorder, self.stacker))
 
     def _goto_named(self, spoken: str) -> list[dict]:
-        name = match_name(spoken, self.names())
+        name = match_name(spoken, self.names(), exact=self.sky.stars)
         return self.goto(name) if name else [say(f"I don't know {spoken}.")]
 
     def goto(self, name: str) -> list[dict]:

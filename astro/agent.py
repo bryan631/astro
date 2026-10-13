@@ -186,7 +186,7 @@ class Agent:
         if intent.name in ("ready", "skip") and not self.session.wizard_active:
             return False  # "okay" outside setup is conversation, not a command
         if intent.name == "goto":
-            return match_name(intent.target or "", self.session.names()) is not None
+            return match_name(intent.target or "", self.session.names(), exact=self.session.sky.stars) is not None
         return True
 
     def _run(self, text: str) -> list[dict]:

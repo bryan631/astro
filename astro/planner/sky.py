@@ -11,6 +11,7 @@ from astropy.coordinates import SkyCoord, get_body
 from astro.intents import match_name
 from astro.planner.almanac import compass, target_text
 from astro.planner.catalog import Target, load_targets
+from astro.pointing.labels import load_stars
 from astro.planner.horizon import HorizonMask
 from astro.planner.moon_features import FEATURES
 from astro.planner.tonight import PLANET_NOTES, PLANETS, next_dark, plan
@@ -24,6 +25,8 @@ LATER_MIN = 30  # "tonight" more than this far ahead: say when it gets dark
 CLOUDY_PCT = 50  # at or above this cloud cover, tonight's suggestions mention the clouds
 NOTHING_UP = "Nothing good is up right now."
 BODIES = (*PLANETS, "moon")
+GOTO_STAR_MAG = 3.5  # named stars Go to knows (~170)
+GREEK = "αβγδεζηθικλμνξοπρστυφχψω"
 
 
 class Sky:
@@ -32,6 +35,13 @@ class Sky:
         self.catalog = {t.name: t for t in load_targets()}
         for t in list(self.catalog.values()):
             self.catalog.setdefault(t.id, t)
+        # Named bright stars for Go to ("go to Vega" was refused, 2026-10-12); not suggested
+        self.stars = frozenset(n for n, _, _, m in zip(*load_stars(), strict=True)
+                               if m <= GOTO_STAR_MAG and n[0] not in GREEK and n not in self.catalog)
+        for name, ra, dec, mag in zip(*load_stars(), strict=True):
+            if mag <= GOTO_STAR_MAG and name[0] not in GREEK:
+                self.catalog.setdefault(name, Target(name, name, "star", float(ra), float(dec),
+                                                     f"A bright star, magnitude {mag:.1f}."))
         self.weather = weather
         self.cached_clouds: float | None = None  # the last forecast, for readers that mustn't fetch
         self._clouds_at, self._clouds_site = -1e9, None
@@ -39,7 +49,7 @@ class Sky:
 
     def targets(self) -> list[Target]:
         """Each Go to target once (the catalog has it by name and by id)."""
-        return list({t.id: t for t in self.catalog.values()}.values())
+        return list({t.id: t for t in self.catalog.values() if t.category != "star"}.values())
 
     def names(self) -> list[str]:
         return [p.capitalize() for p in PLANETS] + ["Moon", *MOON_FEATURES, *self.catalog]
@@ -68,7 +78,7 @@ class Sky:
 
     def describe(self, spoken: str, site: Site, when: datetime, horizon: HorizonMask) -> str:
         """What a target is and where it is right now."""
-        name = match_name(spoken, self.names())
+        name = match_name(spoken, self.names(), exact=self.stars)
         if name is None:
             return f"I don't know {spoken}."
         if name.lower() in PLANETS:
@@ -89,7 +99,7 @@ class Sky:
 
     def timing(self, spoken: str, site: Site, when: datetime, horizon: HorizonMask) -> str:
         """When a target rises, clears the trees, is highest and sets."""
-        name = match_name(spoken, self.names())
+        name = match_name(spoken, self.names(), exact=self.stars)
         if name is None:
             return f"I don't know {spoken}."
         body = "moon" if name in MOON_FEATURES or name == "Moon" else name.lower()
