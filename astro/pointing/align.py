@@ -135,10 +135,12 @@ def box_on_finder_view(fit: MainInFinder, main_size: tuple[int, int], finder_siz
 class AlignRun:
     """One Align in progress: frame pairs from both cameras, plate-solved for up to ALIGN_S."""
 
-    def __init__(self, finder_size: tuple[int, int], scales: tuple[float, ...] = (MAIN_SCALE,)):
+    def __init__(self, finder_size: tuple[int, int], scales: tuple[float, ...] = (MAIN_SCALE,),
+                 seconds: float = ALIGN_S, max_solves: int = MAX_SOLVES):
         """`scales`: the main camera's arcsec per pixel to try (several with a Barlow whose
-        power isn't measured yet)."""
-        self.until = time.monotonic() + ALIGN_S
+        power isn't measured yet); `seconds` and `max_solves`: how long and how many pairs."""
+        self.until = time.monotonic() + seconds
+        self.max_solves = max_solves
         self.finder_size, self.scales = finder_size, scales
         self.main_size: tuple[int, int] | None = None
         self.seen: dict[str, int | None] = {"finder": None, "main": None}  # newest frame used
@@ -165,7 +167,7 @@ class AlignRun:
         """Once the newest main and finder frames were taken together, plate-solve them in a
         thread (~1 s); `solved` is set if both solve."""
         busy = self.solving is not None and self.solving.is_alive()
-        if busy or self.solved is not None or self.attempts >= MAX_SOLVES or not self.frames["main"] \
+        if busy or self.solved is not None or self.attempts >= self.max_solves or not self.frames["main"] \
                 or not self.frames["finder"]:
             return
         (t_main, main), (t_finder, finder) = self.frames["main"][-1], self.frames["finder"][-1]

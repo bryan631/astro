@@ -39,7 +39,6 @@ from astro.planner.horizon import HorizonMask
 from astro.planner.sky import MOON_FEATURES, Sky, by_category_text, tonight_text
 from astro.planner.tonight import PLANETS
 from astro.pointing.align import (
-    MAX_SOLVES,
     SOLVE_WAIT_S,
     AlignRun,
     MainInFinder,
@@ -89,6 +88,7 @@ MAIN_SOLVE_EVERY_S = 8.0  # telescope-view plate solves for exact names on it, w
 MAIN_FIX_S = 30.0  # such a solve places names this long...
 MAIN_FIX_MOVE_DEG = 2 / 60  # ...while the scope stays within this of where it was
 FOCUS_RECORD_S = 900  # Focus left on: stop saving its frames after this
+BARLOW_ALIGN_S, BARLOW_ALIGN_SOLVES = 120.0, 60  # Align with the Barlow: longer, more frame pairs
 AUTO_SOLVE_EVERY_S = 5.0  # background plate solves at night (back to back while not synced)
 AUTO_SOLVE_NEAR_DEG = 5.0  # a background solve replaces model syncs this close (keeps the spread)
 DARK_SUN_ALT_DEG = -10.0  # Sun lower than this: the views get the night stretch (twilight: as is)
@@ -1013,12 +1013,15 @@ class Session:
             return [say("Stop the capture first, then Align.")]
         solved, _ = self.finder.sync(fresh=True)  # the solve turns finder pixels into sky
         self.guide, self._centering = None, False
-        self._align = AlignRun(self._finder_size(), self._main_scales())
+        # The Barlow's 13' x 8' field holds few stars: keep trying while more drift in (2026-10-12)
+        self._align = AlignRun(self._finder_size(), self._main_scales(),
+                               *((BARLOW_ALIGN_S, BARLOW_ALIGN_SOLVES) if self.barlow else ()))
         if solved:  # the field's Gaia stars, for plate-solving the main camera (cached after once)
             sol = self.finder.last_solution
             threading.Thread(target=field_catalog, args=(sol.ra_deg, sol.dec_deg, self.data_dir / "gaia"),
                              daemon=True).start()
-        return [say("Aligning from the stars in both cameras. Don't touch the scope for a few seconds.")]
+        return [say("Aligning with the Barlow: up to two minutes while stars drift through. Don't touch the scope."
+                    if self.barlow else "Aligning from the stars in both cameras. Don't touch the scope for a few seconds.")]
 
     def _align_step(self) -> list[dict]:
         run = self._align
@@ -1028,7 +1031,7 @@ class Session:
             run.start_solve(solver, self.data_dir / "gaia")
         solving, now = run.solving is not None and run.solving.is_alive(), time.monotonic()
         if run.solved is None and (solving and now < run.until + SOLVE_WAIT_S  # e.g. a download
-                                   or not solving and run.attempts < MAX_SOLVES and now < run.until):
+                                   or not solving and run.attempts < run.max_solves and now < run.until):
             return []
         self._align = None
         stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
