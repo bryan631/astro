@@ -226,6 +226,11 @@ JPEG keeps full-resolution color, and the telescope view's sky stays dark at hig
   on their stars while the scope moves.
 - Clear night: Align with the Barlow measures its power. The first one is slow: each wrong power
   tried costs a full search (~5 s on the laptop, maybe 10 s on the Mele) (2026-10-11).
+- Defect (2026-10-12): the telescope view took 4 s a frame on the Mele at night (night stretch at
+  full size, star fits under the mask); fixed, but no test times the Mele's night path. Add one
+  (a budget per frame on Mele-like speed, or a check run on the Mele at deploy).
+- Defect (2026-10-12): the telescope view's names need the Gaia tile on disk, and only Align
+  downloads it: a new sky area has no names until an Align. The background solve should fetch it.
 - Check the encoders on the sky: counts follow the scope, and the model holds after a restart.
 - Recordings for test data: a focus sweep and a wiggle.
 - Clear night: the Go to sheet's Say button (check whisper.cpp is installed on the Mele: scripts/install-voice.sh) (2026-10-11).
