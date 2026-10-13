@@ -28,9 +28,13 @@ EDGE_EVERY = 10  # frames between planet positions for the edge clock (a blob se
 PAUSED_WAIT_S = 0.1
 KEEP_RECORDINGS = 3  # raw SER videos kept after processing (names sort by time)
 MIN_FREE_BYTES = 2 * 1024**3  # a 60 s recording is ~1.5 GB
-PLANET_EXPOSURE_S, PLANET_GAIN = 0.02, 250
+PLANET_EXPOSURE_S, PLANET_GAIN = 0.015, 250
 PLANET_PEAK = (150, 230)  # 8-bit: the disk's brightest pixels land here (Jupiter clipped at 20 ms)
 MIN_PLANET_EXPOSURE_S = 0.0002
+# Exposures past this blur: seeing, and the drift (~2 px raw in 52 ms with the Barlow, 2026-10-12).
+# A dim disk gets gain instead (0.1 dB units: +60 doubles), the noise averaged out by the stack.
+MAX_PLANET_EXPOSURE_S = 0.015
+MAX_PLANET_GAIN = 500
 
 
 def safe_name(name: str) -> str:
@@ -161,19 +165,29 @@ class Recorder:
         PLANET_PEAK, so the video keeps detail instead of a white disk (2026-10-10). Per color
         (each 2x2 Bayer position), the brightest decides: metered on all pixels together, red
         (a quarter of them) clipped over most of Saturn's disk (2026-10-10)."""
-        exposure = PLANET_EXPOSURE_S
+        exposure, gain = PLANET_EXPOSURE_S, PLANET_GAIN
         for _ in range(6):
             frame = self.camera.capture()
             if (blob := brightest_blob(frame)) is not None:  # the disk's surroundings, wherever it is now
                 x0, y0 = (max(int(c) - ROI_PX // 2, 0) // 2 * 2 for c in blob)
                 frame = frame[y0:y0 + ROI_PX, x0:x0 + ROI_PX]
             peak = max(float(np.percentile(frame[y::2, x::2], 99.9)) for y in (0, 1) for x in (0, 1))
-            log.info("metering", extra={"data": {"exposure_s": exposure, "peak": peak, "shape": list(frame.shape),
+            log.info("metering", extra={"data": {"exposure_s": exposure, "gain": gain, "peak": peak, "shape": list(frame.shape),
                                                  "max": int(frame.max()), "roi": self.roi and vars(self.roi)}})
             if PLANET_PEAK[0] <= peak <= PLANET_PEAK[1]:
                 return
-            exposure *= 0.25 if peak >= 250 else sum(PLANET_PEAK) / 2 / max(peak, 1.0)
-            exposure = float(np.clip(exposure, MIN_PLANET_EXPOSURE_S, 4 * PLANET_EXPOSURE_S))
+            want = exposure * (0.25 if peak >= 250 else sum(PLANET_PEAK) / 2 / max(peak, 1.0))
+            if want > MAX_PLANET_EXPOSURE_S:  # too dim at the longest sharp exposure: gain makes up the rest
+                new_gain = int(np.clip(gain + 200 * np.log10(want / MAX_PLANET_EXPOSURE_S), 0, MAX_PLANET_GAIN))
+                want /= 10 ** ((new_gain - gain) / 200)
+                if new_gain != gain:
+                    gain = new_gain
+                    self.camera.set_gain(gain)
+            elif gain > PLANET_GAIN and want < MAX_PLANET_EXPOSURE_S / 2:  # bright enough: gain back down
+                gain = PLANET_GAIN
+                self.camera.set_gain(gain)
+                want *= 2  # roughly what the lower gain costs, refined next round
+            exposure = float(np.clip(want, MIN_PLANET_EXPOSURE_S, MAX_PLANET_EXPOSURE_S))
             self.camera.set_exposure(exposure)
 
     def _restore_view(self) -> None:
