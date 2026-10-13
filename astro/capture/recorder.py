@@ -226,6 +226,7 @@ class Recorder:
                             roi = None
                             rec.edge.reset()
                         self._stop.wait(PAUSED_WAIT_S)
+                        end += PAUSED_WAIT_S  # paused time doesn't count against the length
                         continue
                     if roi is None:  # resumed: the planet's settings, find it again and follow it
                         if planet is not None:
