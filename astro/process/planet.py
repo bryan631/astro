@@ -46,6 +46,7 @@ QUALITY_SIGMA = 1.5  # smoothing (raw px) before scoring sharpness: seeing detai
 B3_KERNEL = np.array([1, 4, 6, 4, 1], np.float32) / 16
 WAVELET_GAINS = (1.0, 4.0, 3.0, 1.5)
 WAVELET_NOISE = (3.0, 2.0, 1.0, 0.0)
+NOISE_SIGMA = 4  # px (x 2 per layer): the window over which a layer's noise level is measured
 
 # Position of R, G1, G2, B within each 2x2 Bayer cell, as (row, col).
 _LAYOUT = {
@@ -275,10 +276,13 @@ def normalize(acc: np.ndarray, wgt: np.ndarray) -> np.ndarray:
     return out.transpose(1, 2, 0)
 
 
-def stack(frames: np.ndarray, bayer: str) -> tuple[np.ndarray, np.ndarray, int]:
+def stack(frames: np.ndarray, bayer: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
     """Pick the sharpest frames, register them and drizzle them. `frames` may be a memmap.
     Returns float RGB at SCALE x the raw resolution cropped around the planet, the fraction
-    of each pixel's samples that were saturated, and the number of frames used."""
+    of each pixel's samples that were saturated, its noise and the number of frames used.
+    The noise is half the difference of two stacks of alternate frames: the stack's own
+    noise, with its level on the disk and its texture (drizzle, shot noise), without the
+    planet's detail, which both halves share."""
     half = planet_extent(frames)
     centers, quality = measure(frames, half)
     usable = np.flatnonzero(np.isfinite(quality))
@@ -294,8 +298,10 @@ def stack(frames: np.ndarray, bayer: str) -> tuple[np.ndarray, np.ndarray, int]:
     top, left, bottom, right = moon_margin(frames, keep[0], centers[keep[0]], reach)
     corner = center - reach - (top, left)
     shape = (int((2 * reach + top + bottom) * SCALE), int((2 * reach + left + right) * SCALE))
-    acc, clipped, wgt = drizzle(frames, keep, origins + corner, bayer, shape)
-    return normalize(acc, wgt), normalize(clipped, wgt), len(keep)
+    halves = [drizzle(frames, keep[k::2], origins[k::2] + corner, bayer, shape) for k in (0, 1)]
+    acc, clipped, wgt = (a + b for a, b in zip(*halves, strict=True))
+    noise = (normalize(*halves[0][::2]) - normalize(*halves[1][::2])) / 2
+    return normalize(acc, wgt), normalize(clipped, wgt), noise, len(keep)
 
 
 def moon_margin(frames: np.ndarray, best: int, center: np.ndarray, reach: float
@@ -344,24 +350,25 @@ def repair_clipping(img: np.ndarray, clipped: np.ndarray) -> np.ndarray:
 
 
 def white_balance(img: np.ndarray) -> np.ndarray:
-    """Scale R and B so the planet's median color is neutral: the raw sensor colors (no
-    color correction) made Saturn pink."""
+    """Per-channel factors that make the planet's median color neutral: the raw sensor
+    colors (no color correction) made Saturn pink."""
     lum = img.mean(axis=2)
     disk = lum > DISK_THRESHOLD * lum.max()
     med = np.median(img[disk], axis=0)
-    return img * (med[1] / np.maximum(med, 1e-6))
+    return med[1] / np.maximum(med, 1e-6)
 
 
-def wavelet_sharpen(img: np.ndarray) -> np.ndarray:
+def wavelet_sharpen(lum: np.ndarray, noise: np.ndarray) -> np.ndarray:
     """A trous (B3 spline) wavelet sharpening, like Registax: boost the layers that carry
-    detail, soft-thresholding each by its noise so the boost doesn't amplify grain."""
-    smooth, out = img, np.zeros_like(img)
+    detail, soft-thresholding each by the local level of its noise (the same layer of the
+    noise image) so the boost doesn't amplify grain."""
+    smooth, nsmooth, out = lum, noise, np.zeros_like(lum)
     for level, (gain, k) in enumerate(zip(WAVELET_GAINS, WAVELET_NOISE, strict=True)):
-        coarser = _atrous(_atrous(smooth, 2**level, 0), 2**level, 1)
-        layer = smooth - coarser
-        noise = 1.4826 * np.median(np.abs(layer), axis=(0, 1))  # robust, per channel
-        out += gain * np.sign(layer) * np.maximum(np.abs(layer) - k * noise, 0)
-        smooth = coarser
+        coarser, ncoarser = (_atrous(_atrous(a, 2**level, 0), 2**level, 1) for a in (smooth, nsmooth))
+        layer, nlayer = smooth - coarser, nsmooth - ncoarser
+        sigma = np.sqrt(ndimage.gaussian_filter(nlayer**2, NOISE_SIGMA * 2**level))
+        out += gain * np.sign(layer) * np.maximum(np.abs(layer) - k * sigma, 0)
+        smooth, nsmooth = coarser, ncoarser
     return out + smooth
 
 
@@ -375,10 +382,15 @@ def _atrous(a: np.ndarray, step: int, axis: int) -> np.ndarray:
                for i, w in enumerate(B3_KERNEL))
 
 
-def finish(img: np.ndarray, clipped: np.ndarray) -> np.ndarray:
+def finish(img: np.ndarray, clipped: np.ndarray, noise: np.ndarray) -> np.ndarray:
     """Align colors, repair clipping, balance, sharpen, stretch to 8-bit without clipping
-    the disk."""
-    img = wavelet_sharpen(white_balance(repair_clipping(*align_channels(img, clipped))))
+    the disk. Only the luminance is sharpened, its detail added to every color: color noise
+    (blue's most) isn't amplified."""
+    img = repair_clipping(*align_channels(img, clipped))
+    balance = white_balance(img)
+    img, lum_noise = img * balance, (noise * balance).mean(axis=2)
+    lum = img.mean(axis=2)
+    img = img + (wavelet_sharpen(lum, lum_noise) - lum)[..., None]
     lum = ndimage.gaussian_filter(img.mean(axis=2), SCALE)
     edge = np.concatenate([lum[:4].ravel(), lum[-4:].ravel(), lum[:, :4].ravel(), lum[:, -4:].ravel()])
     lo = np.median(edge)  # the sky at the picture's edge is black (sharpening halos go below)
@@ -396,6 +408,6 @@ def process_ser(ser: Path, out_dir: Path) -> StackResult:
         raise ValueError(f"only {len(frames)} frames; need at least {MIN_FRAMES}")
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / (ser.stem + ".png")
-    img, clipped, used = stack(frames, bayer)
-    Image.fromarray(finish(img, clipped)).save(path)
+    img, clipped, noise, used = stack(frames, bayer)
+    Image.fromarray(finish(img, clipped, noise)).save(path)
     return StackResult(path, len(frames), used)

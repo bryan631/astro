@@ -100,7 +100,7 @@ BARLOW_GUESS = 2.3  # a "2x" Barlow's power at the camera's sensor, until an Ali
 EXTENDED_TARGETS = {p.capitalize() for p in PLANETS} | {"Moon", *MOON_FEATURES}  # SER video
 # Captures run until the page's Stop capture (the user sees the target near the frame edge);
 # these are only safety limits.
-RECORD_SECONDS = 300  # planetary video
+RECORD_SECONDS = 600  # planetary video, recenter pauses included (300 ended a recentered Saturn, 2026-10-12)
 STACK_SECONDS = 300  # deep-sky live stack
 PROGRESS_S = 1.0  # capture progress to the page this often
 COLLIMATION_STEP_S = 2.0  # time to turn a screw and let the image settle between checks
